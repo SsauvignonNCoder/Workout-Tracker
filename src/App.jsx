@@ -2461,9 +2461,9 @@ function WorkoutTrackerInner({ mode, isDark, cycle }) {
 }
 
 // ============================================================
-// PIN-защита — простой экран входа на уровне приложения.
-// Не заменяет полноценную аутентификацию, но закрывает доступ
-// от случайных людей, нашедших ссылку на сайт.
+// Авторизация — два способа входа:
+// 1. Telegram Mini App — автоматически, по подписи initData (без PIN)
+// 2. Обычный браузер — PIN-код, как раньше
 // ============================================================
 
 async function sha256Hex(text) {
@@ -2474,23 +2474,76 @@ async function sha256Hex(text) {
 
 const PIN_SESSION_KEY = 'workout-tracker-unlocked';
 
+function getTelegramWebApp() {
+  if (typeof window === 'undefined') return null;
+  const tg = window.Telegram && window.Telegram.WebApp;
+  // initData пустой, если страница открыта не из Telegram (просто в браузере)
+  if (!tg || !tg.initData) return null;
+  return tg;
+}
+
+// Пытается авторизоваться через Telegram. Возвращает true при успехе.
+async function tryTelegramAuth(tg) {
+  try {
+    const res = await fetch('/api/telegram-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initData: tg.initData }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) return false;
+
+    const telegramId = data.user.id;
+
+    const { data: authRow } = await supabase.from('app_auth').select('telegram_id').eq('id', 1).maybeSingle();
+
+    if (authRow && authRow.telegram_id != null) {
+      // Владелец уже закреплён — пускаем только его
+      return authRow.telegram_id === telegramId;
+    }
+
+    // Владелец ещё не закреплён — этот пользователь становится им
+    const { error } = await supabase.from('app_auth').upsert({ id: 1, telegram_id: telegramId });
+    return !error;
+  } catch (e) {
+    return false;
+  }
+}
+
 function PinGate({ children }) {
   const [checking, setChecking] = useState(true);
   const [hasPin, setHasPin] = useState(false);
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(PIN_SESSION_KEY) === '1');
+  const [telegramFailed, setTelegramFailed] = useState(false);
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const tg = useMemo(() => getTelegramWebApp(), []);
+
   useEffect(() => {
     if (unlocked) { setChecking(false); return; }
+
     (async () => {
+      if (tg) {
+        tg.ready();
+        tg.expand();
+        const ok = await tryTelegramAuth(tg);
+        if (ok) {
+          sessionStorage.setItem(PIN_SESSION_KEY, '1');
+          setUnlocked(true);
+          setChecking(false);
+          return;
+        }
+        setTelegramFailed(true);
+      }
+
       const { data } = await supabase.from('app_auth').select('pin_hash').eq('id', 1).maybeSingle();
       setHasPin(!!(data && data.pin_hash));
       setChecking(false);
     })();
-  }, [unlocked]);
+  }, [unlocked, tg]);
 
   const handleCreatePin = async () => {
     setErr('');
@@ -2543,7 +2596,9 @@ function PinGate({ children }) {
           {hasPin ? 'Введи PIN' : 'Создай PIN-код'}
         </h1>
         <p style={{ color: t.TEXT_FAINT, fontSize: 13, textAlign: 'center', margin: '0 0 22px' }}>
-          {hasPin ? 'Чтобы открыть дневник тренировок' : 'Защитит дневник от посторонних — минимум 4 символа'}
+          {telegramFailed
+            ? 'Этот Telegram-аккаунт не привязан к дневнику — войди по PIN'
+            : hasPin ? 'Чтобы открыть дневник тренировок' : 'Защитит дневник от посторонних — минимум 4 символа'}
         </p>
 
         <input

@@ -44,10 +44,12 @@ create table profile (
 
 insert into profile (id) values (1);
 
--- Простая PIN-защита на уровне приложения (не Supabase Auth)
+-- Простая защита: PIN (для входа из обычного браузера) +
+-- разрешённый Telegram ID (для входа из Telegram Mini App без PIN)
 create table app_auth (
   id integer primary key default 1,
-  pin_hash text not null,
+  pin_hash text,
+  telegram_id bigint,
   constraint single_row_auth check (id = 1)
 );
 
@@ -65,9 +67,17 @@ create policy "allow all sessions" on sessions for all using (true) with check (
 create policy "allow all measurements" on measurements for all using (true) with check (true);
 create policy "allow all profile" on profile for all using (true) with check (true);
 create policy "allow read auth" on app_auth for select using (true);
+create policy "allow insert auth" on app_auth for insert with check (true);
+create policy "allow update auth" on app_auth for update using (true) with check (true);
 
 -- ============================================================
 -- После выполнения этого скрипта таблицы готовы.
--- PIN-код создавать вручную не нужно — при первом открытии сайта
--- приложение само предложит создать PIN и сохранит его хэш сюда.
+--
+-- Вход с обычного браузера: PIN-код создавать вручную не нужно —
+-- при первом открытии сайта приложение само предложит создать PIN.
+--
+-- Вход из Telegram Mini App: при первом успешном открытии бота
+-- приложение автоматически закрепит твой Telegram ID как владельца
+-- (telegram_id будет NULL до этого момента) — дальше вход идёт
+-- без PIN, по подписи Telegram.
 -- ============================================================
