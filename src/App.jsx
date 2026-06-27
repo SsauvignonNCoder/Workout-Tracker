@@ -21,6 +21,13 @@ const isNightNow = () => {
   return h >= 19 || h < 7;
 };
 
+function getTelegramColorScheme() {
+  if (typeof window === 'undefined') return null;
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (!tg || !tg.initData) return null; // не в Telegram
+  return tg.colorScheme === 'dark' || tg.colorScheme === 'light' ? tg.colorScheme : null;
+}
+
 const ThemeContext = createContext(THEMES.dark);
 
 function useTheme() {
@@ -28,13 +35,22 @@ function useTheme() {
 }
 
 function useThemeController() {
+  const tgScheme = useMemo(() => getTelegramColorScheme(), []);
   const [mode, setMode] = useState('auto'); // 'auto' | 'light' | 'dark'
-  const [autoIsDark, setAutoIsDark] = useState(isNightNow());
+  const [autoIsDark, setAutoIsDark] = useState(() => (tgScheme ? tgScheme === 'dark' : isNightNow()));
 
   useEffect(() => {
+    if (tgScheme) {
+      // В Telegram следим за сменой темы пользователем в настройках Telegram
+      const tg = window.Telegram.WebApp;
+      const handler = () => setAutoIsDark(tg.colorScheme === 'dark');
+      tg.onEvent && tg.onEvent('themeChanged', handler);
+      return () => { tg.offEvent && tg.offEvent('themeChanged', handler); };
+    }
+    // Вне Telegram — по времени суток, как раньше
     const id = setInterval(() => setAutoIsDark(isNightNow()), 60000);
     return () => clearInterval(id);
-  }, []);
+  }, [tgScheme]);
 
   const isDark = mode === 'auto' ? autoIsDark : mode === 'dark';
   const theme = isDark ? THEMES.dark : THEMES.light;
@@ -274,6 +290,18 @@ function DatePicker({ value, onChange }) {
   const t = useTheme();
   const today = todayISO();
   const isToday = value >= today;
+  const dateInputRef = React.useRef(null);
+
+  const openCalendar = () => {
+    const input = dateInputRef.current;
+    if (!input) return;
+    if (input.showPicker) {
+      try { input.showPicker(); return; } catch (e) { /* falls back below */ }
+    }
+    input.focus();
+    input.click();
+  };
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, width: '100%', minWidth: 0,
@@ -286,12 +314,17 @@ function DatePicker({ value, onChange }) {
           background: t.BG_INPUT, color: t.TEXT_DIM, fontSize: 17, cursor: 'pointer', fontFamily: 'inherit',
         }}
       >‹</button>
-      <div style={{
-        flex: 1, minWidth: 0, height: 44, borderRadius: 9, border: `1px solid ${t.BORDER}`,
-        background: t.BG_INPUT, color: t.TEXT, fontSize: 14.5, fontWeight: 600,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-        textTransform: 'capitalize', overflow: 'hidden', padding: '0 6px', boxSizing: 'border-box',
-      }}>
+      <button
+        onClick={openCalendar}
+        aria-label="Выбрать дату из календаря"
+        style={{
+          flex: 1, minWidth: 0, height: 44, borderRadius: 9, border: `1px solid ${t.BORDER}`,
+          background: t.BG_INPUT, color: t.TEXT, fontSize: 14.5, fontWeight: 600,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+          textTransform: 'capitalize', overflow: 'hidden', padding: '0 6px', boxSizing: 'border-box',
+          position: 'relative', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmtDateFull(value)}</span>
         {value === today && (
           <span style={{
@@ -299,9 +332,21 @@ function DatePicker({ value, onChange }) {
             background: 'rgba(168,51,76,0.16)', padding: '2px 6px', borderRadius: 5, textTransform: 'none',
           }}>сегодня</span>
         )}
-      </div>
+        <input
+          ref={dateInputRef}
+          type="date"
+          value={value}
+          max={today}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            opacity: 0, border: 'none', cursor: 'pointer', padding: 0,
+          }}
+        />
+      </button>
       <button
-        onClick={() => onChange(today)}
+        onClick={() => onChange(shiftDate(value, 1))}
         aria-label="Следующий день"
         disabled={isToday}
         style={{
@@ -754,6 +799,7 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [programDay, setProgramDay] = useState(null);
+  const [programDetached, setProgramDetached] = useState(false);
   const [showProgramPicker, setShowProgramPicker] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
@@ -779,13 +825,14 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
 
   useEffect(() => {
     if (editingId) return;
+    if (programDetached) return;
     if (profile && programDay === null) {
       const last = profile.lastProgramDay;
       if (last) {
         setProgramDay(last >= 20 ? 1 : last + 1);
       }
     }
-  }, [profile, programDay, editingId]);
+  }, [profile, programDay, editingId, programDetached]);
 
   const [justAppliedProgram, setJustAppliedProgram] = useState(false);
 
@@ -793,6 +840,7 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
     const dayPlan = PROGRAM_DAYS.find((d) => d.day === dayNum);
     if (!dayPlan) return;
     setProgramDay(dayNum);
+    setProgramDetached(false);
 
     if (dayPlan.type === 'strength') {
       setExercises(dayPlan.exercises.map((e) => ({
@@ -947,6 +995,7 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
     setEnergy(3);
     setFeeling('');
     setProgramDay(null);
+    setProgramDetached(false);
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 2200);
   };
@@ -973,6 +1022,7 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
           <button
             onClick={() => {
               setProgramDay(null);
+              setProgramDetached(true);
               setExercises([]);
               setCardio([]);
             }}
@@ -1176,7 +1226,7 @@ function WeightHistoryRow({ m, prevWeight, onDelete }) {
   );
 }
 
-function WeekGroupRow({ weekStart, entries }) {
+function WeekGroupRow({ weekStart, entries, onDelete }) {
   const t = useTheme();
   const [expanded, setExpanded] = useState(false);
   const avg = average(entries.map((e) => e.weight));
@@ -1205,11 +1255,21 @@ function WeekGroupRow({ weekStart, entries }) {
         <div style={{ paddingLeft: 14 }}>
           {entries.slice().reverse().map((m) => (
             <div key={m.id} style={{
-              display: 'flex', justifyContent: 'space-between', padding: '8px 2px',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 2px',
               borderBottom: `1px solid ${t.BORDER}`, fontSize: 13,
             }}>
               <span style={{ color: t.TEXT_FAINT }}>{fmtDateShort(m.date)}</span>
-              <span style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace" }}>{m.weight} кг</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace" }}>{m.weight} кг</span>
+                {onDelete && (
+                  <button
+                    onClick={() => onDelete(m.id)}
+                    style={{ background: 'transparent', border: 'none', color: t.TEXT_FAINT, cursor: 'pointer', padding: 2, display: 'flex' }}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -1375,7 +1435,7 @@ function MeasurementsTab({ measurements, saveMeasurements, setError }) {
               </div>
               <div>
                 {pastWeeks.map((w) => (
-                  <WeekGroupRow key={w.weekStart} weekStart={w.weekStart} entries={w.entries} />
+                  <WeekGroupRow key={w.weekStart} weekStart={w.weekStart} entries={w.entries} onDelete={handleDelete} />
                 ))}
               </div>
             </>
