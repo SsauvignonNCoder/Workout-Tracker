@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useContext, createContext } from 'react';
-import { Plus, TrendingUp, TrendingDown, Minus, Dumbbell, Ruler, LineChart as LineIcon, Trash2, X, User, Copy, Flame, Sun, Moon, Pencil, Lock } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Minus, Dumbbell, Ruler, LineChart as LineIcon, Trash2, X, User, Copy, Flame, Sun, Moon, Pencil, Lock, LogOut } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, Legend } from 'recharts';
 import { supabase } from './supabaseClient.js';
 
@@ -81,9 +81,10 @@ function sessionFromRow(row) {
   };
 }
 
-function sessionToRow(s) {
+function sessionToRow(s, userId) {
   return {
     id: s.id,
+    user_id: userId,
     date: s.date,
     exercises: s.exercises || [],
     cardio: s.cardio || [],
@@ -98,8 +99,8 @@ function measurementFromRow(row) {
   return { id: row.id, date: row.date, weight: row.weight };
 }
 
-function measurementToRow(m) {
-  return { id: m.id, date: m.date, weight: m.weight };
+function measurementToRow(m, userId) {
+  return { id: m.id, user_id: userId, date: m.date, weight: m.weight };
 }
 
 function profileFromRow(row) {
@@ -116,9 +117,9 @@ function profileFromRow(row) {
   };
 }
 
-function profileToRow(p) {
+function profileToRow(p, userId) {
   return {
-    id: 1,
+    user_id: userId,
     last_program_day: p.lastProgramDay ?? null,
     height: p.height ?? null,
     waist: p.waist ?? null,
@@ -130,7 +131,7 @@ function profileToRow(p) {
   };
 }
 
-function useStorage() {
+function useStorage(userId) {
   const [sessions, setSessions] = useState(null);
   const [measurements, setMeasurements] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -138,12 +139,14 @@ function useStorage() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (!userId) return;
+    setLoaded(false);
     (async () => {
       try {
         const [sessionsRes, measurementsRes, profileRes] = await Promise.all([
-          supabase.from('sessions').select('*').order('date', { ascending: true }),
-          supabase.from('measurements').select('*').order('date', { ascending: true }),
-          supabase.from('profile').select('*').eq('id', 1).maybeSingle(),
+          supabase.from('sessions').select('*').eq('user_id', userId).order('date', { ascending: true }),
+          supabase.from('measurements').select('*').eq('user_id', userId).order('date', { ascending: true }),
+          supabase.from('profile').select('*').eq('user_id', userId).maybeSingle(),
         ]);
 
         if (sessionsRes.error) throw sessionsRes.error;
@@ -162,7 +165,7 @@ function useStorage() {
         setLoaded(true);
       }
     })();
-  }, []);
+  }, [userId]);
 
   // Сохраняем весь список через upsert + удаление отсутствующих id —
   // так проще переиспользовать логику из артефакта, где saveX(next) перезаписывал весь массив целиком.
@@ -175,7 +178,7 @@ function useStorage() {
       const removedIds = [...prevIds].filter((id) => !nextIds.has(id));
 
       if (next.length > 0) {
-        const { error: upsertErr } = await supabase.from('sessions').upsert(next.map(sessionToRow));
+        const { error: upsertErr } = await supabase.from('sessions').upsert(next.map((s) => sessionToRow(s, userId)));
         if (upsertErr) throw upsertErr;
       }
       if (removedIds.length > 0) {
@@ -196,7 +199,7 @@ function useStorage() {
       const removedIds = [...prevIds].filter((id) => !nextIds.has(id));
 
       if (next.length > 0) {
-        const { error: upsertErr } = await supabase.from('measurements').upsert(next.map(measurementToRow));
+        const { error: upsertErr } = await supabase.from('measurements').upsert(next.map((m) => measurementToRow(m, userId)));
         if (upsertErr) throw upsertErr;
       }
       if (removedIds.length > 0) {
@@ -211,7 +214,7 @@ function useStorage() {
   const saveProfile = async (next) => {
     setProfile(next);
     try {
-      const { error: upsertErr } = await supabase.from('profile').upsert(profileToRow(next));
+      const { error: upsertErr } = await supabase.from('profile').upsert(profileToRow(next, userId));
       if (upsertErr) throw upsertErr;
     } catch (e) {
       setError('Не удалось сохранить — попробуй ещё раз');
@@ -2249,9 +2252,9 @@ function ThemeToggle({ mode, isDark, cycle }) {
   );
 }
 
-function WorkoutTrackerInner({ mode, isDark, cycle }) {
+function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogout }) {
   const t = useTheme();
-  const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage();
+  const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage(userId);
   const TAB_ORDER = ['workout', 'measurements', 'progress', 'profile'];
   const [tab, setTab] = useState('workout');
   const [slideDir, setSlideDir] = useState(0); // -1 left, 1 right, 0 none
@@ -2407,10 +2410,26 @@ function WorkoutTrackerInner({ mode, isDark, cycle }) {
             Дневник тренировок
           </h1>
           <p style={{ fontSize: 13, color: t.TEXT_FAINT, margin: '4px 0 0' }}>
-            Вес, повторы, самочувствие — и динамика по каждому упражнению
+            {displayName ? `Привет, ${displayName}!` : 'Вес, повторы, самочувствие — и динамика по каждому упражнению'}
           </p>
         </div>
-        <ThemeToggle mode={mode} isDark={isDark} cycle={cycle} />
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <ThemeToggle mode={mode} isDark={isDark} cycle={cycle} />
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              aria-label="Выйти из аккаунта"
+              title="Выйти из аккаунта"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 38, height: 38, borderRadius: 10, border: `1px solid ${t.BORDER}`,
+                background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
+              }}
+            >
+              <LogOut size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -2461,18 +2480,12 @@ function WorkoutTrackerInner({ mode, isDark, cycle }) {
 }
 
 // ============================================================
-// Авторизация — два способа входа:
+// Авторизация — два способа входа, у каждого свой аккаунт:
 // 1. Telegram Mini App — автоматически, по подписи initData (без PIN)
-// 2. Обычный браузер — PIN-код, как раньше
+// 2. Обычный браузер — имя + PIN, регистрация/вход
 // ============================================================
 
-async function sha256Hex(text) {
-  const enc = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-const PIN_SESSION_KEY = 'workout-tracker-unlocked';
+const AUTH_SESSION_KEY = 'workout-tracker-auth';
 
 function getTelegramWebApp() {
   if (typeof window === 'undefined') return null;
@@ -2482,7 +2495,7 @@ function getTelegramWebApp() {
   return tg;
 }
 
-// Пытается авторизоваться через Telegram. Возвращает true при успехе.
+// Пытается авторизоваться через Telegram. Возвращает { userId, displayName } или null.
 async function tryTelegramAuth(tg) {
   try {
     const res = await fetch('/api/telegram-auth', {
@@ -2491,86 +2504,83 @@ async function tryTelegramAuth(tg) {
       body: JSON.stringify({ initData: tg.initData }),
     });
     const data = await res.json();
-    if (!res.ok || !data.ok) return false;
-
-    const telegramId = data.user.id;
-
-    const { data: authRow } = await supabase.from('app_auth').select('telegram_id').eq('id', 1).maybeSingle();
-
-    if (authRow && authRow.telegram_id != null) {
-      // Владелец уже закреплён — пускаем только его
-      return authRow.telegram_id === telegramId;
-    }
-
-    // Владелец ещё не закреплён — этот пользователь становится им
-    const { error } = await supabase.from('app_auth').upsert({ id: 1, telegram_id: telegramId });
-    return !error;
+    if (!res.ok || !data.ok) return null;
+    return { userId: data.userId, displayName: data.displayName };
   } catch (e) {
-    return false;
+    return null;
   }
 }
 
-function PinGate({ children }) {
+async function browserAuth(mode, displayName, pin) {
+  const res = await fetch('/api/browser-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode, displayName, pin }),
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    return { error: data.error || 'Что-то пошло не так' };
+  }
+  return { userId: data.userId, displayName: data.displayName };
+}
+
+function AuthGate({ children }) {
   const [checking, setChecking] = useState(true);
-  const [hasPin, setHasPin] = useState(false);
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(PIN_SESSION_KEY) === '1');
+  const [session, setSession] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem(AUTH_SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  });
   const [telegramFailed, setTelegramFailed] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [name, setName] = useState('');
   const [pin, setPin] = useState('');
-  const [pin2, setPin2] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
   const tg = useMemo(() => getTelegramWebApp(), []);
 
   useEffect(() => {
-    if (unlocked) { setChecking(false); return; }
+    if (session) { setChecking(false); return; }
 
     (async () => {
       if (tg) {
         tg.ready();
         tg.expand();
-        const ok = await tryTelegramAuth(tg);
-        if (ok) {
-          sessionStorage.setItem(PIN_SESSION_KEY, '1');
-          setUnlocked(true);
+        const result = await tryTelegramAuth(tg);
+        if (result) {
+          sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(result));
+          setSession(result);
           setChecking(false);
           return;
         }
         setTelegramFailed(true);
       }
-
-      const { data } = await supabase.from('app_auth').select('pin_hash').eq('id', 1).maybeSingle();
-      setHasPin(!!(data && data.pin_hash));
       setChecking(false);
     })();
-  }, [unlocked, tg]);
+  }, [session, tg]);
 
-  const handleCreatePin = async () => {
+  const handleSubmit = async () => {
     setErr('');
+    if (!name.trim()) { setErr('Введи имя'); return; }
     if (pin.length < 4) { setErr('PIN должен быть не короче 4 символов'); return; }
-    if (pin !== pin2) { setErr('PIN-коды не совпадают'); return; }
     setBusy(true);
-    const hash = await sha256Hex(pin);
-    const { error } = await supabase.from('app_auth').upsert({ id: 1, pin_hash: hash });
+    const result = await browserAuth(authMode, name.trim(), pin);
     setBusy(false);
-    if (error) { setErr('Не удалось сохранить PIN — проверь подключение'); return; }
-    sessionStorage.setItem(PIN_SESSION_KEY, '1');
-    setUnlocked(true);
+    if (result.error) { setErr(result.error); return; }
+    sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(result));
+    setSession(result);
   };
 
-  const handleCheckPin = async () => {
-    setErr('');
-    setBusy(true);
-    const hash = await sha256Hex(pin);
-    const { data, error } = await supabase.from('app_auth').select('pin_hash').eq('id', 1).maybeSingle();
-    setBusy(false);
-    if (error || !data) { setErr('Не удалось проверить PIN — попробуй ещё раз'); return; }
-    if (data.pin_hash !== hash) { setErr('Неверный PIN'); setPin(''); return; }
-    sessionStorage.setItem(PIN_SESSION_KEY, '1');
-    setUnlocked(true);
+  const handleLogout = () => {
+    sessionStorage.removeItem(AUTH_SESSION_KEY);
+    setSession(null);
   };
 
-  if (unlocked) return children;
+  if (session) return children({ userId: session.userId, displayName: session.displayName, onLogout: handleLogout });
 
   const t = THEMES.dark;
 
@@ -2593,21 +2603,33 @@ function PinGate({ children }) {
           </div>
         </div>
         <h1 style={{ color: t.TEXT, fontSize: 19, textAlign: 'center', margin: '0 0 6px', fontWeight: 800 }}>
-          {hasPin ? 'Введи PIN' : 'Создай PIN-код'}
+          {authMode === 'login' ? 'Вход' : 'Создай аккаунт'}
         </h1>
         <p style={{ color: t.TEXT_FAINT, fontSize: 13, textAlign: 'center', margin: '0 0 22px' }}>
           {telegramFailed
-            ? 'Этот Telegram-аккаунт не привязан к дневнику — войди по PIN'
-            : hasPin ? 'Чтобы открыть дневник тренировок' : 'Защитит дневник от посторонних — минимум 4 символа'}
+            ? 'Не получилось войти через Telegram — войди по имени и PIN'
+            : authMode === 'login' ? 'Введи своё имя и PIN' : 'Придумай имя и PIN — минимум 4 символа'}
         </p>
+
+        <input
+          type="text"
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Имя"
+          style={{
+            width: '100%', boxSizing: 'border-box', background: t.BG_INPUT, border: `1px solid ${t.BORDER}`,
+            borderRadius: 10, padding: '13px 14px', color: t.TEXT, fontSize: 15, marginBottom: 10,
+            outline: 'none', fontFamily: 'inherit',
+          }}
+        />
 
         <input
           type="password"
           inputMode="numeric"
-          autoFocus
           value={pin}
           onChange={(e) => setPin(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') (hasPin ? handleCheckPin() : pin2 !== '' && handleCreatePin()); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
           placeholder="PIN-код"
           style={{
             width: '100%', boxSizing: 'border-box', background: t.BG_INPUT, border: `1px solid ${t.BORDER}`,
@@ -2616,36 +2638,30 @@ function PinGate({ children }) {
           }}
         />
 
-        {!hasPin && (
-          <input
-            type="password"
-            inputMode="numeric"
-            value={pin2}
-            onChange={(e) => setPin2(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleCreatePin(); }}
-            placeholder="Повтори PIN-код"
-            style={{
-              width: '100%', boxSizing: 'border-box', background: t.BG_INPUT, border: `1px solid ${t.BORDER}`,
-              borderRadius: 10, padding: '13px 14px', color: t.TEXT, fontSize: 17, marginBottom: 10,
-              outline: 'none', textAlign: 'center', letterSpacing: '0.15em',
-            }}
-          />
-        )}
-
         {err && (
           <div style={{ color: t.ACCENT_SOFT, fontSize: 13, textAlign: 'center', marginBottom: 12 }}>{err}</div>
         )}
 
         <button
-          onClick={hasPin ? handleCheckPin : handleCreatePin}
+          onClick={handleSubmit}
           disabled={busy}
           style={{
             width: '100%', padding: '13px', borderRadius: 11, border: 'none',
             background: t.ACCENT, color: '#FFF', fontSize: 15, fontWeight: 700,
-            cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1, fontFamily: 'inherit',
+            cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1, fontFamily: 'inherit', marginBottom: 12,
           }}
         >
-          {busy ? 'Проверяю...' : hasPin ? 'Войти' : 'Создать и войти'}
+          {busy ? 'Проверяю...' : authMode === 'login' ? 'Войти' : 'Создать и войти'}
+        </button>
+
+        <button
+          onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setErr(''); }}
+          style={{
+            width: '100%', padding: '8px', background: 'transparent', border: 'none',
+            color: t.TEXT_FAINT, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline',
+          }}
+        >
+          {authMode === 'login' ? 'Нет аккаунта? Создать новый' : 'Уже есть аккаунт? Войти'}
         </button>
       </div>
     </div>
@@ -2655,10 +2671,15 @@ function PinGate({ children }) {
 export default function WorkoutTracker() {
   const { theme, mode, isDark, cycle } = useThemeController();
   return (
-    <PinGate>
-      <ThemeContext.Provider value={theme}>
-        <WorkoutTrackerInner mode={mode} isDark={isDark} cycle={cycle} />
-      </ThemeContext.Provider>
-    </PinGate>
+    <AuthGate>
+      {({ userId, displayName, onLogout }) => (
+        <ThemeContext.Provider value={theme}>
+          <WorkoutTrackerInner
+            mode={mode} isDark={isDark} cycle={cycle}
+            userId={userId} displayName={displayName} onLogout={onLogout}
+          />
+        </ThemeContext.Provider>
+      )}
+    </AuthGate>
   );
 }

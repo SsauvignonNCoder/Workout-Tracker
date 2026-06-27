@@ -1,13 +1,18 @@
 // Vercel Serverless Function: POST /api/telegram-auth
-// Проверяет подпись initData, которую присылает Telegram Mini App,
-// и возвращает данные пользователя, если подпись подлинная.
+// Проверяет подпись initData от Telegram Mini App, и если она подлинная —
+// находит существующего пользователя по telegram_id или создаёт нового.
+// Возвращает userId, который фронтенд использует для всех дальнейших
+// запросов к Supabase (sessions/measurements/profile).
 //
-// Алгоритм проверки — официальный, описан в документации Telegram:
+// Алгоритм проверки подписи — официальный, см. документацию Telegram:
 // https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 
 import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 function checkTelegramAuth(initData) {
   const params = new URLSearchParams(initData);
@@ -28,7 +33,7 @@ function checkTelegramAuth(initData) {
 
   if (computedHash !== hash) return null;
 
-  // Опционально: проверка свежести (initData не старше 24 часов)
+  // Проверка свежести (initData не старше 24 часов)
   const authDate = Number(params.get('auth_date'));
   if (authDate && Date.now() / 1000 - authDate > 86400) return null;
 
@@ -57,8 +62,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!BOT_TOKEN) {
-    res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN не настроен на сервере' });
+  if (!BOT_TOKEN || !SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    res.status(500).json({ error: 'Сервер не настроен — проверь переменные окружения' });
     return;
   }
 
@@ -68,19 +73,40 @@ export default async function handler(req, res) {
     return;
   }
 
-  const user = checkTelegramAuth(initData);
-  if (!user) {
+  const tgUser = checkTelegramAuth(initData);
+  if (!tgUser) {
     res.status(401).json({ error: 'Подпись initData не подтверждена' });
     return;
   }
 
-  res.status(200).json({
-    ok: true,
-    user: {
-      id: user.id,
-      firstName: user.first_name || '',
-      lastName: user.last_name || '',
-      username: user.username || '',
-    },
-  });
+  const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const telegramId = tgUser.id;
+  const displayName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username || 'Пользователь';
+
+  try {
+    const { data: existing, error: findErr } = await supabaseAdmin
+      .from('users')
+      .select('id, display_name')
+      .eq('telegram_id', telegramId)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+
+    if (existing) {
+      res.status(200).json({ ok: true, userId: existing.id, displayName: existing.display_name });
+      return;
+    }
+
+    const { data: created, error: createErr } = await supabaseAdmin
+      .from('users')
+      .insert({ display_name: displayName, telegram_id: telegramId })
+      .select('id, display_name')
+      .single();
+
+    if (createErr) throw createErr;
+
+    res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, isNew: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Не удалось создать/найти пользователя', details: String(e.message || e) });
+  }
 }
