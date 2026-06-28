@@ -1065,7 +1065,7 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
             cursor: 'pointer', fontFamily: 'inherit', marginBottom: 14, boxSizing: 'border-box',
           }}
         >
-          <Dumbbell size={14} /> Привязать к дню программы (1–20)
+          <Dumbbell size={14} /> Выбор тренировки
         </button>
       )}
       {showProgramPicker && !programDay && (
