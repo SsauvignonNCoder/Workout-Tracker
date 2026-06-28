@@ -295,10 +295,10 @@ function DatePicker({ value, onChange }) {
   const openCalendar = () => {
     const input = dateInputRef.current;
     if (!input) return;
+    input.focus();
     if (input.showPicker) {
       try { input.showPicker(); return; } catch (e) { /* falls back below */ }
     }
-    input.focus();
     input.click();
   };
 
@@ -314,8 +314,11 @@ function DatePicker({ value, onChange }) {
           background: t.BG_INPUT, color: t.TEXT_DIM, fontSize: 17, cursor: 'pointer', fontFamily: 'inherit',
         }}
       >‹</button>
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={openCalendar}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCalendar(); } }}
         aria-label="Выбрать дату из календаря"
         style={{
           flex: 1, minWidth: 0, height: 44, borderRadius: 9, border: `1px solid ${t.BORDER}`,
@@ -337,14 +340,16 @@ function DatePicker({ value, onChange }) {
           type="date"
           value={value}
           max={today}
-          onClick={(e) => e.stopPropagation()}
           onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
           style={{
             position: 'absolute', inset: 0, width: '100%', height: '100%',
-            opacity: 0, border: 'none', cursor: 'pointer', padding: 0,
+            opacity: 0, border: 'none', padding: 0, cursor: 'pointer',
+            // pointerEvents отключены — открытие идёт через openCalendar() с родительского div,
+            // это надёжнее, чем рассчитывать на клик по самому невидимому input на десктопе
+            pointerEvents: 'none',
           }}
         />
-      </button>
+      </div>
       <button
         onClick={() => onChange(shiftDate(value, 1))}
         aria-label="Следующий день"
@@ -762,25 +767,40 @@ function ProgramDayPicker({ value, onChange }) {
             background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10,
             maxHeight: 280, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           }}>
-            {PROGRAM_DAYS.map((d) => (
-              <button
-                key={d.day}
-                onClick={() => { onChange(d.day); setOpen(false); }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '11px 14px',
-                  background: d.day === value ? 'rgba(168,51,76,0.12)' : 'transparent', border: 'none',
-                  borderBottom: `1px solid ${t.BORDER}`, color: d.day === value ? t.ACCENT_SOFT : t.TEXT,
-                  fontSize: 14, fontWeight: d.day === value ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                <span style={{ flexShrink: 0, fontSize: 13 }}>{DAY_TYPE_ICON[d.type] || ''}</span>
-                <span style={{
-                  flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
-                  minWidth: 18,
-                }}>{d.day}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
-              </button>
-            ))}
+            {PROGRAM_DAYS.map((d, idx) => {
+              const weekNumber = Math.floor((d.day - 1) / 5) + 1;
+              const isFirstOfWeek = idx === 0 || PROGRAM_DAYS[idx - 1] && Math.floor((PROGRAM_DAYS[idx - 1].day - 1) / 5) + 1 !== weekNumber;
+              return (
+                <React.Fragment key={d.day}>
+                  {isFirstOfWeek && (
+                    <div style={{
+                      padding: '8px 14px 6px', fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
+                      textTransform: 'uppercase', letterSpacing: '0.04em',
+                      background: t.BG_RAISED, borderBottom: `1px solid ${t.BORDER}`,
+                      position: 'sticky', top: 0,
+                    }}>
+                      Неделя {weekNumber}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => { onChange(d.day); setOpen(false); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '11px 14px',
+                      background: d.day === value ? 'rgba(168,51,76,0.12)' : 'transparent', border: 'none',
+                      borderBottom: `1px solid ${t.BORDER}`, color: d.day === value ? t.ACCENT_SOFT : t.TEXT,
+                      fontSize: 14, fontWeight: d.day === value ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >
+                    <span style={{ flexShrink: 0, fontSize: 13 }}>{DAY_TYPE_ICON[d.type] || ''}</span>
+                    <span style={{
+                      flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
+                      minWidth: 18,
+                    }}>{d.day}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
+                  </button>
+                </React.Fragment>
+              );
+            })}
           </div>
         </>
       )}
@@ -1045,7 +1065,7 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
             cursor: 'pointer', fontFamily: 'inherit', marginBottom: 14, boxSizing: 'border-box',
           }}
         >
-          <Dumbbell size={14} /> Привязать к дню программы (1–12)
+          <Dumbbell size={14} /> Привязать к дню программы (1–20)
         </button>
       )}
       {showProgramPicker && !programDay && (
@@ -2512,29 +2532,38 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
         <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
       </div>
 
+      {/* WorkoutTab рендерится всегда и просто скрывается — так черновик тренировки
+          не теряется при переключении на другие вкладки и обратно. */}
       <div
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
-        key={tab}
-        className={slideDir === 1 ? 'slide-in-right' : slideDir === -1 ? 'slide-in-left' : ''}
-        style={{ touchAction: 'pan-y' }}
+        style={{ display: tab === 'workout' ? 'block' : 'none', touchAction: 'pan-y' }}
       >
-        {tab === 'workout' && (
-          <WorkoutTab
-            sessions={sessions} saveSessions={saveSessions} setError={setError}
-            profile={profile} saveProfile={saveProfile}
-            editSession={editingSession} onEditDone={handleEditDone}
-          />
-        )}
-        {tab === 'measurements' && <MeasurementsTab measurements={measurements} saveMeasurements={saveMeasurements} setError={setError} />}
-        {tab === 'progress' && <ProgressTab sessions={sessions} measurements={measurements} profile={profile} onDeleteSession={handleDeleteSession} onEditSession={handleEditSession} />}
-        {tab === 'profile' && (
-          <ProfileTab
-            profile={profile} saveProfile={saveProfile} sessions={sessions} setError={setError}
-            measurements={measurements} saveSessions={saveSessions} saveMeasurements={saveMeasurements}
-          />
-        )}
+        <WorkoutTab
+          sessions={sessions} saveSessions={saveSessions} setError={setError}
+          profile={profile} saveProfile={saveProfile}
+          editSession={editingSession} onEditDone={handleEditDone}
+        />
       </div>
+
+      {tab !== 'workout' && (
+        <div
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          key={tab}
+          className={slideDir === 1 ? 'slide-in-right' : slideDir === -1 ? 'slide-in-left' : ''}
+          style={{ touchAction: 'pan-y' }}
+        >
+          {tab === 'measurements' && <MeasurementsTab measurements={measurements} saveMeasurements={saveMeasurements} setError={setError} />}
+          {tab === 'progress' && <ProgressTab sessions={sessions} measurements={measurements} profile={profile} onDeleteSession={handleDeleteSession} onEditSession={handleEditSession} />}
+          {tab === 'profile' && (
+            <ProfileTab
+              profile={profile} saveProfile={saveProfile} sessions={sessions} setError={setError}
+              measurements={measurements} saveSessions={saveSessions} saveMeasurements={saveMeasurements}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
