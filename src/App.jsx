@@ -438,6 +438,7 @@ function PercentOfRecord({ exName, weight, records }) {
 
 function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, records, animDelay }) {
   const t = useTheme();
+  const weightless = isWeightlessExercise(ex.name);
   return (
     <div
       className={animDelay != null ? 'item-fade-in' : ''}
@@ -456,15 +457,17 @@ function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, records, a
         />
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <Field label="Вес, кг">
-          <input
-            style={getInputStyle(t)}
-            type="number" inputMode="decimal" min="0"
-            value={ex.weight}
-            onChange={(e) => onChange({ ...ex, weight: e.target.value })}
-            placeholder="0"
-          />
-        </Field>
+        {!weightless && (
+          <Field label="Вес, кг">
+            <input
+              style={getInputStyle(t)}
+              type="number" inputMode="decimal" min="0"
+              value={ex.weight}
+              onChange={(e) => onChange({ ...ex, weight: e.target.value })}
+              placeholder="0"
+            />
+          </Field>
+        )}
         <Field label="Повторы">
           <input
             style={getInputStyle(t)}
@@ -495,7 +498,7 @@ function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, records, a
           </button>
         )}
       </div>
-      {records && <PercentOfRecord exName={ex.name} weight={ex.weight} records={records} />}
+      {records && !weightless && <PercentOfRecord exName={ex.name} weight={ex.weight} records={records} />}
     </div>
   );
 }
@@ -521,6 +524,23 @@ function categorizeExercise(name) {
   if (/бицепс|трицепс|молот|скотт|французск|разгибан.*рук|подъ[её]м.*рук/.test(n)) return MUSCLE_GROUPS.arms;
   if (/планка|скручиван|твист|подъ[её]м ног в висе|пресс|кор\b/.test(n)) return MUSCLE_GROUPS.core;
   return null;
+}
+
+// Упражнения, которые выполняются без отягощения — для них поле "Вес, кг" не нужно.
+function isWeightlessExercise(name) {
+  const n = (name || '').toLowerCase();
+  return /планка|русский твист|скручиван.*наклон/.test(n);
+}
+
+// Определяет, какие поля показывать для конкретного вида кардио.
+// distance / speed / incline / duration — какие из них релевантны.
+function getCardioFields(name) {
+  const n = (name || '').toLowerCase();
+  if (/гребн/.test(n)) return { distance: true, speed: false, incline: false, duration: true };
+  if (/степпер/.test(n)) return { distance: false, speed: false, incline: false, duration: true };
+  if (/велотренаж|эллипсо/.test(n)) return { distance: true, speed: true, incline: false, duration: true };
+  // По умолчанию (беговая дорожка и любой другой кастомный ввод) — полный набор
+  return { distance: true, speed: true, incline: true, duration: true };
 }
 
 function MuscleBadge({ name, size = 20 }) {
@@ -601,6 +621,8 @@ function CardioRow({ c, onChange, onRemove, removable, knownNames, animDelay }) 
     );
   }
 
+  const fields = getCardioFields(c.name);
+
   return (
     <div className={wrapClassName} style={{ marginBottom: 14, ...wrapStyle }}>
       <div style={{ marginBottom: 8 }}>
@@ -613,42 +635,50 @@ function CardioRow({ c, onChange, onRemove, removable, knownNames, animDelay }) 
         />
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <Field label="Дистанция, км">
-          <input
-            style={getInputStyle(t)}
-            type="number" inputMode="decimal" min="0"
-            value={c.distance}
-            onChange={(e) => onChange({ ...c, distance: e.target.value })}
-            placeholder={c.targetDistance || '0'}
-          />
-        </Field>
-        <Field label="Скорость, км/ч">
-          <input
-            style={getInputStyle(t)}
-            type="number" inputMode="decimal" min="0"
-            value={c.speed}
-            onChange={(e) => onChange({ ...c, speed: e.target.value })}
-            placeholder="0"
-          />
-        </Field>
-        <Field label="Наклон, %">
-          <input
-            style={{ ...getInputStyle(t), padding: '11px 8px', fontSize: 14 }}
-            type="number" inputMode="decimal" min="0"
-            value={c.incline}
-            onChange={(e) => onChange({ ...c, incline: e.target.value })}
-            placeholder={c.targetIncline || '0'}
-          />
-        </Field>
-        <Field label="Время, мин">
-          <input
-            style={{ ...getInputStyle(t), padding: '11px 8px', fontSize: 14 }}
-            type="number" inputMode="numeric" min="0"
-            value={c.duration}
-            onChange={(e) => onChange({ ...c, duration: e.target.value })}
-            placeholder={c.targetDuration || '0'}
-          />
-        </Field>
+        {fields.distance && (
+          <Field label="Дистанция, км">
+            <input
+              style={getInputStyle(t)}
+              type="number" inputMode="decimal" min="0"
+              value={c.distance}
+              onChange={(e) => onChange({ ...c, distance: e.target.value })}
+              placeholder={c.targetDistance || '0'}
+            />
+          </Field>
+        )}
+        {fields.speed && (
+          <Field label="Скорость, км/ч">
+            <input
+              style={getInputStyle(t)}
+              type="number" inputMode="decimal" min="0"
+              value={c.speed}
+              onChange={(e) => onChange({ ...c, speed: e.target.value })}
+              placeholder="0"
+            />
+          </Field>
+        )}
+        {fields.incline && (
+          <Field label="Наклон, %">
+            <input
+              style={{ ...getInputStyle(t), padding: '11px 8px', fontSize: 14 }}
+              type="number" inputMode="decimal" min="0"
+              value={c.incline}
+              onChange={(e) => onChange({ ...c, incline: e.target.value })}
+              placeholder={c.targetIncline || '0'}
+            />
+          </Field>
+        )}
+        {fields.duration && (
+          <Field label="Время, мин">
+            <input
+              style={{ ...getInputStyle(t), padding: '11px 8px', fontSize: 14 }}
+              type="number" inputMode="numeric" min="0"
+              value={c.duration}
+              onChange={(e) => onChange({ ...c, duration: e.target.value })}
+              placeholder={c.targetDuration || '0'}
+            />
+          </Field>
+        )}
         {removable && (
           <button
             onClick={onRemove}
@@ -1530,7 +1560,7 @@ function computeWeekStreak(sessions) {
   return { currentWeekDays, currentWeekDone, weekMultiplier, currentWeekComplete };
 }
 
-function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements }) {
+function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, mode, isDark, cycle, onLogout }) {
   const t = useTheme();
   const [draft, setDraft] = useState(() => {
     const init = {};
@@ -1539,9 +1569,6 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
   });
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
-
-  const records = useMemo(() => computeRecords(sessions), [sessions]);
-  const recordList = useMemo(() => Object.entries(records).sort((a, b) => a[0].localeCompare(b[0])), [records]);
 
   const handleChange = (key, val) => setDraft({ ...draft, [key]: val });
 
@@ -1613,35 +1640,42 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
       <div style={{ height: 1, background: t.BORDER, margin: '26px 0 18px' }} />
 
       <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
-        Личные рекорды
+        Настройки
       </div>
-      {recordList.length === 0 ? (
-        <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, lineHeight: 1.5 }}>
-          Рекорды появятся, как только сохранишь хотя бы одну тренировку с весом.
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {recordList.map(([name, r]) => (
-            <div key={name} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 11, padding: '12px 14px',
-            }}>
-              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 9 }}>
-                <MuscleBadge name={name} size={22} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{name}</div>
-                  <div style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{fmtDateShort(r.date)} · {r.reps} повт.</div>
-                </div>
-              </div>
-              <div style={{
-                fontSize: 17, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'SF Mono', monospace",
-                flexShrink: 0, marginLeft: 12,
-              }}>
-                {r.weight} кг
-              </div>
-            </div>
-          ))}
-        </div>
+
+      {cycle && (
+        <button
+          onClick={cycle}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+            padding: '14px 16px', borderRadius: 12, border: `1px solid ${t.BORDER}`,
+            background: t.BG_RAISED, color: t.TEXT, fontSize: 15, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit', marginBottom: 10, boxSizing: 'border-box',
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {isDark ? <Moon size={18} color={t.TEXT_DIM} /> : <Sun size={18} color={t.TEXT_DIM} />}
+            Тема оформления
+          </span>
+          <span style={{ fontSize: 13, color: t.TEXT_FAINT, fontWeight: 500 }}>
+            {mode === 'auto' ? (isDark ? 'Авто · ночь' : 'Авто · день') : (isDark ? 'Тёмная' : 'Светлая')}
+          </span>
+        </button>
+      )}
+
+      {onLogout && (
+        <button
+          onClick={onLogout}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%',
+            padding: '14px 16px', borderRadius: 12, border: `1px solid ${t.ACCENT}`,
+            background: 'rgba(168,51,76,0.14)', color: t.ACCENT_SOFT, fontSize: 15, fontWeight: 700,
+            cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
+          }}
+        >
+          <LogOut size={18} />
+          Выйти из аккаунта
+        </button>
       )}
 
       <div style={{ height: 1, background: t.BORDER, margin: '26px 0 18px' }} />
@@ -1860,6 +1894,7 @@ function SessionCard({ s, onEdit, onDelete }) {
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {(s.exercises || []).map((ex, i) => {
           const isLastOverall = i === (s.exercises.length - 1) && (!s.cardio || s.cardio.length === 0);
+          const weightless = isWeightlessExercise(ex.name);
           return (
             <div key={`ex-${i}`} style={{
               padding: '7px 0', borderBottom: isLastOverall ? 'none' : `1px solid ${t.BORDER}`, fontSize: 13.5,
@@ -1869,7 +1904,7 @@ function SessionCard({ s, onEdit, onDelete }) {
                 <span>{ex.name}</span>
               </div>
               <div style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace", fontSize: 13 }}>
-                {ex.weight} кг × {ex.reps}{ex.sets > 1 ? ` × ${ex.sets}` : ''}
+                {weightless ? `${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
               </div>
             </div>
           );
@@ -1886,7 +1921,7 @@ function SessionCard({ s, onEdit, onDelete }) {
               <div style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace", fontSize: 13 }}>
                 {isPool
                   ? `${c.duration} мин`
-                  : <>{c.distance} км{c.speed ? ` · ${c.speed} км/ч` : ''}{c.incline ? ` · накл. ${c.incline}%` : ''}{c.duration ? ` · ${c.duration} мин` : ''}</>
+                  : <>{c.distance ? `${c.distance} км` : ''}{c.speed ? `${c.distance ? ' · ' : ''}${c.speed} км/ч` : ''}{c.incline ? `${(c.distance || c.speed) ? ' · ' : ''}накл. ${c.incline}%` : ''}{c.duration ? `${(c.distance || c.speed || c.incline) ? ' · ' : ''}${c.duration} мин` : ''}</>
                 }
               </div>
             </div>
@@ -1988,6 +2023,10 @@ function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditS
   const [selectedKeys, setSelectedKeys] = useState([]);
   const [period, setPeriod] = useState('all');
   const [showArchive, setShowArchive] = useState(false);
+  const [showRecords, setShowRecords] = useState(false);
+
+  const records = useMemo(() => computeRecords(sessions), [sessions]);
+  const recordList = useMemo(() => Object.entries(records).sort((a, b) => a[0].localeCompare(b[0])), [records]);
 
   useEffect(() => {
     if (selectedKeys.length === 0 && options.length > 0) {
@@ -2122,6 +2161,52 @@ function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditS
       )}
 
       <div style={{ height: 1, background: t.BORDER, margin: '22px 0 18px' }} />
+
+      <button
+        onClick={() => setShowRecords(!showRecords)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+          background: 'transparent', border: 'none', padding: '0 0 12px', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+          Личные рекорды {recordList.length > 0 ? `(${recordList.length})` : ''}
+        </span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{showRecords ? '▼' : '▶'}</span>
+      </button>
+
+      {showRecords && (
+        recordList.length === 0 ? (
+          <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, lineHeight: 1.5, marginBottom: 18 }}>
+            Рекорды появятся, как только сохранишь хотя бы одну тренировку с весом.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+            {recordList.map(([name, r]) => (
+              <div key={name} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 11, padding: '12px 14px',
+              }}>
+                <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 9 }}>
+                  <MuscleBadge name={name} size={22} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{name}</div>
+                    <div style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{fmtDateShort(r.date)} · {r.reps} повт.</div>
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: 17, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'SF Mono', monospace",
+                  flexShrink: 0, marginLeft: 12,
+                }}>
+                  {r.weight} кг
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
       <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
         Последние тренировки
@@ -2306,32 +2391,6 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
   );
 }
 
-function ThemeToggle({ mode, isDark, cycle }) {
-  const t = useTheme();
-  const title = mode === 'auto' ? (isDark ? 'Авто · ночь' : 'Авто · день') : (isDark ? 'Тёмная' : 'Светлая');
-  return (
-    <button
-      onClick={cycle}
-      aria-label="Переключить тему"
-      title={title}
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        width: 38, height: 38, borderRadius: 10, border: `1px solid ${t.BORDER}`,
-        background: t.BG_INPUT, color: t.TEXT_DIM,
-        cursor: 'pointer', position: 'relative',
-      }}
-    >
-      {isDark ? <Moon size={16} /> : <Sun size={16} />}
-      {mode === 'auto' && (
-        <span style={{
-          position: 'absolute', top: 3, right: 3, width: 6, height: 6, borderRadius: '50%',
-          background: t.ACCENT,
-        }} />
-      )}
-    </button>
-  );
-}
-
 function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogout }) {
   const t = useTheme();
   const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage(userId);
@@ -2493,23 +2552,6 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
             {displayName ? `Привет, ${displayName}!` : 'Вес, повторы, самочувствие — и динамика по каждому упражнению'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <ThemeToggle mode={mode} isDark={isDark} cycle={cycle} />
-          {onLogout && (
-            <button
-              onClick={onLogout}
-              aria-label="Выйти из аккаунта"
-              title="Выйти из аккаунта"
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                width: 38, height: 38, borderRadius: 10, border: `1px solid ${t.BORDER}`,
-                background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
-              }}
-            >
-              <LogOut size={16} />
-            </button>
-          )}
-        </div>
       </div>
 
       {error && (
@@ -2560,6 +2602,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
             <ProfileTab
               profile={profile} saveProfile={saveProfile} sessions={sessions} setError={setError}
               measurements={measurements} saveSessions={saveSessions} saveMeasurements={saveMeasurements}
+              mode={mode} isDark={isDark} cycle={cycle} onLogout={onLogout}
             />
           )}
         </div>
