@@ -575,6 +575,57 @@ const STARTER_CARDIO = [
   'Беговая дорожка', 'Велотренажёр', 'Эллипсоид', 'Гребной тренажёр', 'Степпер', 'Бассейн',
 ];
 
+// Подсказки по разминке для силовых дней — текст взят из месячного плана тренировок.
+// Привязаны по названию дня, так как разминка повторяется для одного типа дня каждую неделю.
+const WARMUP_TIPS = {
+  'Грудь, спина, плечи': [
+    'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
+    'Суставная разминка 3 мин — вращения плечами, руками, лёгкие наклоны корпуса.',
+    'Разминочные подходы 2 мин — 1–2 подхода жима с пустой штангой/гифтом перед первым рабочим подходом.',
+  ],
+  'Ноги': [
+    'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
+    'Суставная разминка 3 мин — вращения тазобедренными суставами, голеностоп, лёгкие выпады без веса.',
+    'Разминочные подходы 2 мин — 1–2 подхода приседа с пустой штангой/малым весом перед рабочим подходом.',
+  ],
+  'Руки, кор, добивка': [
+    'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
+    'Суставная разминка 3 мин — вращения кистями, локтями, плечами.',
+    'Разминочные подходы 2 мин — 1–2 подхода с лёгким весом перед первым рабочим упражнением.',
+  ],
+};
+
+function WarmupTip({ title }) {
+  const t = useTheme();
+  const items = WARMUP_TIPS[title];
+  if (!items) return null;
+  return (
+    <div style={{
+      background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10,
+      padding: '11px 13px', marginBottom: 14,
+    }}>
+      <div style={{
+        fontSize: 11.5, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',
+        letterSpacing: '0.02em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <Flame size={13} /> Разминка · 10 минут
+      </div>
+      <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+        {items.map((line, i) => (
+          <li key={i} style={{
+            fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45,
+            marginBottom: i === items.length - 1 ? 0 : 5,
+            paddingLeft: 12, position: 'relative',
+          }}>
+            <span style={{ position: 'absolute', left: 0, color: t.TEXT_FAINT }}>·</span>
+            {line}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 const PROGRAM_DAYS = [{"day": 1, "type": "strength", "title": "Грудь, спина, плечи", "exercises": [{"name": "Жим штанги лёжа", "sets": 4, "reps": "6-8"}, {"name": "Тяга штанги в наклоне", "sets": 4, "reps": "8-10"}, {"name": "Жим гантелей сидя над головой", "sets": 3, "reps": "10-12"}, {"name": "Тяга верхнего блока (широкий хват)", "sets": 3, "reps": "10-12"}, {"name": "Разводка гантелей в стороны", "sets": 3, "reps": "12-15"}, {"name": "Французский жим", "sets": 3, "reps": "10-12"}, {"name": "Подъём штанги на бицепс стоя", "sets": 3, "reps": "10-12"}]}, {"day": 2, "type": "cardio", "title": "Кардио на дорожке", "cardio": {"name": "Беговая дорожка", "distance": "3", "incline": "20"}}, {"day": 3, "type": "strength", "title": "Ноги", "exercises": [{"name": "Приседания со штангой на плечах", "sets": 4, "reps": "6-8"}, {"name": "Румынская тяга со штангой", "sets": 4, "reps": "8-10"}, {"name": "Жим ногами в тренажёре", "sets": 3, "reps": "10-12"}, {"name": "Сгибание ног лёжа в тренажёре", "sets": 3, "reps": "12-15"}, {"name": "Подъём на носки стоя", "sets": 4, "reps": "15-20"}, {"name": "Гиперэкстензия", "sets": 3, "reps": "12-15"}]}, {"day": 4, "type": "pool", "title": "Бассейн", "cardio": {"name": "Бассейн", "duration": "60"}}, {"day": 5, "type": "strength", "title": "Руки, кор, добивка", "exercises": [{"name": "Жим штанги узким хватом", "sets": 4, "reps": "8-10"}, {"name": "Подтягивания", "sets": 4, "reps": "8-10"}, {"name": "Подъём гантелей на бицепс «молотом»", "sets": 3, "reps": "10-12"}, {"name": "Разгибание рук на верхнем блоке", "sets": 3, "reps": "12-15"}, {"name": "Подъём штанги на бицепс обратным хватом", "sets": 3, "reps": "10-12"}, {"name": "Подъём ног в висе", "sets": 3, "reps": "12-15"}, {"name": "Скручивания на наклонной скамье", "sets": 3, "reps": "15-20"}]}, {"day": 6, "type": "strength", "title": "Грудь, спина, плечи", "exercises": [{"name": "Жим штанги лёжа", "sets": 4, "reps": "6-8"}, {"name": "Тяга штанги в наклоне", "sets": 4, "reps": "8-10"}, {"name": "Жим штанги сидя", "sets": 3, "reps": "8-10"}, {"name": "Тяга верхнего блока (широкий хват)", "sets": 3, "reps": "10-12"}, {"name": "Разводка гантелей в стороны", "sets": 4, "reps": "12-15"}, {"name": "Отжимания на брусьях", "sets": 3, "reps": "8-10"}, {"name": "Подъём штанги на бицепс стоя", "sets": 3, "reps": "8-10"}]}, {"day": 7, "type": "cardio", "title": "Кардио на дорожке", "cardio": {"name": "Беговая дорожка", "distance": "3", "incline": "20"}}, {"day": 8, "type": "strength", "title": "Ноги", "exercises": [{"name": "Приседания со штангой на плечах", "sets": 4, "reps": "6-8"}, {"name": "Румынская тяга со штангой", "sets": 4, "reps": "8-10"}, {"name": "Жим ногами в тренажёре", "sets": 4, "reps": "10-12"}, {"name": "Разгибание ног в тренажёре", "sets": 3, "reps": "12-15"}, {"name": "Сгибание ног лёжа в тренажёре", "sets": 3, "reps": "12-15"}, {"name": "Подъём на носки стоя", "sets": 4, "reps": "15-20"}, {"name": "Гиперэкстензия", "sets": 3, "reps": "12-15"}]}, {"day": 9, "type": "pool", "title": "Бассейн", "cardio": {"name": "Бассейн", "duration": "60"}}, {"day": 10, "type": "strength", "title": "Руки, кор, добивка", "exercises": [{"name": "Жим штанги узким хватом", "sets": 4, "reps": "8-10"}, {"name": "Подтягивания", "sets": 4, "reps": "8-10"}, {"name": "Подъём на бицепс на скамье Скотта", "sets": 3, "reps": "10-12"}, {"name": "Разгибание рук на верхнем блоке", "sets": 3, "reps": "12-15"}, {"name": "Подъём штанги на бицепс обратным хватом", "sets": 3, "reps": "10-12"}, {"name": "Подъём ног в висе", "sets": 3, "reps": "12-15"}, {"name": "Русский твист", "sets": 3, "reps": "16-20"}]}, {"day": 11, "type": "strength", "title": "Грудь, спина, плечи", "exercises": [{"name": "Жим штанги лёжа", "sets": 5, "reps": "4-6"}, {"name": "Тяга штанги в наклоне", "sets": 5, "reps": "5-6"}, {"name": "Жим штанги сидя", "sets": 3, "reps": "8-10"}, {"name": "Тяга верхнего блока (широкий хват)", "sets": 3, "reps": "10-12"}, {"name": "Разводка гантелей в стороны", "sets": 3, "reps": "12-15"}]}, {"day": 12, "type": "cardio", "title": "Кардио на дорожке", "cardio": {"name": "Беговая дорожка", "distance": "3", "incline": "20"}}, {"day": 13, "type": "strength", "title": "Ноги", "exercises": [{"name": "Приседания со штангой на плечах", "sets": 5, "reps": "4-6"}, {"name": "Румынская тяга со штангой", "sets": 5, "reps": "5-6"}, {"name": "Жим ногами в тренажёре", "sets": 3, "reps": "10-12"}, {"name": "Разгибание ног в тренажёре", "sets": 3, "reps": "12-15"}, {"name": "Подъём на носки стоя", "sets": 4, "reps": "15-20"}, {"name": "Гиперэкстензия", "sets": 3, "reps": "12-15"}]}, {"day": 14, "type": "pool", "title": "Бассейн", "cardio": {"name": "Бассейн", "duration": "60"}}, {"day": 15, "type": "strength", "title": "Руки, кор, добивка", "exercises": [{"name": "Жим штанги узким хватом", "sets": 5, "reps": "5-6"}, {"name": "Подтягивания", "sets": 5, "reps": "5-6"}, {"name": "Подъём на бицепс на скамье Скотта", "sets": 3, "reps": "10-12"}, {"name": "Разгибание рук на верхнем блоке", "sets": 3, "reps": "12-15"}, {"name": "Подъём ног в висе", "sets": 3, "reps": "12-15"}, {"name": "Русский твист", "sets": 3, "reps": "16-20"}]}, {"day": 16, "type": "strength", "title": "Грудь, спина, плечи", "exercises": [{"name": "Жим штанги лёжа", "sets": 3, "reps": "8-10"}, {"name": "Тяга штанги в наклоне", "sets": 3, "reps": "10-12"}, {"name": "Жим гантелей сидя", "sets": 2, "reps": "10-12"}, {"name": "Тяга верхнего блока (широкий хват)", "sets": 2, "reps": "12-15"}, {"name": "Разводка гантелей в стороны", "sets": 2, "reps": "15"}]}, {"day": 17, "type": "cardio", "title": "Кардио на дорожке", "cardio": {"name": "Беговая дорожка", "distance": "3", "incline": "20"}}, {"day": 18, "type": "strength", "title": "Ноги", "exercises": [{"name": "Приседания со штангой на плечах", "sets": 3, "reps": "8-10"}, {"name": "Румынская тяга со штангой", "sets": 3, "reps": "10-12"}, {"name": "Жим ногами в тренажёре", "sets": 2, "reps": "12-15"}, {"name": "Сгибание ног лёжа в тренажёре", "sets": 2, "reps": "15"}, {"name": "Подъём на носки стоя", "sets": 3, "reps": "15-20"}]}, {"day": 19, "type": "pool", "title": "Бассейн", "cardio": {"name": "Бассейн", "duration": "60"}}, {"day": 20, "type": "strength", "title": "Руки, кор, добивка", "exercises": [{"name": "Жим штанги узким хватом", "sets": 3, "reps": "10-12"}, {"name": "Подтягивания", "sets": 3, "reps": "8-10"}, {"name": "Подъём на бицепс на скамье Скотта", "sets": 2, "reps": "12-15"}, {"name": "Разгибание рук на верхнем блоке", "sets": 2, "reps": "15"}, {"name": "Подъём ног в висе", "sets": 3, "reps": "12-15"}]}];
 
 function CardioRow({ c, onChange, onRemove, removable, knownNames, animDelay }) {
@@ -1104,6 +1155,11 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
         </div>
       )}
 
+      {programDay && (() => {
+        const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
+        return dayPlan && dayPlan.type === 'strength' ? <WarmupTip title={dayPlan.title} /> : null;
+      })()}
+
       <div style={{ marginBottom: 8, fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
         Упражнения
       </div>
@@ -1527,6 +1583,117 @@ function getMonday(iso) {
   return toISO(dt);
 }
 
+// ============================================================
+// Система уровней и опыта (XP)
+// ============================================================
+
+// Пороги общего накопленного XP, необходимого для достижения уровня N (индекс = уровень - 1).
+// Прогрессия подобрана так, чтобы 50-й уровень был достижим примерно за 1-1.5 года
+// активных тренировок (5 дней в неделю со средним стрик-множителем).
+const LEVEL_THRESHOLDS = [0, 6, 13, 21, 30, 41, 53, 66, 80, 95, 111, 128, 146, 165, 185, 206, 228, 251, 275, 300, 326, 353, 381, 410, 440, 471, 503, 536, 570, 605, 641, 677, 713, 749, 785, 821, 857, 893, 929, 965, 1001, 1037, 1073, 1109, 1145, 1181, 1217, 1253, 1289, 1325];
+
+function getLevelInfo(totalXp) {
+  const xp = totalXp || 0;
+  let level = 1;
+  for (let i = LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (xp >= LEVEL_THRESHOLDS[i]) { level = i + 1; break; }
+  }
+  const isMaxLevel = level >= LEVEL_THRESHOLDS.length;
+  const currentThreshold = LEVEL_THRESHOLDS[level - 1];
+  const nextThreshold = isMaxLevel ? currentThreshold : LEVEL_THRESHOLDS[level];
+  const xpIntoLevel = xp - currentThreshold;
+  const xpForLevel = isMaxLevel ? 0 : nextThreshold - currentThreshold;
+  const progress = isMaxLevel ? 1 : xpIntoLevel / xpForLevel;
+  return { level, xpIntoLevel, xpForLevel, progress, isMaxLevel, nextThreshold };
+}
+
+// Множитель XP за стрик последовательных тренировочных дней (выходные не прерывают и не считаются).
+// День 1 — x1.0 (без бонуса), день 2 — x1.2, ..., день 20+ — x5.0 (потолок), линейная прогрессия между ними.
+function getStreakMultiplier(streakDay) {
+  if (streakDay <= 1) return 1.0;
+  if (streakDay >= 20) return 5.0;
+  return 1.2 + (5.0 - 1.2) * (streakDay - 2) / 18;
+}
+
+// День недели: 0 = воскресенье, 6 = суббота (стандарт JS Date)
+function isWeekend(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const day = new Date(y, m - 1, d).getDay();
+  return day === 0 || day === 6;
+}
+
+// Считает длину стрика последовательных тренировочных дней (Пн-Пт), заканчивающегося датой sessionDate.
+// Выходные пропускаются без влияния. Если предыдущий будний день без тренировки — стрик начинается с 1.
+function computeStreakForDate(activeDates, sessionDate) {
+  let streak = 1;
+  let cursor = shiftDate(sessionDate, -1);
+  while (true) {
+    if (isWeekend(cursor)) { cursor = shiftDate(cursor, -1); continue; }
+    if (activeDates.has(cursor)) { streak += 1; cursor = shiftDate(cursor, -1); continue; }
+    break;
+  }
+  return streak;
+}
+
+// Пересчитывает итоговый XP по всей истории тренировок: 1 базовый XP за тренировку,
+// умноженный на стрик-множитель на момент этой тренировки (по датам, не по порядку сохранения).
+function computeTotalXpFromSessions(sessions) {
+  const uniqueDates = [...new Set((sessions || []).map((s) => s.date))].sort();
+  const activeDates = new Set(uniqueDates);
+  let totalXp = 0;
+  uniqueDates.forEach((date) => {
+    const streakDay = computeStreakForDate(activeDates, date);
+    totalXp += 1 * getStreakMultiplier(streakDay);
+  });
+  return totalXp;
+}
+
+// ============================================================
+// Достижения
+// Каждое достижение — условие на основе sessions/measurements/profile.
+// Список пока тестовый, дальше будет расширен.
+// ============================================================
+
+const ACHIEVEMENTS = [
+  {
+    id: 'bench-bodyweight',
+    title: 'Жим лёжа собственного веса',
+    description: 'Рабочий вес в жиме лёжа сравнялся или превысил вес тела',
+    xp: 5,
+    icon: '🏋️',
+    check: ({ sessions, measurements }) => {
+      const latestWeightEntry = (measurements || []).slice().sort((a, b) => a.date.localeCompare(b.date)).pop();
+      if (!latestWeightEntry || !latestWeightEntry.weight) return false;
+      const records = computeRecords(sessions);
+      const benchNames = Object.keys(records).filter((name) => /жим.*лёж/i.test(name));
+      if (benchNames.length === 0) return false;
+      const bestBench = Math.max(...benchNames.map((name) => records[name].weight));
+      return bestBench >= latestWeightEntry.weight;
+    },
+  },
+  {
+    id: 'first-week',
+    title: 'Первая неделя',
+    description: 'Записана хотя бы одна тренировка за первые 7 дней с начала пути',
+    xp: 10,
+    icon: '🔥',
+    check: ({ sessions }) => {
+      if (!sessions || sessions.length === 0) return false;
+      const dates = sessions.map((s) => s.date).sort();
+      const firstDate = dates[0];
+      const weekEnd = shiftDate(firstDate, 6);
+      return dates.some((d) => d > firstDate && d <= weekEnd);
+    },
+  },
+];
+
+function computeAchievements({ sessions, measurements, profile }) {
+  return ACHIEVEMENTS.map((a) => ({
+    ...a,
+    unlocked: a.check({ sessions, measurements, profile }),
+  }));
+}
+
 function computeWeekStreak(sessions) {
   const activeDates = new Set((sessions || []).map((s) => s.date));
   const todayMonday = getMonday(todayISO());
@@ -1560,6 +1727,47 @@ function computeWeekStreak(sessions) {
   return { currentWeekDays, currentWeekDone, weekMultiplier, currentWeekComplete };
 }
 
+function LevelCard({ levelInfo, totalXp }) {
+  const t = useTheme();
+  const pct = Math.min(100, Math.round(levelInfo.progress * 100));
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${t.BG_RAISED}, ${t.BG_INPUT})`,
+      border: `1px solid ${t.BORDER}`, borderRadius: 14, padding: '16px 16px 14px', marginBottom: 20,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 12, background: t.ACCENT,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 16, fontWeight: 800, color: '#FFF', flexShrink: 0,
+          }}>
+            {levelInfo.level}
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: t.TEXT }}>Уровень {levelInfo.level}</div>
+            <div style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{Math.round(totalXp)} XP всего</div>
+          </div>
+        </div>
+        {!levelInfo.isMaxLevel && (
+          <div style={{ textAlign: 'right', fontSize: 11.5, color: t.TEXT_FAINT }}>
+            до ур. {levelInfo.level + 1}<br />
+            <span style={{ color: t.TEXT_DIM, fontWeight: 600 }}>
+              {Math.round(levelInfo.xpIntoLevel)}/{levelInfo.xpForLevel} XP
+            </span>
+          </div>
+        )}
+      </div>
+      <div style={{ height: 7, borderRadius: 4, background: t.BORDER, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%', width: `${pct}%`, borderRadius: 4,
+          background: t.ACCENT, transition: 'width 0.4s ease',
+        }} />
+      </div>
+    </div>
+  );
+}
+
 function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, mode, isDark, cycle, onLogout }) {
   const t = useTheme();
   const [draft, setDraft] = useState(() => {
@@ -1569,6 +1777,13 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
   });
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+
+  const achievements = useMemo(() => computeAchievements({ sessions, measurements, profile }), [sessions, measurements, profile]);
+  const achievementXp = useMemo(() => achievements.filter((a) => a.unlocked).reduce((sum, a) => sum + a.xp, 0), [achievements]);
+  const totalXp = useMemo(() => computeTotalXpFromSessions(sessions) + achievementXp, [sessions, achievementXp]);
+  const levelInfo = useMemo(() => getLevelInfo(totalXp), [totalXp]);
+  const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
   const handleChange = (key, val) => setDraft({ ...draft, [key]: val });
 
@@ -1591,6 +1806,56 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
 
   return (
     <div>
+      <LevelCard levelInfo={levelInfo} totalXp={totalXp} />
+
+      <button
+        onClick={() => setShowAchievements(!showAchievements)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+          background: 'transparent', border: 'none', padding: '0 0 12px', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+          Достижения ({unlockedCount}/{achievements.length})
+        </span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{showAchievements ? '▼' : '▶'}</span>
+      </button>
+
+      {showAchievements && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+          {achievements.map((a) => (
+            <div key={a.id} style={{
+              display: 'flex', alignItems: 'center', gap: 11,
+              background: a.unlocked ? t.BG_RAISED : 'transparent',
+              border: `1px solid ${a.unlocked ? t.BORDER : t.BORDER}`,
+              borderRadius: 11, padding: '12px 14px',
+              opacity: a.unlocked ? 1 : 0.5,
+            }}>
+              <div style={{
+                flexShrink: 0, width: 36, height: 36, borderRadius: 10,
+                background: a.unlocked ? 'rgba(168,51,76,0.16)' : t.BG_INPUT,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17,
+                filter: a.unlocked ? 'none' : 'grayscale(1)',
+              }}>
+                {a.icon}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{a.title}</div>
+                <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.35 }}>{a.description}</div>
+              </div>
+              <div style={{
+                flexShrink: 0, fontSize: 12, fontWeight: 700,
+                color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT,
+              }}>
+                +{a.xp} XP
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
+
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
         <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
           Параметры тела
@@ -2482,7 +2747,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
   return (
     <div className="content-fade-in" style={{
       background: t.BG, minHeight: '100vh', width: '100%',
-      padding: '24px max(18px, env(safe-area-inset-right)) 40px max(18px, env(safe-area-inset-left))',
+      padding: '24px max(18px, env(safe-area-inset-right)) calc(86px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
       fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
@@ -2567,13 +2832,6 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 5, marginBottom: 24, width: '100%', minWidth: 0 }}>
-        <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell}>Тренировка</Pill>
-        <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler}>Вес</Pill>
-        <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon}>Прогресс</Pill>
-        <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
-      </div>
-
       {/* WorkoutTab рендерится всегда и просто скрывается — так черновик тренировки
           не теряется при переключении на другие вкладки и обратно. */}
       <div
@@ -2607,6 +2865,24 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
           )}
         </div>
       )}
+
+      <div style={{
+        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
+        display: 'flex', justifyContent: 'center',
+        background: `linear-gradient(to top, ${t.BG} 60%, transparent)`,
+        paddingTop: 14,
+      }}>
+        <div style={{
+          display: 'flex', gap: 5, width: '100%', maxWidth: 480, minWidth: 0,
+          padding: '0 max(18px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
+          boxSizing: 'border-box',
+        }}>
+          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell}>Тренировка</Pill>
+          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler}>Вес</Pill>
+          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon}>Прогресс</Pill>
+          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
+        </div>
+      </div>
     </div>
   );
 }
