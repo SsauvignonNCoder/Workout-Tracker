@@ -1,19 +1,43 @@
 import React, { useState, useEffect, useMemo, useContext, createContext } from 'react';
-import { Plus, TrendingUp, TrendingDown, Minus, Dumbbell, Ruler, LineChart as LineIcon, Trash2, X, User, Copy, Flame, Sun, Moon, Pencil, Lock, LogOut } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Minus, Dumbbell, Ruler, LineChart as LineIcon, Trash2, X, User, Copy, Flame, Sun, Moon, Pencil, Lock, LogOut, Footprints, Activity, Medal, Award, Zap, Calendar, Trophy, Target, Waves, ClipboardList, Scale, Layers, Puzzle, FileText } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, Legend } from 'recharts';
 import { supabase } from './supabaseClient.js';
 
 const THEMES = {
   dark: {
-    ACCENT: '#A8334C', ACCENT_SOFT: '#C4566E', POSITIVE: '#7A8B5C',
-    BG: '#1A1816', BG_RAISED: '#231F1C', BG_INPUT: '#2A2522', BORDER: '#38322D',
-    TEXT: '#E8E3DB', TEXT_DIM: '#9C9489', TEXT_FAINT: '#6B6459',
+    ACCENT: '#E08A3C', ACCENT_SOFT: '#F2B273', ACCENT_DEEP: '#C8643C', POSITIVE: '#93A86A',
+    BG: '#16100A', BG_RAISED: '#211913', BG_INPUT: '#1D150F', BORDER: '#322619',
+    TEXT: '#F2EAE0', TEXT_DIM: '#A89A8A', TEXT_FAINT: '#7A6A58',
+    ACCENT_GRAD: 'linear-gradient(135deg, #EDA053, #C8643C)', ON_ACCENT: '#1A130D',
+    ACCENT_BG: 'rgba(224,138,60,0.15)', ACCENT_BORDER: 'rgba(224,138,60,0.30)',
+    POSITIVE_BG: 'rgba(147,168,106,0.16)',
+    GLOW: '0 6px 22px rgba(224,138,60,0.30)', NAV_BG: 'rgba(26,19,13,0.72)',
+    CARD_SHADOW: '0 12px 30px rgba(0,0,0,0.45)',
+    FONT: "'Manrope', system-ui, -apple-system, sans-serif",
+    FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
+    FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
   },
   light: {
-    ACCENT: '#A8334C', ACCENT_SOFT: '#8C2A3F', POSITIVE: '#5C7048',
-    BG: '#FAF7F2', BG_RAISED: '#FFFFFF', BG_INPUT: '#F1EBE2', BORDER: '#D8CFC0',
-    TEXT: '#2B2622', TEXT_DIM: '#574E45', TEXT_FAINT: '#7A6F62',
+    ACCENT: '#BC6A28', ACCENT_SOFT: '#A85A20', ACCENT_DEEP: '#A85A20', POSITIVE: '#5C7048',
+    BG: '#F6EFE4', BG_RAISED: '#FFFFFF', BG_INPUT: '#F1E8DA', BORDER: '#E7DCC9',
+    TEXT: '#2A2018', TEXT_DIM: '#6F6253', TEXT_FAINT: '#A2917C',
+    ACCENT_GRAD: 'linear-gradient(135deg, #E0913F, #BC6A28)', ON_ACCENT: '#FFFFFF',
+    ACCENT_BG: 'rgba(188,106,40,0.12)', ACCENT_BORDER: 'rgba(188,106,40,0.28)',
+    POSITIVE_BG: 'rgba(92,112,72,0.12)',
+    GLOW: '0 6px 20px rgba(188,106,40,0.22)', NAV_BG: 'rgba(255,253,249,0.80)',
+    CARD_SHADOW: '0 10px 26px rgba(120,90,50,0.10)',
+    FONT: "'Manrope', system-ui, -apple-system, sans-serif",
+    FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
+    FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
   },
+};
+
+// Иконки достижений (lucide) вместо эмодзи — ключ совпадает с прежним полем icon.
+const ACH_ICON = {
+  '🏋️': Dumbbell, '💪': Dumbbell, '🔥': Flame, '👟': Footprints, '🚶': Footprints,
+  '🏃': Activity, '🏃‍♂️': Activity, '🏅': Medal, '🎖️': Medal, '🙆': Award, '🦾': Zap,
+  '⚡': Zap, '📅': Calendar, '📈': TrendingUp, '🏆': Trophy, '🎯': Target, '🏊': Waves,
+  '📋': ClipboardList, '⚖️': Scale, '🏗️': Layers, '🧩': Puzzle, '😴': Moon, '📝': FileText,
 };
 
 const isNightNow = () => {
@@ -247,10 +271,11 @@ function Pill({ children, active, onClick, icon: Icon }) {
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-        padding: '13px 10px', borderRadius: 13, flex: active ? 1.6 : 0.7, minWidth: 0,
-        border: `1px solid ${active ? t.ACCENT : t.BORDER}`,
-        background: active ? 'rgba(168,51,76,0.16)' : 'transparent',
+        padding: '13px 10px', borderRadius: 14, flex: active ? 1.6 : 0.7, minWidth: 0,
+        border: `1px solid ${active ? t.ACCENT_BORDER : 'transparent'}`,
+        background: active ? t.ACCENT_BG : 'transparent',
         color: active ? t.ACCENT_SOFT : t.TEXT_DIM,
+        boxShadow: active ? t.GLOW : 'none',
         fontSize: 14.5, fontWeight: 600, cursor: 'pointer',
         transition: 'flex 0.25s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease',
         fontFamily: 'inherit',
@@ -267,7 +292,7 @@ function Field({ label, children }) {
   const t = useTheme();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
-      <label style={{ fontSize: 11.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+      <label style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO }}>
         {label}
       </label>
       {children}
@@ -276,8 +301,8 @@ function Field({ label, children }) {
 }
 
 const getInputStyle = (t) => ({
-  background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 9,
-  padding: '11px 12px', color: t.TEXT, fontSize: 15.5, fontFamily: "'SF Mono', 'Roboto Mono', monospace",
+  background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 12,
+  padding: '11px 12px', color: t.TEXT, fontSize: 15.5, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
   outline: 'none', width: '100%', maxWidth: '100%', minWidth: 0, boxSizing: 'border-box',
   display: 'block',
 });
@@ -332,7 +357,7 @@ function DatePicker({ value, onChange }) {
         {value === today && (
           <span style={{
             flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: t.ACCENT_SOFT,
-            background: 'rgba(168,51,76,0.16)', padding: '2px 6px', borderRadius: 5, textTransform: 'none',
+            background: t.ACCENT_BG, padding: '2px 6px', borderRadius: 5, textTransform: 'none',
           }}>сегодня</span>
         )}
         <input
@@ -389,7 +414,7 @@ function ExerciseNameInput({ value, onChange, knownNames, label = 'Упражн�
       {focused && suggestions.length > 0 && (
         <div className="dropdown-open" style={{
           position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 10,
-          background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 9,
+          background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 12,
           maxHeight: 220, overflowY: 'auto', boxShadow: '0 8px 20px rgba(0,0,0,0.35)',
         }}>
           {suggestions.map((name) => (
@@ -428,7 +453,7 @@ function PercentOfRecord({ exName, weight, records }) {
       color, fontWeight: 600,
     }}>
       {isNewRecord ? (
-        <span className="record-pop">🔥 Новый рекорд! Прошлый максимум {record.weight} кг</span>
+        <span className="record-pop" style={{ alignItems: 'center', gap: 5 }}><Flame size={13} /> Новый рекорд! Прошлый максимум {record.weight} кг</span>
       ) : (
         <>{pct}% от рекорда ({record.weight} кг)</>
       )}
@@ -551,9 +576,9 @@ function MuscleBadge({ name, size = 20 }) {
       title={group.label}
       style={{
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        width: size, height: size, borderRadius: '50%', flexShrink: 0,
-        background: `${group.color}26`, color: group.color,
-        fontSize: size * 0.5, fontWeight: 800, fontFamily: 'system-ui, sans-serif',
+        width: size, height: size, borderRadius: 7, flexShrink: 0,
+        background: `${group.color}26`, color: group.color, border: `1px solid ${group.color}40`,
+        fontSize: size * 0.46, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace",
       }}
     >
       {group.letter}
@@ -601,12 +626,12 @@ function WarmupTip({ title }) {
   if (!items) return null;
   return (
     <div style={{
-      background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10,
-      padding: '11px 13px', marginBottom: 14,
+      background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 16,
+      padding: '13px 15px', marginBottom: 14, boxShadow: t.CARD_SHADOW,
     }}>
       <div style={{
-        fontSize: 11.5, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',
-        letterSpacing: '0.02em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6,
+        fontSize: 10.5, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',
+        letterSpacing: '0.12em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6, fontFamily: t.FONT_MONO,
       }}>
         <Flame size={13} /> Разминка · 10 минут
       </div>
@@ -813,7 +838,7 @@ function RepeatWorkoutPicker({ sessions, onPick }) {
   );
 }
 
-const DAY_TYPE_ICON = { strength: '💪', cardio: '🏃', pool: '🏊' };
+const DAY_TYPE_ICON = { strength: Dumbbell, cardio: Activity, pool: Waves };
 
 function ProgramDayPicker({ value, onChange }) {
   const t = useTheme();
@@ -833,10 +858,15 @@ function ProgramDayPicker({ value, onChange }) {
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           <span style={{
-            flexShrink: 0, fontSize: 11, fontWeight: 800, color: '#FFF',
-            background: t.ACCENT, padding: '3px 7px', borderRadius: 6,
+            flexShrink: 0, fontSize: 11, fontWeight: 700, color: t.ON_ACCENT, fontFamily: t.FONT_MONO,
+            background: t.ACCENT_GRAD, padding: '4px 8px', borderRadius: 8,
           }}>День {value}/20</span>
-          {selected ? `${DAY_TYPE_ICON[selected.type] || ''} ${selected.title}` : ''}
+          {selected && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {DAY_TYPE_ICON[selected.type] && React.createElement(DAY_TYPE_ICON[selected.type], { size: 15, color: t.ACCENT_SOFT, style: { flexShrink: 0 } })}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.title}</span>
+            </span>
+          )}
         </span>
         <span style={{ color: t.TEXT_FAINT, flexShrink: 0, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
       </button>
@@ -867,12 +897,12 @@ function ProgramDayPicker({ value, onChange }) {
                     onClick={() => { onChange(d.day); setOpen(false); }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '11px 14px',
-                      background: d.day === value ? 'rgba(168,51,76,0.12)' : 'transparent', border: 'none',
+                      background: d.day === value ? t.ACCENT_BG : 'transparent', border: 'none',
                       borderBottom: `1px solid ${t.BORDER}`, color: d.day === value ? t.ACCENT_SOFT : t.TEXT,
                       fontSize: 14, fontWeight: d.day === value ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
                     }}
                   >
-                    <span style={{ flexShrink: 0, fontSize: 13 }}>{DAY_TYPE_ICON[d.type] || ''}</span>
+                    <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center', color: t.TEXT_DIM }}>{DAY_TYPE_ICON[d.type] && React.createElement(DAY_TYPE_ICON[d.type], { size: 14 })}</span>
                     <span style={{
                       flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
                       minWidth: 18,
@@ -1258,10 +1288,10 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
       {editingId && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-          background: 'rgba(168,51,76,0.1)', border: `1px solid ${t.ACCENT}`, borderRadius: 9,
+          background: t.ACCENT_BG, border: `1px solid ${t.ACCENT}`, borderRadius: 9,
           padding: '9px 12px', marginBottom: 14, fontSize: 12.5, color: t.ACCENT_SOFT, fontWeight: 600,
         }}>
-          <span>✎ Редактирование тренировки</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Pencil size={13} /> Редактирование тренировки</span>
           <button
             onClick={handleCancelEdit}
             style={{ background: 'transparent', border: 'none', color: t.ACCENT_SOFT, cursor: 'pointer', fontSize: 12.5, fontWeight: 600, textDecoration: 'underline' }}
@@ -1276,11 +1306,12 @@ function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, ed
         disabled={saving}
         className={justSaved ? 'save-bounce' : ''}
         style={{
-          width: '100%', padding: '14px', borderRadius: 11, border: 'none',
-          background: justSaved ? t.POSITIVE : t.ACCENT, color: '#FFF',
+          width: '100%', padding: '15px', borderRadius: 16, border: 'none',
+          background: justSaved ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT,
           fontSize: 15.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
           opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
-          transition: 'background 0.2s ease',
+          boxShadow: justSaved ? 'none' : t.GLOW,
+          transition: 'background 0.2s ease, box-shadow 0.2s ease',
         }}
       >
         {justSaved
@@ -1310,12 +1341,12 @@ function WeightHistoryRow({ m, prevWeight, onDelete }) {
     }}>
       <span style={{ color: t.TEXT_DIM }}>{fmtDateShort(m.date)}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ color: t.TEXT, fontFamily: "'SF Mono', monospace", fontWeight: 600 }}>{m.weight} кг</span>
+        <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600 }}>{m.weight} кг</span>
         {delta != null && delta !== 0 && (
           <span style={{
-            display: 'flex', alignItems: 'center', gap: 3, fontFamily: "'SF Mono', monospace",
+            display: 'flex', alignItems: 'center', gap: 3, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
             fontSize: 12, fontWeight: 700, color: deltaColor,
-            background: isDown ? 'rgba(122,139,92,0.14)' : 'rgba(168,51,76,0.14)',
+            background: isDown ? t.POSITIVE_BG : t.ACCENT_BG,
             padding: '2px 7px', borderRadius: 6,
           }}>
             {isDown ? <TrendingDown size={11} /> : <TrendingUp size={11} />}
@@ -1353,7 +1384,7 @@ function WeekGroupRow({ weekStart, entries, onDelete }) {
           <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{expanded ? '▼' : '▶'}</span>
           {rangeLabel}
         </span>
-        <span style={{ color: t.TEXT, fontFamily: "'SF Mono', monospace", fontWeight: 600, fontSize: 13.5 }}>
+        <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600, fontSize: 13.5 }}>
           {avg != null ? `${avg} кг` : '—'} <span style={{ color: t.TEXT_FAINT, fontSize: 11.5, fontWeight: 400 }}>сред.</span>
         </span>
       </button>
@@ -1366,7 +1397,7 @@ function WeekGroupRow({ weekStart, entries, onDelete }) {
             }}>
               <span style={{ color: t.TEXT_FAINT }}>{fmtDateShort(m.date)}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace" }}>{m.weight} кг</span>
+                <span style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>{m.weight} кг</span>
                 {onDelete && (
                   <button
                     onClick={() => onDelete(m.id)}
@@ -1476,11 +1507,12 @@ function MeasurementsTab({ measurements, saveMeasurements, setError }) {
         disabled={saving}
         className={justSaved ? 'save-bounce' : ''}
         style={{
-          width: '100%', padding: '14px', borderRadius: 11, border: 'none',
-          background: justSaved ? t.POSITIVE : t.ACCENT, color: '#FFF',
+          width: '100%', padding: '15px', borderRadius: 16, border: 'none',
+          background: justSaved ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT,
           fontSize: 15.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
           opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
-          transition: 'background 0.2s ease',
+          boxShadow: justSaved ? 'none' : t.GLOW,
+          transition: 'background 0.2s ease, box-shadow 0.2s ease',
         }}
       >
         {justSaved ? 'Сохранено ✓' : saving ? 'Сохраняю...' : 'Сохранить вес'}
@@ -1503,7 +1535,7 @@ function MeasurementsTab({ measurements, saveMeasurements, setError }) {
                 padding: '10px 8px', textAlign: 'center',
               }}>
                 <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap' }}>{s.label}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: t.TEXT, fontFamily: "'SF Mono', monospace" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>
                   {s.value != null ? `${s.value}` : '—'}
                 </div>
               </div>
@@ -2077,16 +2109,20 @@ function LevelCard({ levelInfo, totalXp }) {
   return (
     <div style={{
       background: `linear-gradient(135deg, ${t.BG_RAISED}, ${t.BG_INPUT})`,
-      border: `1px solid ${t.BORDER}`, borderRadius: 14, padding: '16px 16px 14px', marginBottom: 20,
+      border: `1px solid ${t.BORDER}`, borderRadius: 20, padding: '18px', marginBottom: 20, boxShadow: t.CARD_SHADOW,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 12, background: t.ACCENT,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 16, fontWeight: 800, color: '#FFF', flexShrink: 0,
-          }}>
-            {levelInfo.level}
+          <div style={{ position: 'relative', width: 60, height: 60, flexShrink: 0 }}>
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <circle cx="30" cy="30" r="25" fill="none" stroke={t.BORDER} strokeWidth="5" />
+              <circle cx="30" cy="30" r="25" fill="none" stroke={t.ACCENT} strokeWidth="5" strokeLinecap="round"
+                strokeDasharray={2 * Math.PI * 25} strokeDashoffset={2 * Math.PI * 25 * (1 - pct / 100)}
+                transform="rotate(-90 30 30)" style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
+            </svg>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.FONT_DISPLAY, fontSize: 23, fontWeight: 700, color: t.TEXT }}>
+              {levelInfo.level}
+            </div>
           </div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: t.TEXT }}>Уровень {levelInfo.level}</div>
@@ -2105,7 +2141,7 @@ function LevelCard({ levelInfo, totalXp }) {
       <div style={{ height: 7, borderRadius: 4, background: t.BORDER, overflow: 'hidden' }}>
         <div style={{
           height: '100%', width: `${pct}%`, borderRadius: 4,
-          background: t.ACCENT, transition: 'width 0.4s ease',
+          background: t.ACCENT_GRAD, transition: 'width 0.4s ease',
         }} />
       </div>
     </div>
@@ -2176,12 +2212,12 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
               opacity: a.unlocked ? 1 : 0.5,
             }}>
               <div style={{
-                flexShrink: 0, width: 36, height: 36, borderRadius: 10,
-                background: a.unlocked ? 'rgba(168,51,76,0.16)' : t.BG_INPUT,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17,
-                filter: a.unlocked ? 'none' : 'grayscale(1)',
+                flexShrink: 0, width: 38, height: 38, borderRadius: 11,
+                background: a.unlocked ? t.ACCENT_BG : t.BG_INPUT,
+                border: `1px solid ${a.unlocked ? t.ACCENT_BORDER : t.BORDER}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                {a.icon}
+                {React.createElement(ACH_ICON[a.icon] || Award, { size: 18, color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT, strokeWidth: 1.8 })}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{a.title}</div>
@@ -2236,11 +2272,12 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
         disabled={saving}
         className={justSaved ? 'save-bounce' : ''}
         style={{
-          width: '100%', padding: '14px', borderRadius: 11, border: 'none',
-          background: justSaved ? t.POSITIVE : t.ACCENT, color: '#FFF',
+          width: '100%', padding: '15px', borderRadius: 16, border: 'none',
+          background: justSaved ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT,
           fontSize: 15.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
           opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
-          transition: 'background 0.2s ease',
+          boxShadow: justSaved ? 'none' : t.GLOW,
+          transition: 'background 0.2s ease, box-shadow 0.2s ease',
         }}
       >
         {justSaved ? 'Сохранено ✓' : saving ? 'Сохраняю...' : 'Сохранить параметры'}
@@ -2278,7 +2315,7 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%',
             padding: '14px 16px', borderRadius: 12, border: `1px solid ${t.ACCENT}`,
-            background: 'rgba(168,51,76,0.14)', color: t.ACCENT_SOFT, fontSize: 15, fontWeight: 700,
+            background: t.ACCENT_BG, color: t.ACCENT_SOFT, fontSize: 15, fontWeight: 700,
             cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
           }}
         >
@@ -2298,7 +2335,7 @@ function ProfileTab({ profile, saveProfile, sessions, setError, measurements, sa
   );
 }
 
-const SERIES_COLORS = ['#A8334C', '#5B8FB0', '#C9A227', '#5C8A4E', '#9B6FB5'];
+const SERIES_COLORS = ['#E08A3C', '#5B8FB0', '#C9A227', '#5C8A4E', '#9B6FB5'];
 
 const PERIODS = [
   { key: '1m', label: '1 мес', days: 30 },
@@ -2317,7 +2354,7 @@ function PeriodSelector({ value, onChange }) {
           onClick={() => onChange(p.key)}
           style={{
             flex: 1, padding: '7px 6px', borderRadius: 8, border: `1px solid ${value === p.key ? t.ACCENT : t.BORDER}`,
-            background: value === p.key ? 'rgba(168,51,76,0.14)' : 'transparent',
+            background: value === p.key ? t.ACCENT_BG : 'transparent',
             color: value === p.key ? t.ACCENT_SOFT : t.TEXT_DIM,
             fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
           }}
@@ -2369,7 +2406,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
                   onClick={() => onToggle(o.key)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', padding: '11px 14px',
-                    background: isSelected ? 'rgba(168,51,76,0.1)' : 'transparent', border: 'none',
+                    background: isSelected ? t.ACCENT_BG : 'transparent', border: 'none',
                     borderBottom: `1px solid ${t.BORDER}`, color: isSelected ? t.ACCENT_SOFT : t.TEXT,
                     fontSize: 14.5, fontWeight: isSelected ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
                   }}
@@ -2377,7 +2414,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
                   <span style={{
                     flexShrink: 0, width: 16, height: 16, borderRadius: 4, border: `2px solid ${isSelected ? t.ACCENT : t.TEXT_FAINT}`,
                     background: isSelected ? t.ACCENT : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#FFF',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: t.ON_ACCENT,
                   }}>
                     {isSelected ? '✓' : ''}
                   </span>
@@ -2426,7 +2463,7 @@ function MultiSeriesChart({ selectedSeries }) {
   if (selectedSeries.length === 0) return null;
 
   return (
-    <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 13, padding: '16px 16px 8px', marginBottom: 14 }}>
+    <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 18, padding: '16px 16px 8px', marginBottom: 14, boxShadow: t.CARD_SHADOW }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
         {selectedSeries.map((s) => {
           const pts = s.points;
@@ -2438,7 +2475,7 @@ function MultiSeriesChart({ selectedSeries }) {
               <span style={{ width: 9, height: 9, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
               <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.label}</span>
               {last && (
-                <span style={{ color: t.TEXT_FAINT, fontFamily: "'SF Mono', monospace" }}>
+                <span style={{ color: t.TEXT_FAINT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>
                   {last.value}{s.unit} {delta !== 0 && (delta > 0 ? `+${delta}` : delta)}
                 </span>
               )}
@@ -2488,7 +2525,7 @@ function MultiSeriesChart({ selectedSeries }) {
 function SessionCard({ s, onEdit, onDelete }) {
   const t = useTheme();
   return (
-    <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 12, padding: 14 }}>
+    <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 16, padding: 15, boxShadow: t.CARD_SHADOW }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT_DIM, textTransform: 'capitalize' }}>{fmtDateFull(s.date)}</span>
         <div style={{ display: 'flex', gap: 4 }}>
@@ -2512,7 +2549,7 @@ function SessionCard({ s, onEdit, onDelete }) {
                 <MuscleBadge name={ex.name} size={17} />
                 <span>{ex.name}</span>
               </div>
-              <div style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace", fontSize: 13 }}>
+              <div style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontSize: 13 }}>
                 {weightless ? `${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
               </div>
             </div>
@@ -2527,7 +2564,7 @@ function SessionCard({ s, onEdit, onDelete }) {
               fontSize: 13.5,
             }}>
               <div style={{ color: t.TEXT, marginBottom: 2 }}>{c.name}</div>
-              <div style={{ color: t.TEXT_DIM, fontFamily: "'SF Mono', monospace", fontSize: 13 }}>
+              <div style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontSize: 13 }}>
                 {isPool
                   ? `${c.duration} мин`
                   : <>{c.distance ? `${c.distance} км` : ''}{c.speed ? `${c.distance ? ' · ' : ''}${c.speed} км/ч` : ''}{c.incline ? `${(c.distance || c.speed) ? ' · ' : ''}накл. ${c.incline}%` : ''}{c.duration ? `${(c.distance || c.speed || c.incline) ? ' · ' : ''}${c.duration} мин` : ''}</>
@@ -2736,7 +2773,7 @@ function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditS
                 background: d.done ? t.ACCENT : 'transparent',
                 border: `2px solid ${d.done ? t.ACCENT : t.BORDER}`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 10, fontWeight: 700, color: d.done ? '#FFF' : t.TEXT_FAINT,
+                fontSize: 10, fontWeight: 700, color: d.done ? t.ON_ACCENT : t.TEXT_FAINT,
                 flexShrink: 0, opacity: d.isFuture ? 0.5 : 1,
               }}
             >
@@ -2746,7 +2783,7 @@ function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditS
         </div>
         {streaks.weekMultiplier > 0 && (
           <span style={{
-            fontSize: 13, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'SF Mono', monospace",
+            fontSize: 13, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
             flexShrink: 0,
           }}>
             ×{streaks.weekMultiplier}
@@ -2804,7 +2841,7 @@ function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditS
                   </div>
                 </div>
                 <div style={{
-                  fontSize: 17, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'SF Mono', monospace",
+                  fontSize: 17, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
                   flexShrink: 0, marginLeft: 12,
                 }}>
                   {r.weight} кг
@@ -2922,7 +2959,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
           onClick={() => setMode(mode === 'export' ? null : 'export')}
           style={{
             flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${mode === 'export' ? t.ACCENT : t.BORDER}`,
-            background: mode === 'export' ? 'rgba(168,51,76,0.16)' : t.BG_INPUT, color: mode === 'export' ? t.ACCENT_SOFT : t.TEXT,
+            background: mode === 'export' ? t.ACCENT_BG : t.BG_INPUT, color: mode === 'export' ? t.ACCENT_SOFT : t.TEXT,
             fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
@@ -2932,7 +2969,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
           onClick={() => setMode(mode === 'import' ? null : 'import')}
           style={{
             flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${mode === 'import' ? t.ACCENT : t.BORDER}`,
-            background: mode === 'import' ? 'rgba(168,51,76,0.16)' : t.BG_INPUT, color: mode === 'import' ? t.ACCENT_SOFT : t.TEXT,
+            background: mode === 'import' ? t.ACCENT_BG : t.BG_INPUT, color: mode === 'import' ? t.ACCENT_SOFT : t.TEXT,
             fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
@@ -2952,15 +2989,15 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
             onFocus={(e) => e.target.select()}
             style={{
               width: '100%', height: 100, background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8,
-              padding: '10px', color: t.TEXT_DIM, fontSize: 11, fontFamily: "'SF Mono', monospace",
+              padding: '10px', color: t.TEXT_DIM, fontSize: 11, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
               boxSizing: 'border-box', resize: 'vertical', marginBottom: 10,
             }}
           />
           <button
             onClick={handleCopy}
             style={{
-              width: '100%', padding: '11px', borderRadius: 8, border: 'none',
-              background: copied ? t.POSITIVE : t.ACCENT, color: '#FFF', fontSize: 14, fontWeight: 700,
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none',
+              background: copied ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
               cursor: 'pointer', fontFamily: 'inherit',
             }}
           >
@@ -2980,15 +3017,15 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
             placeholder="Вставь сюда скопированный текст..."
             style={{
               width: '100%', height: 100, background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8,
-              padding: '10px', color: t.TEXT, fontSize: 11, fontFamily: "'SF Mono', monospace",
+              padding: '10px', color: t.TEXT, fontSize: 11, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
               boxSizing: 'border-box', resize: 'vertical', marginBottom: 10,
             }}
           />
           <button
             onClick={handleImport}
             style={{
-              width: '100%', padding: '11px', borderRadius: 8, border: 'none',
-              background: t.ACCENT, color: '#FFF', fontSize: 14, fontWeight: 700,
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none',
+              background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
               cursor: 'pointer', fontFamily: 'inherit',
             }}
           >
@@ -3058,7 +3095,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       <div style={{
         background: t.BG, minHeight: '100vh', width: '100%',
         padding: '24px max(18px, env(safe-area-inset-right)) 40px max(18px, env(safe-area-inset-left))',
-        fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+        fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
         maxWidth: 480, margin: '0 auto', boxSizing: 'border-box', overflowX: 'hidden',
       }}>
         <style>{`
@@ -3092,7 +3129,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
     <div className="content-fade-in" style={{
       background: t.BG, minHeight: '100vh', width: '100%',
       padding: '24px max(18px, env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
-      fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+      fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
       transition: 'background-color 0.4s ease',
@@ -3154,7 +3191,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 22 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: t.TEXT, margin: 0, letterSpacing: '-0.01em' }}>
+          <h1 style={{ fontSize: 27, fontWeight: 700, color: t.TEXT, margin: 0, letterSpacing: '-0.02em', fontFamily: t.FONT_DISPLAY }}>
             Дневник тренировок
           </h1>
           <p style={{ fontSize: 13, color: t.TEXT_FAINT, margin: '4px 0 0' }}>
@@ -3165,7 +3202,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
 
       {error && (
         <div style={{
-          background: 'rgba(168,51,76,0.14)', border: `1px solid ${t.ACCENT}`, borderRadius: 9,
+          background: t.ACCENT_BG, border: `1px solid ${t.ACCENT}`, borderRadius: 9,
           padding: '10px 12px', fontSize: 13, color: t.ACCENT_SOFT, marginBottom: 16,
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
@@ -3218,7 +3255,10 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       }}>
         <div style={{
           display: 'flex', gap: 6, width: '100%', maxWidth: 480, minWidth: 0,
-          padding: '0 max(18px, env(safe-area-inset-right)) calc(26px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
+          padding: '8px',
+          margin: '0 max(14px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left))',
+          background: t.NAV_BG, backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+          border: `1px solid ${t.BORDER}`, borderRadius: 22, boxShadow: '0 14px 34px rgba(0,0,0,0.4)',
           boxSizing: 'border-box',
         }}>
           <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell}>Тренировка</Pill>
@@ -3343,18 +3383,18 @@ function AuthGate({ children }) {
   return (
     <div style={{
       background: t.BG, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 20, fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+      padding: 20, fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
     }}>
       <div style={{ width: '100%', maxWidth: 340 }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
           <div style={{
-            width: 52, height: 52, borderRadius: 16, background: t.BG_RAISED, border: `1px solid ${t.BORDER}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 72, height: 72, borderRadius: 22, background: `linear-gradient(150deg, ${t.BG_RAISED}, ${t.BG})`, border: `1px solid ${t.BORDER}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: t.GLOW,
           }}>
-            <Lock size={22} color={t.ACCENT_SOFT} />
+            <Dumbbell size={34} color={t.ACCENT} strokeWidth={1.6} />
           </div>
         </div>
-        <h1 style={{ color: t.TEXT, fontSize: 19, textAlign: 'center', margin: '0 0 6px', fontWeight: 800 }}>
+        <h1 style={{ color: t.TEXT, fontSize: 24, textAlign: 'center', margin: '0 0 6px', fontWeight: 700, fontFamily: t.FONT_DISPLAY, letterSpacing: '-0.01em' }}>
           {authMode === 'login' ? 'Вход' : 'Создай аккаунт'}
         </h1>
         <p style={{ color: t.TEXT_FAINT, fontSize: 13, textAlign: 'center', margin: '0 0 22px' }}>
@@ -3398,9 +3438,9 @@ function AuthGate({ children }) {
           onClick={handleSubmit}
           disabled={busy}
           style={{
-            width: '100%', padding: '13px', borderRadius: 11, border: 'none',
-            background: t.ACCENT, color: '#FFF', fontSize: 15, fontWeight: 700,
-            cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1, fontFamily: 'inherit', marginBottom: 12,
+            width: '100%', padding: '14px', borderRadius: 14, border: 'none',
+            background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 15, fontWeight: 700,
+            cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1, fontFamily: 'inherit', marginBottom: 12, boxShadow: t.GLOW,
           }}
         >
           {busy ? 'Проверяю...' : authMode === 'login' ? 'Войти' : 'Создать и войти'}
