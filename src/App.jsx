@@ -270,19 +270,19 @@ function Pill({ children, active, onClick, icon: Icon }) {
     <button
       onClick={onClick}
       style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-        padding: '13px 10px', borderRadius: 14, flex: active ? 1.6 : 0.7, minWidth: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        padding: active ? '13px 8px' : '13px 4px', borderRadius: 14, flex: active ? 2.6 : 0.55, minWidth: 0,
         border: `1px solid ${active ? t.ACCENT_BORDER : 'transparent'}`,
         background: active ? t.ACCENT_BG : 'transparent',
         color: active ? t.ACCENT_SOFT : t.TEXT_DIM,
         boxShadow: active ? t.GLOW : 'none',
-        fontSize: 14.5, fontWeight: 600, cursor: 'pointer',
+        fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
         transition: 'flex 0.25s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease',
         fontFamily: 'inherit',
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}
     >
-      {Icon && <Icon size={active ? 16 : 19} strokeWidth={2.2} style={{ flexShrink: 0, transition: 'all 0.2s ease' }} />}
+      {Icon && <Icon size={active ? 15 : 19} strokeWidth={2.2} style={{ flexShrink: 0, transition: 'all 0.2s ease' }} />}
       {active && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{children}</span>}
     </button>
   );
