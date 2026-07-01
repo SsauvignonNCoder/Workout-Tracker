@@ -10,12 +10,17 @@
 -- ============================================================
 
 -- Пользователи: либо через Telegram (telegram_id), либо через
--- логин + PIN, придуманные в браузере (display_name + pin_hash).
+-- логин + PIN, придуманные в браузере (display_name + pin_hash + pin_salt).
+-- pin_hash — scrypt(pin, pin_salt), а не голый sha256: без соли одинаковый
+-- PIN у разных людей даёт одинаковый хэш и перебирается почти мгновенно
+-- при утечке. pin_salt своя для каждого пользователя, генерируется на
+-- сервере при регистрации (см. api/browser-auth.js).
 create table users (
   id uuid primary key default gen_random_uuid(),
   display_name text not null,
   telegram_id bigint unique,
   pin_hash text,
+  pin_salt text,
   created_at timestamptz default now()
 );
 
@@ -64,17 +69,27 @@ create table profile (
 -- ============================================================
 -- Row Level Security
 -- Анонимный ключ (anon key) есть в коде фронтенда — это нормально
--- для Supabase, но имей в виду: доступ разделён по user_id только
--- на уровне логики приложения, а не настоящей Supabase Auth.
--- Для личного использования среди доверенных людей это ок,
--- но не банковский уровень защиты.
+-- для Supabase, но имей в виду: доступ к sessions/measurements/profile
+-- разделён по user_id только на уровне логики приложения (клиент сам
+-- фильтрует .eq('user_id', userId)), а не настоящей Supabase Auth.
+-- Для личного использования среди доверенных людей это ок, но не
+-- банковский уровень защиты — тот, кто узнает чужой user_id, сможет
+-- прочитать/изменить его данные напрямую через anon key.
+--
+-- Таблица users — отдельный случай: фронтенд к ней вообще не
+-- обращается напрямую (только serverless-функции api/*-auth.js через
+-- SUPABASE_SERVICE_ROLE_KEY, который не подчиняется RLS), поэтому для
+-- anon/authenticated она закрыта полностью — ни одной политики нет.
+-- Раньше здесь была политика "allow all", из-за которой pin_hash
+-- любого пользователя можно было прочитать напрямую через anon key,
+-- минуя сервер — это было закрыто.
 -- ============================================================
 alter table users enable row level security;
 alter table sessions enable row level security;
 alter table measurements enable row level security;
 alter table profile enable row level security;
 
-create policy "allow all users" on users for all using (true) with check (true);
+-- users: намеренно без политик — anon/authenticated не имеют доступа вообще.
 create policy "allow all sessions" on sessions for all using (true) with check (true);
 create policy "allow all measurements" on measurements for all using (true) with check (true);
 create policy "allow all profile" on profile for all using (true) with check (true);
