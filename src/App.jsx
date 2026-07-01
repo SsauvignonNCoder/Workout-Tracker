@@ -1658,21 +1658,25 @@ function isWeekend(iso) {
   return day === 0 || day === 6;
 }
 
-// Считает длину стрика последовательных тренировочных дней (Пн-Пт), заканчивающегося датой sessionDate.
-// Выходные пропускаются без влияния. Если предыдущий будний день без тренировки — стрик начинается с 1.
+// Считает длину стрика последовательных тренировочных дней, заканчивающегося датой sessionDate.
+// Будние дни без тренировки обрывают стрик. Выходные — особый случай: если в выходной была
+// тренировка, она наращивает стрик (награждаем за дополнительное усилие); если тренировки не
+// было — выходной пропускается без влияния (не обрывает и не наращивает), в отличие от буднего дня.
 function computeStreakForDate(activeDates, sessionDate) {
   let streak = 1;
   let cursor = shiftDate(sessionDate, -1);
   while (true) {
-    if (isWeekend(cursor)) { cursor = shiftDate(cursor, -1); continue; }
+    if (isWeekend(cursor)) {
+      if (activeDates.has(cursor)) { streak += 1; }
+      cursor = shiftDate(cursor, -1);
+      continue;
+    }
     if (activeDates.has(cursor)) { streak += 1; cursor = shiftDate(cursor, -1); continue; }
     break;
   }
   return streak;
 }
 
-// Пересчитывает итоговый XP по всей истории тренировок: 1 базовый XP за тренировку,
-// умноженный на стрик-множитель на момент этой тренировки (по датам, не по порядку сохранения).
 function computeTotalXpFromSessions(sessions) {
   const uniqueDates = [...new Set((sessions || []).map((s) => s.date))].sort();
   const activeDates = new Set(uniqueDates);
