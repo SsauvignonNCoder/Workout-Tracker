@@ -207,24 +207,39 @@ function useStorage(userId) {
     })();
   }, [userId]);
 
-  // Сохраняем весь список через upsert + удаление отсутствующих id —
-  // так проще переиспользовать логику из артефакта, где saveX(next) перезаписывал весь массив целиком.
+  // Сохраняем только то, что реально изменилось: сравниваем next с prev по id и
+  // по содержимому (через JSON.stringify самой строки для БД, чтобы формат сравнения
+  // всегда совпадал с тем, что реально уйдёт в upsert), и отправляем только
+  // изменившиеся/новые записи + удаляем только реально пропавшие id.
+  // Раньше здесь на каждое сохранение (даже правку одной тренировки) переупсерчивался
+  // весь массив целиком — работало корректно, но с ростом истории стало бы просто
+  // лишней нагрузкой на сеть и БД без всякой пользы.
+  async function diffAndUpsert(table, prevList, nextList, toRow) {
+    const prevById = new Map(prevList.map((item) => [item.id, item]));
+    const nextIds = new Set(nextList.map((item) => item.id));
+    const removedIds = [...prevById.keys()].filter((id) => !nextIds.has(id));
+
+    const changed = nextList.filter((item) => {
+      const prevItem = prevById.get(item.id);
+      if (!prevItem) return true; // новая запись
+      return JSON.stringify(toRow(prevItem, userId)) !== JSON.stringify(toRow(item, userId));
+    });
+
+    if (changed.length > 0) {
+      const { error: upsertErr } = await supabase.from(table).upsert(changed.map((item) => toRow(item, userId)));
+      if (upsertErr) throw upsertErr;
+    }
+    if (removedIds.length > 0) {
+      const { error: delErr } = await supabase.from(table).delete().in('id', removedIds);
+      if (delErr) throw delErr;
+    }
+  }
+
   const saveSessions = async (next) => {
     const prev = sessions || [];
     setSessions(next);
     try {
-      const prevIds = new Set(prev.map((s) => s.id));
-      const nextIds = new Set(next.map((s) => s.id));
-      const removedIds = [...prevIds].filter((id) => !nextIds.has(id));
-
-      if (next.length > 0) {
-        const { error: upsertErr } = await supabase.from('sessions').upsert(next.map((s) => sessionToRow(s, userId)));
-        if (upsertErr) throw upsertErr;
-      }
-      if (removedIds.length > 0) {
-        const { error: delErr } = await supabase.from('sessions').delete().in('id', removedIds);
-        if (delErr) throw delErr;
-      }
+      await diffAndUpsert('sessions', prev, next, sessionToRow);
     } catch (e) {
       setError('Не удалось сохранить — попробуй ещё раз');
     }
@@ -234,18 +249,7 @@ function useStorage(userId) {
     const prev = measurements || [];
     setMeasurements(next);
     try {
-      const prevIds = new Set(prev.map((m) => m.id));
-      const nextIds = new Set(next.map((m) => m.id));
-      const removedIds = [...prevIds].filter((id) => !nextIds.has(id));
-
-      if (next.length > 0) {
-        const { error: upsertErr } = await supabase.from('measurements').upsert(next.map((m) => measurementToRow(m, userId)));
-        if (upsertErr) throw upsertErr;
-      }
-      if (removedIds.length > 0) {
-        const { error: delErr } = await supabase.from('measurements').delete().in('id', removedIds);
-        if (delErr) throw delErr;
-      }
+      await diffAndUpsert('measurements', prev, next, measurementToRow);
     } catch (e) {
       setError('Не удалось сохранить — попробуй ещё раз');
     }
@@ -2897,6 +2901,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
   const [mode, setMode] = useState(null); // null | 'export' | 'import'
   const [importText, setImportText] = useState('');
   const [copied, setCopied] = useState(false);
+  const [confirmingImport, setConfirmingImport] = useState(false);
   const textareaRef = React.useRef(null);
 
   const exportText = useMemo(() => {
@@ -2933,6 +2938,13 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       setError('Вставь сохранённый текст экспорта');
       return;
     }
+    // Первое нажатие только просит подтверждение — само восстановление (которое
+    // затирает текущие тренировки/замеры/профиль) происходит вторым нажатием,
+    // чтобы случайная вставка не того текста не стёрла данные необратимо.
+    if (!confirmingImport) {
+      setConfirmingImport(true);
+      return;
+    }
     try {
       const data = JSON.parse(importText.trim());
       if (data.sessions) await saveSessions(data.sessions);
@@ -2940,7 +2952,9 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       if (data.profile) await saveProfile(data.profile);
       setMode(null);
       setImportText('');
+      setConfirmingImport(false);
     } catch (err) {
+      setConfirmingImport(false);
       setError('Не удалось прочитать текст — проверь, что это полная копия из экспорта');
     }
   };
@@ -2966,7 +2980,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
           Создать копию
         </button>
         <button
-          onClick={() => setMode(mode === 'import' ? null : 'import')}
+          onClick={() => { setMode(mode === 'import' ? null : 'import'); setConfirmingImport(false); }}
           style={{
             flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${mode === 'import' ? t.ACCENT : t.BORDER}`,
             background: mode === 'import' ? t.ACCENT_BG : t.BG_INPUT, color: mode === 'import' ? t.ACCENT_SOFT : t.TEXT,
@@ -3013,7 +3027,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
           </div>
           <textarea
             value={importText}
-            onChange={(e) => setImportText(e.target.value)}
+            onChange={(e) => { setImportText(e.target.value); setConfirmingImport(false); }}
             placeholder="Вставь сюда скопированный текст..."
             style={{
               width: '100%', height: 100, background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8,
@@ -3021,15 +3035,20 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
               boxSizing: 'border-box', resize: 'vertical', marginBottom: 10,
             }}
           />
+          {confirmingImport && (
+            <div style={{ fontSize: 12.5, color: t.ACCENT_SOFT, fontWeight: 600, marginBottom: 8, lineHeight: 1.4 }}>
+              Точно заменить текущие данные этой копией? Действие необратимо — нажми ещё раз, чтобы подтвердить.
+            </div>
+          )}
           <button
             onClick={handleImport}
             style={{
               width: '100%', padding: '12px', borderRadius: 12, border: 'none',
-              background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
+              background: confirmingImport ? t.ACCENT_DEEP : t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
               cursor: 'pointer', fontFamily: 'inherit',
             }}
           >
-            Восстановить данные
+            {confirmingImport ? 'Да, заменить данные' : 'Восстановить данные'}
           </button>
         </div>
       )}
@@ -3359,6 +3378,7 @@ function AuthGate({ children }) {
     setErr('');
     if (!name.trim()) { setErr('Введи имя'); return; }
     if (pin.length < 4) { setErr('PIN должен быть не короче 4 символов'); return; }
+    if (authMode === 'register' && !/^\d+$/.test(pin)) { setErr('PIN должен состоять только из цифр'); return; }
     setBusy(true);
     const result = await browserAuth(authMode, name.trim(), pin);
     setBusy(false);
