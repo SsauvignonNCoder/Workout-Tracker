@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { FileDown, Copy, Check } from 'lucide-react';
+import { FileDown, Copy, Check, Share2 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { fmtDateShort } from '../dateUtils.js';
 import { listExportableWeeks, buildWeekMarkdown, weekFilename } from '../weekExport.js';
@@ -14,6 +14,7 @@ export function WeekExportPanel({ sessions }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedWeek, setSelectedWeek] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [hint, setHint] = useState('');
   const textareaRef = React.useRef(null);
 
   const activeWeek = (selectedWeek && weeks.some((w) => w.weekStart === selectedWeek))
@@ -29,6 +30,9 @@ export function WeekExportPanel({ sessions }) {
 
   const labelFor = (w) => `${fmtDateShort(w.weekStart)} – ${fmtDateShort(w.weekEnd)} · ${w.count} трен.`;
   const activeMeta = weeks.find((w) => w.weekStart === activeWeek);
+
+  const filename = weekFilename(activeWeek);
+  const flash = (msg) => { setHint(msg); setTimeout(() => setHint(''), 4000); };
 
   const copy = async () => {
     try {
@@ -50,23 +54,51 @@ export function WeekExportPanel({ sessions }) {
     }
   };
 
-  const download = () => {
+  // Внутри Telegram Mini App (iOS WebView) ссылка `<a download>` не скачивает файл, а
+  // открывает залипающий просмотрщик Blob без кнопки закрытия. Поэтому основной путь —
+  // системный «Поделиться» (лист iOS/Android: «Сохранить в Файлы», отправить в чат и т.п.),
+  // а падение на Blob-скачивание делаем только вне Telegram (десктоп-браузеры).
+  const isTelegram = typeof window !== 'undefined'
+    && !!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.platform && window.Telegram.WebApp.platform !== 'unknown');
+
+  const shareFile = async () => {
+    try {
+      const file = new File([md], filename, { type: 'text/markdown' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return true;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return true; // пользователь закрыл лист — это нормально
+    }
+    return false;
+  };
+
+  const downloadBlob = () => {
     try {
       const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = weekFilename(activeWeek);
+      a.download = filename;
+      a.rel = 'noopener';
       document.body.appendChild(a);
       a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 1500);
+      setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+      return true;
     } catch (e) {
-      // На части мобильных браузеров/Telegram скачивание Blob может не сработать — тогда копируем.
-      copy();
+      return false;
     }
+  };
+
+  const save = async () => {
+    setHint('');
+    if (await shareFile()) return;                 // 1) системный лист «Поделиться»
+    if (!isTelegram && downloadBlob()) return;     // 2) обычное скачивание вне Telegram
+    const ok = await copy();                       // 3) в Telegram без Web Share — копируем текст
+    flash(ok
+      ? 'Скачивание тут недоступно — текст скопирован, вставь в заметки'
+      : 'Не удалось — выдели текст в поле выше и скопируй вручную');
   };
 
   return (
@@ -152,14 +184,14 @@ export function WeekExportPanel({ sessions }) {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button
-              onClick={download}
+              onClick={save}
               style={{
                 flex: 2, padding: '12px', borderRadius: 12, border: 'none',
                 background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
                 cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
               }}
             >
-              <FileDown size={16} /> Скачать .md
+              {isTelegram ? <><Share2 size={16} /> Сохранить .md</> : <><FileDown size={16} /> Скачать .md</>}
             </button>
             <button
               onClick={copy}
@@ -172,6 +204,10 @@ export function WeekExportPanel({ sessions }) {
               {copied ? <><Check size={15} /> Готово</> : <><Copy size={15} /> Копировать</>}
             </button>
           </div>
+
+          {hint && (
+            <div style={{ fontSize: 12, color: t.ACCENT_SOFT, marginTop: 8, lineHeight: 1.4 }}>{hint}</div>
+          )}
         </div>
       )}
     </div>
