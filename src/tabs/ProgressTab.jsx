@@ -5,6 +5,7 @@ import { useTheme } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
 import { MuscleBadge, isWeightlessExercise } from './workoutTabHelpers.jsx';
+import { WeekExportPanel } from './WeekExportPanel.jsx';
 
 function average(nums) {
   if (!nums.length) return null;
@@ -527,6 +528,10 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           </div>
         )
       )}
+
+      <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
+
+      <WeekExportPanel sessions={sessions} />
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
