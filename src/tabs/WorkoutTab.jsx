@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, X, Dumbbell, Pencil } from 'lucide-react';
+import { Plus, X, Dumbbell, Pencil, Play } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
 import { computeRecords } from '../gamification.js';
@@ -8,6 +8,7 @@ import {
   emptyExercise, emptyCardio, RepeatWorkoutPicker, ProgramDayPicker, WarmupTip,
   STARTER_EXERCISES, STARTER_CARDIO, PROGRAM_DAYS,
 } from './workoutTabHelpers.jsx';
+import { GuidedWorkout } from './GuidedWorkout.jsx';
 
 export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, editSession, onEditDone }) {
   const t = useTheme();
@@ -23,6 +24,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const [programDetached, setProgramDetached] = useState(false);
   const [showProgramPicker, setShowProgramPicker] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [guidedOpen, setGuidedOpen] = useState(false);
 
   useEffect(() => {
     if (editSession) {
@@ -30,6 +32,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       setDate(editSession.date);
       const exList = (editSession.exercises || []).map((e) => ({
         name: e.name, weight: String(e.weight || ''), reps: String(e.reps || ''), sets: String(e.sets || ''),
+        ...(e.setLog ? { setLog: e.setLog } : {}),
       }));
       setExercises(exList);
       const cardioList = (editSession.cardio || []).map((c) => ({
@@ -128,6 +131,17 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     setCardio(pickedCardio);
   };
 
+  // Завершение пошаговой тренировки: переносим записанные результаты в форму,
+  // чтобы Никита мог дописать сон/энергию/самочувствие и сохранить как обычно.
+  const handleGuidedComplete = (loggedExercises, loggedCardio) => {
+    if (loggedExercises.length > 0) setExercises(loggedExercises);
+    if (loggedCardio.length > 0) setCardio(loggedCardio);
+    setGuidedOpen(false);
+    setJustAppliedProgram(true);
+    setTimeout(() => setJustAppliedProgram(false), 1500);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const records = useMemo(() => computeRecords(sessions), [sessions]);
 
   const updateExercise = (i, val) => {
@@ -158,6 +172,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         weight: Math.max(0, parseFloat(e.weight) || 0),
         reps: Math.max(0, parseInt(e.reps) || 0),
         sets: Math.max(1, parseInt(e.sets) || 1),
+        ...(Array.isArray(e.setLog) && e.setLog.length ? { setLog: e.setLog } : {}),
       }));
     const validCardio = cardio
       .filter((c) => c.name.trim())
@@ -273,6 +288,20 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         <div style={{ marginBottom: 14 }}>
           <ProgramDayPicker value={1} onChange={applyProgramDay} />
         </div>
+      )}
+
+      {programDay && !editingId && (
+        <button
+          onClick={() => setGuidedOpen(true)}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
+            background: t.ACCENT_GRAD, color: t.ON_ACCENT, border: 'none', borderRadius: 14,
+            padding: '14px', fontSize: 15.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            marginBottom: 16, boxShadow: t.GLOW, boxSizing: 'border-box',
+          }}
+        >
+          <Play size={18} /> Начать тренировку
+        </button>
       )}
 
       {programDay && (() => {
@@ -408,6 +437,19 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           ? (editingId ? 'Изменения сохранены ✓' : 'Сохранено ✓')
           : saving ? 'Сохраняю...' : (editingId ? 'Сохранить изменения' : 'Сохранить тренировку')}
       </button>
+
+      {guidedOpen && programDay && (() => {
+        const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
+        if (!dayPlan) return null;
+        return (
+          <GuidedWorkout
+            dayPlan={dayPlan}
+            records={records}
+            onClose={() => setGuidedOpen(false)}
+            onComplete={handleGuidedComplete}
+          />
+        );
+      })()}
     </div>
   );
 }
