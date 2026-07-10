@@ -119,11 +119,20 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
   });
 
   // ---- Таймер отдыха ----
+  // Отсчёт по МЕТКЕ времени окончания (restEndRef), а не по «тиканью» setInterval:
+  // когда экран гаснет / приложение уходит в фон, интервал замирает, поэтому
+  // remaining всегда вычисляем из restEndRef и пересчитываем при возврате в
+  // приложение (visibilitychange/focus/pageshow). Звук при выключенном экране
+  // обеспечивает бот-уведомление (scheduleBotAlert), т.к. клиентский JS в этот
+  // момент заморожен.
   const [restRemaining, setRestRemaining] = useState(0);
   const [restActive, setRestActive] = useState(false);
   const [restDone, setRestDone] = useState(false);
   const intervalRef = useRef(null);
   const audioRef = useRef(null);
+  const restEndRef = useRef(0);
+  const restActiveRef = useRef(false);
+  const restMsgIdRef = useRef(null); // id запланированного бот-уведомления (для отмены)
 
   const scrollRef = useRef(null);
 
@@ -160,8 +169,59 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
   };
 
-  const startRest = useCallback(() => {
-    // Разблокируем аудио по пользовательскому жесту.
+  // Планирование бот-уведомления (звук в наушники при выключенном экране).
+  // Вне Telegram (нет initData) — тихо пропускаем: работает только клиентский таймер.
+  const scheduleBotAlert = useCallback(async (durationSec) => {
+    try {
+      const tg = window.Telegram && window.Telegram.WebApp;
+      const initData = tg && tg.initData;
+      if (!initData) return;
+      const r = await fetch('/api/rest-schedule', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initData, duration: durationSec }),
+      });
+      if (!r.ok) return;
+      const data = await r.json().catch(() => null);
+      if (data && data.messageId) restMsgIdRef.current = data.messageId;
+    } catch (e) { /* сеть/бэкенд недоступны — клиентский таймер всё равно работает */ }
+  }, []);
+
+  const cancelBotAlert = useCallback(async () => {
+    const id = restMsgIdRef.current;
+    restMsgIdRef.current = null;
+    if (!id) return;
+    try {
+      await fetch('/api/rest-cancel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: id }),
+      });
+    } catch (e) { /* no-op */ }
+  }, []);
+
+  const finishRest = useCallback(() => {
+    clearTimer();
+    restActiveRef.current = false;
+    setRestActive(false);
+    setRestRemaining(0);
+    setRestDone(true);
+    // Приложение открыто → сигналим сами и снимаем бот-уведомление (иначе задвоит).
+    // Экран был выключен → бот уже прозвучал в наушники; отмена ниже — безопасный no-op.
+    const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+    if (visible) playBeep();
+    cancelBotAlert();
+  }, [playBeep, cancelBotAlert]);
+
+  const tick = useCallback(() => {
+    const rem = Math.max(0, Math.round((restEndRef.current - Date.now()) / 1000));
+    setRestRemaining(rem);
+    if (rem <= 0) finishRest();
+  }, [finishRest]);
+
+  const tickRef = useRef(tick);
+  useEffect(() => { tickRef.current = tick; }, [tick]);
+
+  const startRest = useCallback((durationSec = REST_SECONDS) => {
+    // Разблокируем аудио по пользовательскому жесту (важно для iOS/Telegram).
     try {
       if (!audioRef.current) {
         const AC = window.AudioContext || window.webkitAudioContext;
@@ -175,35 +235,51 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     } catch (e) { /* no-op */ }
 
     clearTimer();
+    restEndRef.current = Date.now() + durationSec * 1000;
+    restActiveRef.current = true;
     setRestDone(false);
     setRestActive(true);
-    setRestRemaining(REST_SECONDS);
-    intervalRef.current = setInterval(() => {
-      setRestRemaining((prev) => {
-        if (prev <= 1) {
-          clearTimer();
-          setRestActive(false);
-          setRestDone(true);
-          playBeep();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, [playBeep]);
+    setRestRemaining(durationSec);
+    scheduleBotAlert(durationSec);
+    intervalRef.current = setInterval(() => { tickRef.current(); }, 500);
+  }, [scheduleBotAlert]);
 
   const skipRest = useCallback(() => {
     clearTimer();
+    restActiveRef.current = false;
     setRestActive(false);
     setRestDone(false);
     setRestRemaining(0);
+    cancelBotAlert();
     try {
       const tg = window.Telegram && window.Telegram.WebApp;
       if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('rigid');
     } catch (e) { /* no-op */ }
+  }, [cancelBotAlert]);
+
+  // Пересчёт при возврате в приложение (экран включили / развернули из фона).
+  useEffect(() => {
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && restActiveRef.current) {
+        try { if (audioRef.current && audioRef.current.state === 'suspended') audioRef.current.resume(); } catch (e) { /* no-op */ }
+        tickRef.current();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+    };
   }, []);
 
-  useEffect(() => () => { clearTimer(); try { audioRef.current && audioRef.current.close(); } catch (e) { /* no-op */ } }, []);
+  useEffect(() => () => {
+    clearTimer();
+    cancelBotAlert();
+    try { audioRef.current && audioRef.current.close(); } catch (e) { /* no-op */ }
+  }, [cancelBotAlert]);
 
   // При смене шага — прокрутка наверх.
   useEffect(() => {
@@ -309,14 +385,19 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     });
 
     clearTimer();
+    cancelBotAlert();
     onComplete(outEx, outCardio);
   };
 
   const goNext = () => {
+    if (restActiveRef.current) skipRest();
     if (isLast) { finish(); return; }
     setStepIdx((i) => Math.min(steps.length - 1, i + 1));
   };
-  const goPrev = () => setStepIdx((i) => Math.max(0, i - 1));
+  const goPrev = () => {
+    if (restActiveRef.current) skipRest();
+    setStepIdx((i) => Math.max(0, i - 1));
+  };
 
   if (!step) {
     return null;
@@ -369,7 +450,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
             </div>
           </div>
           <button
-            onClick={() => { clearTimer(); onClose(); }}
+            onClick={() => { clearTimer(); cancelBotAlert(); onClose(); }}
             aria-label="Закрыть"
             style={{
               flexShrink: 0, width: 40, height: 40, borderRadius: 11, border: `1px solid ${t.BORDER}`,
