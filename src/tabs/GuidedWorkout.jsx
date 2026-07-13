@@ -4,7 +4,7 @@ import {
   Flame, Dumbbell, CheckCircle2, Plus, Flag, Route,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
-import { Field, getInputStyle, MuscleBadge, isWeightlessExercise } from './workoutTabHelpers.jsx';
+import { Field, getInputStyle, MuscleBadge, isWeightlessExercise, secToClock, parseClock } from './workoutTabHelpers.jsx';
 
 const REST_SECONDS = 120;
 
@@ -64,22 +64,26 @@ function fmtClock(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function emptySector() { return { distance: '', speed: '', incline: '', duration: '' }; }
+function emptySector() { return { distance: '', speed: '', incline: '', clock: '' }; }
 
 // Буква сектора: 0→A, 1→B … после Z — просто номер.
 function sectorLabel(i) { return i < 26 ? String.fromCharCode(65 + i) : String(i + 1); }
 
-// Сумма по выбранной метрике (дистанция км или время мин) — то, что засчитывается в цель.
-function sectorSum(data) {
+// Достигнуто в единицах цели: дистанция — сумма км; время — максимум по нарастающему
+// таймеру дорожки (последнее показание), приведённое к минутам.
+function sectorAchieved(data) {
   if (!data) return 0;
-  const key = data.metric === 'time' ? 'duration' : 'distance';
-  return (data.sectors || []).reduce((acc, s) => acc + (parseFloat(s[key]) || 0), 0);
+  if (data.metric === 'time') {
+    const maxSec = (data.sectors || []).reduce((mx, s) => Math.max(mx, parseClock(s.clock)), 0);
+    return maxSec / 60; // минуты
+  }
+  return (data.sectors || []).reduce((acc, s) => acc + (parseFloat(s.distance) || 0), 0); // км
 }
 
 function sectorGoalReached(data) {
   const target = parseFloat(data && data.target) || 0;
   if (target <= 0) return false;
-  return sectorSum(data) + 1e-9 >= target;
+  return sectorAchieved(data) + 1e-9 >= target;
 }
 
 function trimNum(n) { return String(+(Number(n).toFixed(2))); }
@@ -369,17 +373,25 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     });
 
     // Секторы кардио-дня — каждый сектор отдельной записью «Сектор A/B/…».
+    // Время вводится как нарастающее показание таймера дорожки (мм:сс); длительность
+    // самого сектора (дельту) считаем как разницу с предыдущим сектором.
     steps.forEach((s, i) => {
       if (s.kind !== 'sectors') return;
       const data = sectorLogs[i];
       if (!data) return;
+      let prevCum = 0;
       (data.sectors || []).forEach((sec, si) => {
+        const cumSec = parseClock(sec.clock);
         const hasData = (parseFloat(sec.distance) || 0) > 0 || (parseFloat(sec.speed) || 0) > 0
-          || (parseFloat(sec.incline) || 0) > 0 || (parseInt(sec.duration) || 0) > 0;
+          || (parseFloat(sec.incline) || 0) > 0 || cumSec > 0;
         if (!hasData) return;
+        const deltaSec = cumSec > 0 ? Math.max(0, cumSec - prevCum) : 0;
+        if (cumSec > 0) prevCum = cumSec;
         outCardio.push({
           name: `Сектор ${sectorLabel(si)}`,
-          distance: sec.distance || '', speed: sec.speed || '', incline: sec.incline || '', duration: sec.duration || '',
+          distance: sec.distance || '', speed: sec.speed || '', incline: sec.incline || '',
+          duration: deltaSec ? String(Math.round(deltaSec / 60)) : '',
+          durationSec: deltaSec || 0,
         });
       });
     });
@@ -571,7 +583,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
               const target = parseFloat(secData && secData.target) || 0;
               const unit = secData && secData.metric === 'time' ? 'мин' : 'км';
               if (target <= 0) lockedLabel = 'Укажи цель тренировки';
-              else lockedLabel = `Осталось ${trimNum(Math.max(0, target - sectorSum(secData)))} ${unit}`;
+              else lockedLabel = `Осталось ${trimNum(Math.max(0, target - sectorAchieved(secData)))} ${unit}`;
             }
             return (
               <button
@@ -768,11 +780,19 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
   const d = data || { metric: 'distance', target: '', sectors: [] };
   const isTime = d.metric === 'time';
   const unit = isTime ? 'мин' : 'км';
-  const goalKey = isTime ? 'duration' : 'distance';
   const target = parseFloat(d.target) || 0;
-  const sum = sectorSum(d);
+  const achieved = sectorAchieved(d);
   const reached = sectorGoalReached(d);
-  const pct = target > 0 ? Math.min(100, (sum / target) * 100) : 0;
+  const pct = target > 0 ? Math.min(100, (achieved / target) * 100) : 0;
+
+  // Ввод таймера дорожки: авто-подстановка двоеточия (754 → 7:54) — чтобы можно было
+  // печатать с цифровой клавиатуры без ручного двоеточия.
+  const onClockChange = (si, raw) => {
+    const digits = String(raw).replace(/\D/g, '').slice(0, 4);
+    let formatted = digits;
+    if (digits.length > 2) formatted = `${digits.slice(0, digits.length - 2)}:${digits.slice(-2)}`;
+    onField(si, { clock: formatted });
+  };
 
   const metricBtn = (key, label) => {
     const active = d.metric === key;
@@ -826,7 +846,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
               <Route size={13} /> Пройдено
             </span>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: reached ? t.POSITIVE : t.TEXT, fontFamily: t.FONT_MONO }}>
-              {trimNum(sum)} / {target > 0 ? trimNum(target) : '—'} {unit}
+              {trimNum(achieved)} / {target > 0 ? trimNum(target) : '—'} {unit}
             </span>
           </div>
           <div style={{ height: 8, borderRadius: 5, background: t.BG_INPUT, overflow: 'hidden' }}>
@@ -845,14 +865,14 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
 
       {/* Секторы */}
       {(d.sectors || []).map((sec, si) => {
-        const isGoalField = (key) => key === goalKey;
-        const inputBlock = (key, label, inputMode) => (
+        const distHighlight = !isTime; // при цели по дистанции подсвечиваем дистанцию
+        const inputBlock = (key, label, inputMode, highlight) => (
           <div style={{ flex: '1 1 45%', minWidth: 120 }}>
-            <Field label={isGoalField(key) ? `${label} · цель` : label}>
+            <Field label={highlight ? `${label} · цель` : label}>
               <input
                 style={{
                   ...getInputStyle(t),
-                  border: isGoalField(key) ? `1px solid ${t.ACCENT}` : `1px solid ${t.BORDER}`,
+                  border: highlight ? `1px solid ${t.ACCENT}` : `1px solid ${t.BORDER}`,
                 }}
                 type="number" inputMode={inputMode} min="0"
                 value={sec[key] || ''} onChange={(e) => onField(si, { [key]: e.target.value })}
@@ -861,6 +881,9 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
             </Field>
           </div>
         );
+        const cumSec = parseClock(sec.clock);
+        const prevSec = si > 0 ? parseClock(d.sectors[si - 1].clock) : 0;
+        const deltaSec = cumSec > 0 ? Math.max(0, cumSec - prevSec) : 0;
         return (
           <div key={si} style={{
             background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 16,
@@ -889,11 +912,28 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
               )}
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {inputBlock('distance', 'Дистанция, км', 'decimal')}
-              {inputBlock('speed', 'Скорость, км/ч', 'decimal')}
-              {inputBlock('incline', 'Наклон, %', 'decimal')}
-              {inputBlock('duration', 'Время, мин', 'numeric')}
+              {inputBlock('distance', 'Дистанция, км', 'decimal', distHighlight)}
+              {inputBlock('speed', 'Скорость, км/ч', 'decimal', false)}
+              {inputBlock('incline', 'Наклон, %', 'decimal', false)}
+              <div style={{ flex: '1 1 45%', minWidth: 120 }}>
+                <Field label={`Таймер дорожки, мм:сс${isTime ? ' · цель' : ''}`}>
+                  <input
+                    style={{
+                      ...getInputStyle(t),
+                      border: isTime ? `1px solid ${t.ACCENT}` : `1px solid ${t.BORDER}`,
+                    }}
+                    type="text" inputMode="numeric"
+                    value={sec.clock || ''} onChange={(e) => onClockChange(si, e.target.value)}
+                    placeholder="7:54"
+                  />
+                </Field>
+              </div>
             </div>
+            {deltaSec > 0 && (
+              <div style={{ marginTop: 9, fontSize: 11.5, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO }}>
+                Длительность сектора: <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>+{secToClock(deltaSec)}</span>
+              </div>
+            )}
           </div>
         );
       })}

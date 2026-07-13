@@ -272,6 +272,31 @@ export function isWeightlessExercise(name) {
   return /планка|русский твист|скручиван.*наклон/.test(n);
 }
 
+// Время: секунды → «M:SS» или «H:MM:SS» (для нарастающего таймера секторов).
+export function secToClock(sec) {
+  const total = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = h ? String(m).padStart(2, '0') : String(m);
+  return (h ? `${h}:` : '') + `${mm}:${String(s).padStart(2, '0')}`;
+}
+
+// «мм:сс» / «ч:мм:сс» / «12» → секунды. Пусто → 0. Число без двоеточия трактуется как минуты.
+export function parseClock(str) {
+  if (str == null) return 0;
+  const raw = String(str).trim();
+  if (!raw) return 0;
+  if (!raw.includes(':')) {
+    const n = parseFloat(raw.replace(',', '.'));
+    return isNaN(n) ? 0 : Math.round(n * 60);
+  }
+  const parts = raw.split(':').map((p) => parseInt(p, 10) || 0);
+  let sec = 0;
+  parts.forEach((p) => { sec = sec * 60 + p; });
+  return sec;
+}
+
 // Определяет, какие поля показывать для конкретного вида кардио.
 // distance / speed / incline / duration — какие из них релевантны.
 export function getCardioFields(name) {

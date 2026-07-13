@@ -38,6 +38,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       const cardioList = (editSession.cardio || []).map((c) => ({
         name: c.name, distance: String(c.distance || ''), speed: String(c.speed || ''),
         incline: String(c.incline || ''), duration: String(c.duration || ''),
+        ...(c.durationSec != null ? { durationSec: c.durationSec } : {}),
       }));
       setCardio(cardioList);
       setSleep(editSession.sleep != null ? String(editSession.sleep) : '');
@@ -126,6 +127,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     const pickedCardio = (s.cardio || []).map((c) => ({
       name: c.name, distance: String(c.distance || ''), speed: String(c.speed || ''),
       incline: String(c.incline || ''), duration: String(c.duration || ''),
+      ...(c.durationSec != null ? { durationSec: c.durationSec } : {}),
     }));
     setExercises(pickedExercises.length > 0 ? pickedExercises : [emptyExercise()]);
     setCardio(pickedCardio);
@@ -182,6 +184,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         speed: Math.max(0, parseFloat(c.speed) || 0),
         incline: Math.max(0, parseFloat(c.incline) || 0),
         duration: Math.max(0, parseInt(c.duration) || 0),
+        ...(c.durationSec != null ? { durationSec: Math.max(0, parseInt(c.durationSec) || 0) } : {}),
       }));
     if (validExercises.length === 0 && validCardio.length === 0) {
       setError('Добавь хотя бы одно упражнение или кардио');

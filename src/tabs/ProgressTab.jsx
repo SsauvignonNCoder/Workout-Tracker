@@ -4,7 +4,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { useTheme } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
-import { MuscleBadge, isWeightlessExercise } from './workoutTabHelpers.jsx';
+import { MuscleBadge, isWeightlessExercise, secToClock } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
 
 function average(nums) {
@@ -199,8 +199,93 @@ function MultiSeriesChart({ selectedSeries }) {
   );
 }
 
+const MONO = "'JetBrains Mono', 'SF Mono', monospace";
+const SECTOR_RE = /^сектор\s/i;
+
+// Плитки подходов: вес ярче, крестик с воздухом, повторы приглушены.
+function SetChips({ setLog, weightless }) {
+  const t = useTheme();
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, marginTop: 5 }}>
+      {setLog.map((s, i) => (
+        <span key={i} style={{
+          background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 9,
+          padding: '6px 12px', fontFamily: MONO, fontSize: 13, display: 'inline-flex', alignItems: 'center',
+        }}>
+          {weightless ? (
+            <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.reps}</span>
+          ) : (
+            <>
+              <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.weight}</span>
+              <span style={{ color: t.TEXT_FAINT, margin: '0 7px' }}>×</span>
+              <span style={{ color: t.TEXT_DIM }}>{s.reps}</span>
+            </>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Блок секторов кардио: нарастающее время (мм:сс) + длительность каждого сектора.
+function SectorBlock({ sectors }) {
+  const t = useTheme();
+  let cum = 0;
+  const rows = sectors.map((c) => {
+    const delta = c.durationSec != null ? c.durationSec : (parseFloat(c.duration) || 0) * 60;
+    cum += delta;
+    return { c, delta, cum };
+  });
+  const totalDist = sectors.reduce((a, c) => a + (parseFloat(c.distance) || 0), 0);
+  const totalSec = cum;
+  const secLetter = (name) => (name || '').replace(SECTOR_RE, '').trim() || '·';
+
+  return (
+    <div style={{ padding: '9px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: t.TEXT, display: 'flex', alignItems: 'center', gap: 6 }}>
+          🏃 Кардио по секторам · {sectors.length}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, fontFamily: MONO }}>
+          {totalDist > 0 ? `${Math.round(totalDist * 100) / 100} км · ` : ''}{secToClock(totalSec)}
+        </span>
+      </div>
+      {rows.map(({ c, delta, cum: cumSec }, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'center', gap: 11, padding: '6px 0',
+          borderBottom: i === rows.length - 1 ? 'none' : `1px solid ${t.BORDER}`,
+        }}>
+          <span style={{
+            width: 22, height: 22, borderRadius: 7, background: t.ACCENT_BG, color: t.ACCENT_SOFT,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, fontWeight: 700, fontFamily: MONO, flexShrink: 0,
+          }}>{secLetter(c.name)}</span>
+          <span style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 11.5, color: t.TEXT_DIM }}>
+            {[c.distance ? `${c.distance} км` : '', c.speed ? `${c.speed} км/ч` : '', c.incline ? `накл. ${c.incline}%` : '']
+              .filter(Boolean).join(' · ') || '—'}
+          </span>
+          <span style={{ textAlign: 'right', flexShrink: 0, fontFamily: MONO }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: t.TEXT }}>{secToClock(cumSec)}</div>
+            {delta > 0 && <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, marginTop: 1 }}>+{secToClock(delta)}</div>}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SessionCard({ s, onEdit, onDelete }) {
   const t = useTheme();
+  const cardioAll = s.cardio || [];
+  const sectorEntries = cardioAll.filter((c) => SECTOR_RE.test((c.name || '').trim()));
+  const regularCardio = cardioAll.filter((c) => !SECTOR_RE.test((c.name || '').trim()));
+
+  // Единый список блоков — чтобы аккуратно убрать нижнюю границу у последнего.
+  const blocks = [];
+  (s.exercises || []).forEach((ex, i) => blocks.push({ kind: 'ex', ex, key: `ex-${i}` }));
+  regularCardio.forEach((c, i) => blocks.push({ kind: 'cardio', c, key: `c-${i}` }));
+  if (sectorEntries.length) blocks.push({ kind: 'sectors', sectors: sectorEntries, key: 'sectors' });
+
   return (
     <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 16, padding: 15, boxShadow: t.CARD_SHADOW }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -215,38 +300,47 @@ function SessionCard({ s, onEdit, onDelete }) {
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {(s.exercises || []).map((ex, i) => {
-          const isLastOverall = i === (s.exercises.length - 1) && (!s.cardio || s.cardio.length === 0);
-          const weightless = isWeightlessExercise(ex.name);
+        {blocks.map((b, bi) => {
+          const last = bi === blocks.length - 1;
+          const rowStyle = { padding: '7px 0', borderBottom: last ? 'none' : `1px solid ${t.BORDER}`, fontSize: 13.5 };
+          if (b.kind === 'ex') {
+            const ex = b.ex;
+            const weightless = isWeightlessExercise(ex.name);
+            const hasSetLog = Array.isArray(ex.setLog) && ex.setLog.length > 0;
+            return (
+              <div key={b.key} style={rowStyle}>
+                <div style={{ color: t.TEXT, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <MuscleBadge name={ex.name} size={17} />
+                  <span>{ex.name}</span>
+                </div>
+                {hasSetLog ? (
+                  <SetChips setLog={ex.setLog} weightless={weightless} />
+                ) : (
+                  <div style={{ color: t.TEXT_DIM, fontFamily: MONO, fontSize: 13 }}>
+                    {weightless ? `${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          if (b.kind === 'cardio') {
+            const c = b.c;
+            const isPool = c.name.trim().toLowerCase().includes('бассейн');
+            return (
+              <div key={b.key} style={rowStyle}>
+                <div style={{ color: t.TEXT, marginBottom: 2 }}>{c.name}</div>
+                <div style={{ color: t.TEXT_DIM, fontFamily: MONO, fontSize: 13 }}>
+                  {isPool
+                    ? `${c.duration} мин`
+                    : <>{c.distance ? `${c.distance} км` : ''}{c.speed ? `${c.distance ? ' · ' : ''}${c.speed} км/ч` : ''}{c.incline ? `${(c.distance || c.speed) ? ' · ' : ''}накл. ${c.incline}%` : ''}{c.duration ? `${(c.distance || c.speed || c.incline) ? ' · ' : ''}${c.duration} мин` : ''}</>
+                  }
+                </div>
+              </div>
+            );
+          }
           return (
-            <div key={`ex-${i}`} style={{
-              padding: '7px 0', borderBottom: isLastOverall ? 'none' : `1px solid ${t.BORDER}`, fontSize: 13.5,
-            }}>
-              <div style={{ color: t.TEXT, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 7 }}>
-                <MuscleBadge name={ex.name} size={17} />
-                <span>{ex.name}</span>
-              </div>
-              <div style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontSize: 13 }}>
-                {weightless ? `${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
-              </div>
-            </div>
-          );
-        })}
-        {(s.cardio || []).map((c, i) => {
-          const isPool = c.name.trim().toLowerCase().includes('бассейн');
-          return (
-            <div key={`c-${i}`} style={{
-              padding: '7px 0',
-              borderBottom: i === (s.cardio.length - 1) ? 'none' : `1px solid ${t.BORDER}`,
-              fontSize: 13.5,
-            }}>
-              <div style={{ color: t.TEXT, marginBottom: 2 }}>{c.name}</div>
-              <div style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontSize: 13 }}>
-                {isPool
-                  ? `${c.duration} мин`
-                  : <>{c.distance ? `${c.distance} км` : ''}{c.speed ? `${c.distance ? ' · ' : ''}${c.speed} км/ч` : ''}{c.incline ? `${(c.distance || c.speed) ? ' · ' : ''}накл. ${c.incline}%` : ''}{c.duration ? `${(c.distance || c.speed || c.incline) ? ' · ' : ''}${c.duration} мин` : ''}</>
-                }
-              </div>
+            <div key={b.key} style={{ borderBottom: last ? 'none' : `1px solid ${t.BORDER}` }}>
+              <SectorBlock sectors={b.sectors} />
             </div>
           );
         })}
