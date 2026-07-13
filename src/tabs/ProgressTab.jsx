@@ -34,9 +34,14 @@ const CREAM = '#F2EBDD';
 const ON_CREAM = '#0A0A0A';
 const ON_CREAM_MUTED = '#6B655A';
 const CREAM_BLUR = {};
-// Фрост-стекло для полупрозрачных плашек над полосатым фоном — чтобы полосы не мешали читать текст.
-export const FROST = { background: 'rgba(23,21,18,0.55)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' };
-export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.055) 0px, rgba(242,224,166,0.055) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.05) 11px, rgba(184,146,74,0.05) 12.5px, transparent 12.5px, transparent 22px)';
+// Фрост-стекло для полупрозрачных плашек над полосатым фоном. Подложка НАМЕРЕННО лёгкая
+// (~0.28), иначе она перекрывает эффект и блюр «не виден» — тот же приём, что в таб-баре.
+export const FROST = {
+  background: 'rgba(20,18,15,0.44)',
+  backdropFilter: 'blur(18px) saturate(1.35)',
+  WebkitBackdropFilter: 'blur(18px) saturate(1.35)',
+};
+export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.038) 0px, rgba(242,224,166,0.038) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.032) 11px, rgba(184,146,74,0.032) 12.5px, transparent 12.5px, transparent 22px)';
 export const BG_2A = '#0A0A0A';
 export const BRASS_SHEEN = 'linear-gradient(100deg,#6E5424 0%,#C79A4E 14%,#F5E3AE 24%,#FFF6DC 30%,#F5E3AE 36%,#C79A4E 46%,#8B6B2E 58%,#C79A4E 70%,#F5E3AE 78%,#C79A4E 88%,#6E5424 100%)';
 // Блик берётся из CSS-переменной --shine (её пишет useBrassShine на ref-контейнере).
