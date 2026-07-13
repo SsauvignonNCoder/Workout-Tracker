@@ -3,7 +3,7 @@ import { Dumbbell, Ruler, LineChart as LineIcon, User, X } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
 import { ThemeContext, useTheme, useThemeController } from './theme.js';
 import { useBrassShine } from './useBrassShine.js';
-import { brassFill, STRIPES_2A, BG_2A } from './tabs/ProgressTab.jsx';
+import { brassFill, STRIPES_2A, THEME_2A } from './tabs/ProgressTab.jsx';
 import { AuthGate } from './auth.jsx';
 import { WorkoutTab } from './tabs/WorkoutTab.jsx';
 import { MeasurementsTab } from './tabs/MeasurementsTab.jsx';
@@ -256,7 +256,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       <div style={{
         background: t.BG, minHeight: '100vh', width: '100%',
         padding: '24px max(18px, env(safe-area-inset-right)) 40px max(18px, env(safe-area-inset-left))',
-        fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
+        fontFamily: t.FONT,
         maxWidth: 480, margin: '0 auto', boxSizing: 'border-box', overflowX: 'hidden',
       }}>
         <style>{`
@@ -286,25 +286,20 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
     );
   }
 
-  const isProgress = tab === 'progress';
-
   return (
     <div ref={brassRef} className="content-fade-in" style={{
-      background: isProgress ? BG_2A : t.BG, minHeight: '100vh', width: '100%',
+      background: t.BG, minHeight: '100vh', width: '100%',
       padding: '24px max(18px, env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
-      fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
+      fontFamily: t.FONT,
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
-      transition: 'background-color 0.4s ease',
     }}>
-      {/* Полосы 2A — отдельный ФИКСИРОВАННЫЙ слой на весь экран, не привязан к высоте
-          контента, поэтому не перетиляется/не «съезжает» при раскрытии архива/рекордов. */}
-      {isProgress && (
-        <div aria-hidden style={{
-          position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
-          background: `${STRIPES_2A}, ${BG_2A}`,
-        }} />
-      )}
+      {/* Полосы 2A — ФИКСИРОВАННЫЙ слой на весь экран (не привязан к высоте контента,
+          поэтому не «съезжает» при раскрытии групп). Теперь для всего приложения. */}
+      <div aria-hidden style={{
+        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
+        background: `${STRIPES_2A}, ${t.BG}`,
+      }} />
       <div style={{ position: 'relative', zIndex: 1 }}>
       <style>{`
         * {
@@ -363,10 +358,10 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 22 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={{ fontSize: 27, fontWeight: 700, color: isProgress ? '#F2EBDD' : t.TEXT, margin: 0, letterSpacing: '-0.02em', fontFamily: t.FONT_DISPLAY }}>
+          <h1 style={{ fontSize: 27, fontWeight: 700, color: t.TEXT, margin: 0, letterSpacing: '-0.02em', fontFamily: t.FONT_DISPLAY }}>
             Дневник тренировок
           </h1>
-          <p style={{ fontSize: 13, color: isProgress ? '#8F897C' : t.TEXT_FAINT, margin: '4px 0 0' }}>
+          <p style={{ fontSize: 13, color: t.TEXT_FAINT, margin: '4px 0 0' }}>
             {displayName ? `Привет, ${displayName}!` : 'Вес, повторы, самочувствие — и динамика по каждому упражнению'}
           </p>
         </div>
@@ -422,7 +417,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       <div style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
         display: 'flex', justifyContent: 'center',
-        background: `linear-gradient(to top, ${isProgress ? BG_2A : t.BG} 38%, transparent)`,
+        background: `linear-gradient(to top, ${t.BG} 38%, transparent)`,
         paddingTop: 22,
       }}>
         <div style={{
@@ -446,11 +441,13 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
 }
 
 export default function WorkoutTracker() {
-  const { theme, mode, isDark, cycle } = useThemeController();
+  // Редизайн 2A применён ко всему приложению: тёмная металлик-тема фиксированно
+  // (переключатель свет/тёмная в профиле больше не влияет на вид).
+  const { mode, isDark, cycle } = useThemeController();
   return (
     <AuthGate>
       {({ userId, displayName, onLogout }) => (
-        <ThemeContext.Provider value={theme}>
+        <ThemeContext.Provider value={THEME_2A}>
           <WorkoutTrackerInner
             mode={mode} isDark={isDark} cycle={cycle}
             userId={userId} displayName={displayName} onLogout={onLogout}

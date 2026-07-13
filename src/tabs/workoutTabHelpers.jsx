@@ -532,7 +532,8 @@ export function RepeatWorkoutPicker({ sessions, onPick }) {
         onClick={() => setOpen(!open)}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
-          background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+          background: 'rgba(23,21,18,0.55)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+          border: `1px dashed ${t.BORDER}`, borderRadius: 9,
           padding: '10px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
         }}

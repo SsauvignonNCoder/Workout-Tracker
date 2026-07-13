@@ -9,6 +9,7 @@ import {
   STARTER_EXERCISES, STARTER_CARDIO, PROGRAM_DAYS,
 } from './workoutTabHelpers.jsx';
 import { GuidedWorkout } from './GuidedWorkout.jsx';
+import { FROST } from './ProgressTab.jsx';
 
 export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, editSession, onEditDone }) {
   const t = useTheme();
@@ -316,7 +317,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           onClick={() => setShowProgramPicker(!showProgramPicker)}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
-            background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+            ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
             padding: '10px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
             cursor: 'pointer', fontFamily: 'inherit', marginBottom: 14, boxSizing: 'border-box',
           }}
@@ -375,7 +376,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         onClick={() => setExercises([...exercises, emptyExercise()])}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+          ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
           padding: '9px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
           cursor: 'pointer', marginBottom: 22, marginTop: 4, fontFamily: 'inherit',
         }}
@@ -403,7 +404,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         onClick={() => setCardio([...cardio, emptyCardio()])}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+          ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
           padding: '9px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
           cursor: 'pointer', marginBottom: 22, marginTop: cardio.length ? 4 : 0, fontFamily: 'inherit',
         }}

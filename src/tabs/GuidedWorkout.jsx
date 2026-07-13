@@ -448,7 +448,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000, background: t.BG,
       display: 'flex', flexDirection: 'column',
-      fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
+      fontFamily: t.FONT,
     }}>
       <style>{`
         @keyframes restPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }

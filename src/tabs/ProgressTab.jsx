@@ -15,7 +15,7 @@ function muscleLetter(name) {
 // ---- Редизайн 2A: тёмная металлик-тема «Прогресса» ----
 // Фиксированная палитра (независимо от переключателя свет/тёмная) в форме токенов темы,
 // чтобы все дочерние useTheme() внутри вкладки получили её через ThemeContext.Provider.
-const THEME_2A = {
+export const THEME_2A = {
   ACCENT: '#C79A4E', ACCENT_SOFT: '#E4C57E', ACCENT_DEEP: '#9E7A34', POSITIVE: '#93A86A',
   BG: '#0A0A0A', BG_RAISED: '#171512', BG_INPUT: '#1C1A16', BORDER: 'rgba(242,235,221,0.12)',
   TEXT: '#F2EBDD', TEXT_DIM: '#8F897C', TEXT_FAINT: '#6E6A60',
@@ -28,12 +28,14 @@ const THEME_2A = {
   FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
   FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
 };
-// Крем заметно полупрозрачный + блюр — светлые карточки мягкие, не режут глаз,
-// сквозь них просвечивает тёмный фон с полосами.
-const CREAM = 'rgba(242,235,221,0.55)';
-const ON_CREAM = '#141210';
-const ON_CREAM_MUTED = 'rgba(20,18,16,0.62)';
-const CREAM_BLUR = { backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' };
+// Крем — светлые карточки (селектор + рекорды). Над тёмным фоном настоящая
+// прозрачность даёт серый, поэтому оставляем солидный крем.
+const CREAM = '#F2EBDD';
+const ON_CREAM = '#0A0A0A';
+const ON_CREAM_MUTED = '#6B655A';
+const CREAM_BLUR = {};
+// Фрост-стекло для полупрозрачных плашек над полосатым фоном — чтобы полосы не мешали читать текст.
+export const FROST = { background: 'rgba(23,21,18,0.55)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' };
 export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.055) 0px, rgba(242,224,166,0.055) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.05) 11px, rgba(184,146,74,0.05) 12.5px, transparent 12.5px, transparent 22px)';
 export const BG_2A = '#0A0A0A';
 export const BRASS_SHEEN = 'linear-gradient(100deg,#6E5424 0%,#C79A4E 14%,#F5E3AE 24%,#FFF6DC 30%,#F5E3AE 36%,#C79A4E 46%,#8B6B2E 58%,#C79A4E 70%,#F5E3AE 78%,#C79A4E 88%,#6E5424 100%)';
@@ -643,7 +645,7 @@ function ArchiveMonthGroup({ month, onEdit, onDelete }) {
         onClick={() => setExpanded(!expanded)}
         style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-          padding: '11px 13px', background: 'transparent', border: `1px solid ${t.BORDER}`, borderRadius: 10,
+          padding: '11px 13px', ...FROST, border: `1px solid ${t.BORDER}`, borderRadius: 10,
           cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
         }}
       >
@@ -673,7 +675,7 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
         onClick={() => setExpanded(!expanded)}
         style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-          padding: '13px 14px', background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12,
+          padding: '13px 14px', ...FROST, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12,
           cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
         }}
       >
@@ -965,7 +967,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
             onClick={() => setShowArchive(!showArchive)}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
-              background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+              ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
               padding: '11px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
               cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
             }}
