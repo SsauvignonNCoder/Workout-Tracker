@@ -1,18 +1,48 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, Sparkles, ChevronDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { useTheme } from '../theme.js';
+import { useTheme, ThemeContext } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
-import { MuscleBadge, isWeightlessExercise, secToClock } from './workoutTabHelpers.jsx';
+import { MuscleBadge, isWeightlessExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
+import { useBrassShine } from '../useBrassShine.js';
+
+function muscleLetter(name) {
+  const g = categorizeExercise(name);
+  return g ? g.letter : (name || '?').trim().charAt(0).toUpperCase();
+}
+
+// ---- Редизайн 2A: тёмная металлик-тема «Прогресса» ----
+// Фиксированная палитра (независимо от переключателя свет/тёмная) в форме токенов темы,
+// чтобы все дочерние useTheme() внутри вкладки получили её через ThemeContext.Provider.
+const THEME_2A = {
+  ACCENT: '#C79A4E', ACCENT_SOFT: '#E4C57E', ACCENT_DEEP: '#9E7A34', POSITIVE: '#93A86A',
+  BG: '#0A0A0A', BG_RAISED: '#171512', BG_INPUT: '#1C1A16', BORDER: 'rgba(242,235,221,0.12)',
+  TEXT: '#F2EBDD', TEXT_DIM: '#8F897C', TEXT_FAINT: '#6E6A60',
+  ACCENT_GRAD: 'linear-gradient(100deg,#8B6B2E,#C79A4E,#F5E3AE,#C79A4E,#8B6B2E)', ON_ACCENT: '#0A0A0A',
+  ACCENT_BG: 'rgba(199,154,78,0.15)', ACCENT_BORDER: 'rgba(184,146,74,0.30)',
+  POSITIVE_BG: 'rgba(147,168,106,0.16)',
+  GLOW: '0 0 22px rgba(184,146,74,0.40)', NAV_BG: 'rgba(23,21,18,0.10)',
+  CARD_SHADOW: '0 16px 40px rgba(0,0,0,0.4)',
+  FONT: "'Space Grotesk', system-ui, sans-serif",
+  FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
+  FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
+};
+const CREAM = '#F2EBDD';
+const ON_CREAM = '#0A0A0A';
+const ON_CREAM_MUTED = '#6B655A';
+const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.055) 0px, rgba(242,224,166,0.055) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.05) 11px, rgba(184,146,74,0.05) 12.5px, transparent 12.5px, transparent 22px)';
+export const BRASS_SHEEN = 'linear-gradient(100deg,#6E5424 0%,#C79A4E 14%,#F5E3AE 24%,#FFF6DC 30%,#F5E3AE 36%,#C79A4E 46%,#8B6B2E 58%,#C79A4E 70%,#F5E3AE 78%,#C79A4E 88%,#6E5424 100%)';
+export const brassFill = (shine) => ({ backgroundImage: BRASS_SHEEN, backgroundSize: '220% 220%', backgroundPosition: shine });
+export const brassText = (shine) => ({ ...brassFill(shine), WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' });
 
 function average(nums) {
   if (!nums.length) return null;
   return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
 }
 
-const SERIES_COLORS = ['#E08A3C', '#5B8FB0', '#C9A227', '#5C8A4E', '#9B6FB5'];
+const SERIES_COLORS = ['#E4C57E', '#5B8FB0', '#C9A227', '#5C8A4E', '#9B6FB5'];
 
 const PERIODS = [
   { key: '1m', label: '1 мес', days: 30 },
@@ -54,15 +84,15 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
         onClick={() => setOpen(!open)}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
-          background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10,
-          padding: '13px 14px', color: t.TEXT, fontSize: 15, fontWeight: 600,
+          background: CREAM, border: 'none', borderRadius: 14,
+          padding: '14px 16px', color: ON_CREAM, fontSize: 14, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selectedLabels.length === 0 ? 'Выбери, что показать' : selectedLabels.join(', ')}
         </span>
-        <span style={{ color: t.TEXT_FAINT, flexShrink: 0, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
+        <ChevronDown size={16} color={ON_CREAM_MUTED} style={{ flexShrink: 0, marginLeft: 8 }} />
       </button>
       {open && (
         <>
@@ -661,7 +691,8 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
 }
 
 export function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditSession }) {
-  const t = useTheme();
+  const t = THEME_2A;
+  const { ref, shine, needsPermission, requestPermission } = useBrassShine();
 
   const exerciseSeries = useMemo(() => {
     const map = {};
@@ -792,31 +823,65 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
 
   const dayLetters = ['П', 'В', 'С', 'Ч', 'П'];
 
+  const sectionLabel = { fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO, marginBottom: 14 };
+
   return (
-    <div>
+    <ThemeContext.Provider value={THEME_2A}>
+      <div
+        ref={ref}
+        style={{
+          position: 'relative',
+          margin: '-24px calc(-1 * max(18px, env(safe-area-inset-right))) calc(-1 * (110px + env(safe-area-inset-bottom))) calc(-1 * max(18px, env(safe-area-inset-left)))',
+          padding: '24px max(18px, env(safe-area-inset-right)) calc(120px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
+          minHeight: '100vh',
+          background: `${STRIPES_2A}, ${t.BG}`,
+          color: t.TEXT, fontFamily: t.FONT,
+        }}
+      >
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        `}</style>
+
+        {needsPermission && (
+          <button
+            onClick={requestPermission}
+            style={{
+              position: 'absolute', top: 8, right: 'max(16px, env(safe-area-inset-right))', zIndex: 5,
+              display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 999,
+              border: '1px solid rgba(184,146,74,0.4)', background: 'rgba(23,21,18,0.72)',
+              backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+              color: '#E7C98A', fontFamily: t.FONT_MONO, fontSize: 10.5, fontWeight: 600,
+              letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer',
+            }}
+          >
+            <Sparkles size={13} /> Включить блик
+          </button>
+        )}
+
       <div style={{
-        background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 12,
-        padding: '14px 16px', marginBottom: 22,
+        background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 20, boxShadow: t.CARD_SHADOW,
+        padding: '18px 20px', marginBottom: 30,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <Flame size={16} color={streaks.currentWeekDone > 0 ? t.ACCENT_SOFT : t.TEXT_FAINT} />
-          <span style={{ fontSize: 11.5, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: streaks.currentWeekDone > 0 ? t.ACCENT_SOFT : t.TEXT_FAINT }} />
+          <span style={{ fontSize: 10.5, color: t.TEXT_DIM, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO }}>
             Неделя
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           {streaks.currentWeekDays.map((d, i) => (
             <div
               key={d.date}
               title={dayLetters[i]}
               style={{
-                width: 22, height: 22, borderRadius: '50%',
-                background: d.done ? t.ACCENT : 'transparent',
-                border: `2px solid ${d.done ? t.ACCENT : t.BORDER}`,
+                width: 24, height: 24, borderRadius: 8,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 10, fontWeight: 700, color: d.done ? t.ON_ACCENT : t.TEXT_FAINT,
+                fontSize: 10, fontWeight: 600, fontFamily: t.FONT_MONO,
                 flexShrink: 0, opacity: d.isFuture ? 0.5 : 1,
+                ...(d.done
+                  ? { color: t.ON_ACCENT, ...brassFill(shine) }
+                  : { color: t.TEXT_FAINT, border: `1.5px solid ${t.BORDER}` }),
               }}
             >
               {dayLetters[i]}
@@ -825,15 +890,14 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         </div>
         {streaks.weekMultiplier > 0 && (
           <span style={{
-            fontSize: 13, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-            flexShrink: 0,
+            fontSize: 15, fontWeight: 600, fontFamily: t.FONT_MONO, flexShrink: 0, ...brassText(shine),
           }}>
             ×{streaks.weekMultiplier}
           </span>
         )}
       </div>
 
-      <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
+      <div style={sectionLabel}>
         Прогрессия
       </div>
 
@@ -859,7 +923,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           background: 'transparent', border: 'none', padding: '0 0 12px', cursor: 'pointer', fontFamily: 'inherit',
         }}
       >
-        <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+        <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO }}>
           Личные рекорды {recordList.length > 0 ? `(${recordList.length})` : ''}
         </span>
         <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{showRecords ? '▼' : '▶'}</span>
@@ -875,17 +939,21 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
             {recordList.map(([name, r]) => (
               <div key={name} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 11, padding: '12px 14px',
+                background: CREAM, border: 'none', borderRadius: 14, padding: '12px 15px',
               }}>
-                <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 9 }}>
-                  <MuscleBadge name={name} size={22} />
+                <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{
+                    width: 22, height: 22, borderRadius: 7, background: 'rgba(10,10,10,0.10)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: t.FONT_MONO, fontSize: 11, fontWeight: 600, color: ON_CREAM, flexShrink: 0,
+                  }}>{muscleLetter(name)}</span>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{name}</div>
-                    <div style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{fmtDateShort(r.date)} · {r.reps} повт.</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: ON_CREAM, marginBottom: 2 }}>{name}</div>
+                    <div style={{ fontSize: 11, color: ON_CREAM_MUTED, fontFamily: t.FONT_MONO, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{fmtDateShort(r.date)} · {r.reps} повт</div>
                   </div>
                 </div>
                 <div style={{
-                  fontSize: 17, fontWeight: 800, color: t.ACCENT_SOFT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+                  fontSize: 17, fontWeight: 600, color: ON_CREAM, fontFamily: t.FONT_MONO,
                   flexShrink: 0, marginLeft: 12,
                 }}>
                   {r.weight} кг
@@ -902,7 +970,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
-      <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
+      <div style={sectionLabel}>
         Эта неделя
       </div>
       {currentWeekSessions.length > 0 ? (
@@ -943,6 +1011,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           )}
         </>
       )}
-    </div>
+      </div>
+    </ThemeContext.Provider>
   );
 }
