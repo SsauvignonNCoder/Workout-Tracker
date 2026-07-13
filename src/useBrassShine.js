@@ -1,21 +1,19 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 /**
  * Живой перелив/блик на латунных элементах (2A).
- * ВАЖНО: позицию блика пишем ИМПЕРАТИВНО в CSS-переменную `--shine` на ref-элементе,
- * без React-состояния — иначе компонент ререндерился бы 60 раз/сек и перерисовывал
- * весь экран (из-за чего «ездили» диагональные полосы фона).
+ * Позицию блика пишем ИМПЕРАТИВНО в CSS-переменную `--shine` на ref-элементе,
+ * без React-состояния (иначе ререндер 60 fps → дрожание фона).
  *
- * Возвращает:
- *   - ref: повесить на корневой контейнер (родитель латунных элементов + для mousemove на десктопе)
- *   - needsPermission / requestPermission: iOS gyro-доступ по тапу
- * Латунные элементы используют `background-position: var(--shine, 50% 50%)`.
+ * Кнопки-разрешения НЕТ: на iOS gyro без requestPermission не сработает, но всегда
+ * идёт мягкая авто-анимация перелива, а на десктопе блик следует за курсором.
+ * Возвращает { ref } — повесить на общий контейнер (родитель латунных элементов).
+ * Латунь использует `background-position: var(--shine, 50% 50%)`.
  */
 export function useBrassShine() {
   const rootRef = useRef(null);
   const lastInput = useRef(0);
   const rafId = useRef(null);
-  const [needsPermission, setNeedsPermission] = useState(false);
 
   const setShine = (x, y) => {
     const el = rootRef.current;
@@ -36,34 +34,18 @@ export function useBrassShine() {
     setShine(((e.clientX - r.left) / r.width) * 100, ((e.clientY - r.top) / r.height) * 100);
   }, []);
 
-  const requestPermission = useCallback(() => {
-    const DOE = window.DeviceOrientationEvent;
-    if (DOE && typeof DOE.requestPermission === 'function') {
-      DOE.requestPermission()
-        .then((res) => {
-          if (res === 'granted') window.addEventListener('deviceorientation', onOrientation);
-          setNeedsPermission(false);
-        })
-        .catch(() => setNeedsPermission(false));
-    } else {
-      setNeedsPermission(false);
-    }
-  }, [onOrientation]);
-
   useEffect(() => {
     setShine(50, 50);
-    const DOE = window.DeviceOrientationEvent;
-    const needsPerm = typeof DOE !== 'undefined' && typeof DOE.requestPermission === 'function';
-    if (needsPerm) setNeedsPermission(true);
-    else if ('DeviceOrientationEvent' in window) window.addEventListener('deviceorientation', onOrientation);
-
+    // Добавить слушатель безопасно: на iOS без разрешения просто не сработает (тихо),
+    // а авто-анимация ниже даёт живой перелив в любом случае.
+    if ('DeviceOrientationEvent' in window) window.addEventListener('deviceorientation', onOrientation);
     const el = rootRef.current;
     if (el) el.addEventListener('mousemove', onMouseMove);
 
     const tick = () => {
-      if (Date.now() - lastInput.current > 1200) {
-        const t = Date.now() / 2200;
-        setShine(50 + Math.sin(t) * 42, 50 + Math.cos(t * 0.7) * 42);
+      if (Date.now() - lastInput.current > 900) {
+        const t = Date.now() / 2600;
+        setShine(50 + Math.sin(t) * 40, 50 + Math.cos(t * 0.7) * 40);
       }
       rafId.current = requestAnimationFrame(tick);
     };
@@ -76,7 +58,7 @@ export function useBrassShine() {
     };
   }, [onOrientation, onMouseMove]);
 
-  return { ref: rootRef, needsPermission, requestPermission };
+  return { ref: rootRef };
 }
 
 function clamp(v) {

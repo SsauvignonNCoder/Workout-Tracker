@@ -28,11 +28,12 @@ const THEME_2A = {
   FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
   FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
 };
-// Крем полупрозрачный + лёгкий блюр — светлые карточки не режут глаз.
-const CREAM = 'rgba(242,235,221,0.86)';
-const ON_CREAM = '#0A0A0A';
-const ON_CREAM_MUTED = '#57524A';
-const CREAM_BLUR = { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' };
+// Крем заметно полупрозрачный + блюр — светлые карточки мягкие, не режут глаз,
+// сквозь них просвечивает тёмный фон с полосами.
+const CREAM = 'rgba(242,235,221,0.55)';
+const ON_CREAM = '#141210';
+const ON_CREAM_MUTED = 'rgba(20,18,16,0.62)';
+const CREAM_BLUR = { backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' };
 export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.055) 0px, rgba(242,224,166,0.055) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.05) 11px, rgba(184,146,74,0.05) 12.5px, transparent 12.5px, transparent 22px)';
 export const BG_2A = '#0A0A0A';
 export const BRASS_SHEEN = 'linear-gradient(100deg,#6E5424 0%,#C79A4E 14%,#F5E3AE 24%,#FFF6DC 30%,#F5E3AE 36%,#C79A4E 46%,#8B6B2E 58%,#C79A4E 70%,#F5E3AE 78%,#C79A4E 88%,#6E5424 100%)';

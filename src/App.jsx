@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, User, X, Sparkles } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, User, X } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
 import { ThemeContext, useTheme, useThemeController } from './theme.js';
 import { useBrassShine } from './useBrassShine.js';
@@ -199,7 +199,7 @@ function Pill({ children, active, onClick, icon: Icon }) {
 
 function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogout }) {
   const t = useTheme();
-  const { ref: brassRef, needsPermission, requestPermission } = useBrassShine();
+  const { ref: brassRef } = useBrassShine();
   const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage(userId);
   const TAB_ORDER = ['workout', 'measurements', 'progress', 'profile'];
   const [tab, setTab] = useState('workout');
@@ -290,28 +290,22 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
 
   return (
     <div ref={brassRef} className="content-fade-in" style={{
-      background: isProgress ? `${STRIPES_2A}, ${BG_2A}` : t.BG, minHeight: '100vh', width: '100%',
+      background: isProgress ? BG_2A : t.BG, minHeight: '100vh', width: '100%',
       padding: '24px max(18px, env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
       fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
       transition: 'background-color 0.4s ease',
     }}>
-      {isProgress && needsPermission && (
-        <button
-          onClick={requestPermission}
-          style={{
-            position: 'fixed', top: 'max(10px, env(safe-area-inset-top))', right: 'max(14px, env(safe-area-inset-right))', zIndex: 30,
-            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999,
-            border: '1px solid rgba(184,146,74,0.4)', background: 'rgba(23,21,18,0.72)',
-            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-            color: '#E7C98A', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: 600,
-            letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer',
-          }}
-        >
-          <Sparkles size={13} /> Блик
-        </button>
+      {/* Полосы 2A — отдельный ФИКСИРОВАННЫЙ слой на весь экран, не привязан к высоте
+          контента, поэтому не перетиляется/не «съезжает» при раскрытии архива/рекордов. */}
+      {isProgress && (
+        <div aria-hidden style={{
+          position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
+          background: `${STRIPES_2A}, ${BG_2A}`,
+        }} />
       )}
+      <div style={{ position: 'relative', zIndex: 1 }}>
       <style>{`
         * {
           transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease;
@@ -445,6 +439,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
           <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon}>Прогресс</Pill>
           <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
         </div>
+      </div>
       </div>
     </div>
   );
