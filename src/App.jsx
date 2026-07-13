@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, User, X } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, User, X, Sparkles } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
 import { ThemeContext, useTheme, useThemeController } from './theme.js';
 import { useBrassShine } from './useBrassShine.js';
-import { brassFill } from './tabs/ProgressTab.jsx';
+import { brassFill, STRIPES_2A, BG_2A } from './tabs/ProgressTab.jsx';
 import { AuthGate } from './auth.jsx';
 import { WorkoutTab } from './tabs/WorkoutTab.jsx';
 import { MeasurementsTab } from './tabs/MeasurementsTab.jsx';
@@ -172,7 +172,7 @@ function useStorage(userId) {
   return { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile };
 }
 
-function Pill({ children, active, onClick, icon: Icon, shine }) {
+function Pill({ children, active, onClick, icon: Icon }) {
   // Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые иконки.
   const ON_BRASS = '#0A0A0A';
   return (
@@ -188,7 +188,7 @@ function Pill({ children, active, onClick, icon: Icon, shine }) {
         transition: 'flex 0.25s ease, color 0.2s ease',
         fontFamily: "'Space Grotesk', system-ui, sans-serif",
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        ...(active ? brassFill(shine) : { background: 'transparent' }),
+        ...(active ? brassFill : { background: 'transparent' }),
       }}
     >
       {Icon && <Icon size={active ? 16 : 20} strokeWidth={2.2} color={active ? ON_BRASS : '#8F897C'} style={{ flexShrink: 0, transition: 'all 0.2s ease' }} />}
@@ -199,7 +199,7 @@ function Pill({ children, active, onClick, icon: Icon, shine }) {
 
 function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogout }) {
   const t = useTheme();
-  const { shine } = useBrassShine();
+  const { ref: brassRef, needsPermission, requestPermission } = useBrassShine();
   const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage(userId);
   const TAB_ORDER = ['workout', 'measurements', 'progress', 'profile'];
   const [tab, setTab] = useState('workout');
@@ -286,15 +286,32 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
     );
   }
 
+  const isProgress = tab === 'progress';
+
   return (
-    <div className="content-fade-in" style={{
-      background: t.BG, minHeight: '100vh', width: '100%',
+    <div ref={brassRef} className="content-fade-in" style={{
+      background: isProgress ? `${STRIPES_2A}, ${BG_2A}` : t.BG, minHeight: '100vh', width: '100%',
       padding: '24px max(18px, env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
       fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
       transition: 'background-color 0.4s ease',
     }}>
+      {isProgress && needsPermission && (
+        <button
+          onClick={requestPermission}
+          style={{
+            position: 'fixed', top: 'max(10px, env(safe-area-inset-top))', right: 'max(14px, env(safe-area-inset-right))', zIndex: 30,
+            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 13px', borderRadius: 999,
+            border: '1px solid rgba(184,146,74,0.4)', background: 'rgba(23,21,18,0.72)',
+            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+            color: '#E7C98A', fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: 600,
+            letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer',
+          }}
+        >
+          <Sparkles size={13} /> Блик
+        </button>
+      )}
       <style>{`
         * {
           transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease;
@@ -352,10 +369,10 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       `}</style>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 22 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h1 style={{ fontSize: 27, fontWeight: 700, color: t.TEXT, margin: 0, letterSpacing: '-0.02em', fontFamily: t.FONT_DISPLAY }}>
+          <h1 style={{ fontSize: 27, fontWeight: 700, color: isProgress ? '#F2EBDD' : t.TEXT, margin: 0, letterSpacing: '-0.02em', fontFamily: t.FONT_DISPLAY }}>
             Дневник тренировок
           </h1>
-          <p style={{ fontSize: 13, color: t.TEXT_FAINT, margin: '4px 0 0' }}>
+          <p style={{ fontSize: 13, color: isProgress ? '#8F897C' : t.TEXT_FAINT, margin: '4px 0 0' }}>
             {displayName ? `Привет, ${displayName}!` : 'Вес, повторы, самочувствие — и динамика по каждому упражнению'}
           </p>
         </div>
@@ -411,7 +428,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       <div style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
         display: 'flex', justifyContent: 'center',
-        background: `linear-gradient(to top, ${t.BG} 38%, transparent)`,
+        background: `linear-gradient(to top, ${isProgress ? BG_2A : t.BG} 38%, transparent)`,
         paddingTop: 22,
       }}>
         <div style={{
@@ -423,10 +440,10 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
           boxShadow: '0 0 0 1px rgba(255,255,255,0.06) inset, 0 16px 40px rgba(0,0,0,0.4), 0 0 52px rgba(184,146,74,0.5)',
           boxSizing: 'border-box',
         }}>
-          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell} shine={shine}>Тренировка</Pill>
-          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler} shine={shine}>Вес</Pill>
-          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon} shine={shine}>Прогресс</Pill>
-          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User} shine={shine}>Профиль</Pill>
+          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell}>Тренировка</Pill>
+          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler}>Вес</Pill>
+          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon}>Прогресс</Pill>
+          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
         </div>
       </div>
     </div>

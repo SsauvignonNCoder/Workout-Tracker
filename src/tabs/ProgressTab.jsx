@@ -1,12 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, Sparkles, ChevronDown } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { useTheme, ThemeContext } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
 import { MuscleBadge, isWeightlessExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
-import { useBrassShine } from '../useBrassShine.js';
 
 function muscleLetter(name) {
   const g = categorizeExercise(name);
@@ -29,13 +28,17 @@ const THEME_2A = {
   FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
   FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
 };
-const CREAM = '#F2EBDD';
+// Крем полупрозрачный + лёгкий блюр — светлые карточки не режут глаз.
+const CREAM = 'rgba(242,235,221,0.86)';
 const ON_CREAM = '#0A0A0A';
-const ON_CREAM_MUTED = '#6B655A';
-const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.055) 0px, rgba(242,224,166,0.055) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.05) 11px, rgba(184,146,74,0.05) 12.5px, transparent 12.5px, transparent 22px)';
+const ON_CREAM_MUTED = '#57524A';
+const CREAM_BLUR = { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' };
+export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.055) 0px, rgba(242,224,166,0.055) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.05) 11px, rgba(184,146,74,0.05) 12.5px, transparent 12.5px, transparent 22px)';
+export const BG_2A = '#0A0A0A';
 export const BRASS_SHEEN = 'linear-gradient(100deg,#6E5424 0%,#C79A4E 14%,#F5E3AE 24%,#FFF6DC 30%,#F5E3AE 36%,#C79A4E 46%,#8B6B2E 58%,#C79A4E 70%,#F5E3AE 78%,#C79A4E 88%,#6E5424 100%)';
-export const brassFill = (shine) => ({ backgroundImage: BRASS_SHEEN, backgroundSize: '220% 220%', backgroundPosition: shine });
-export const brassText = (shine) => ({ ...brassFill(shine), WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' });
+// Блик берётся из CSS-переменной --shine (её пишет useBrassShine на ref-контейнере).
+export const brassFill = { backgroundImage: BRASS_SHEEN, backgroundSize: '220% 220%', backgroundPosition: 'var(--shine, 50% 50%)' };
+export const brassText = { ...brassFill, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' };
 
 function average(nums) {
   if (!nums.length) return null;
@@ -84,7 +87,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
         onClick={() => setOpen(!open)}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
-          background: CREAM, border: 'none', borderRadius: 14,
+          background: CREAM, ...CREAM_BLUR, border: 'none', borderRadius: 14,
           padding: '14px 16px', color: ON_CREAM, fontSize: 14, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
         }}
@@ -191,10 +194,10 @@ function MultiSeriesChart({ selectedSeries }) {
         })}
       </div>
       <ResponsiveContainer width="100%" height={150}>
-        <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+        <LineChart data={data} margin={{ top: 4, right: 6, left: 4, bottom: 0 }}>
           <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
           <XAxis dataKey="date" tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
-          <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
+          <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
           <Tooltip
             contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }}
             labelStyle={{ color: t.TEXT_DIM }}
@@ -408,10 +411,10 @@ function TreadmillChart({ sessions }) {
         </div>
         {metricToggle}
         <ResponsiveContainer width="100%" height={170}>
-          <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <LineChart data={data} margin={{ top: 4, right: 6, left: 4, bottom: 0 }}>
             <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
             <XAxis dataKey="name" tick={{ fill: t.TEXT_FAINT, fontSize: 11 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
-            <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
+            <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
             <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v) => [`${v} ${m.unit}`, m.label]} />
             <Line type="monotone" dataKey="value" name={m.label} stroke={t.ACCENT} strokeWidth={2.2} dot={{ r: 3, fill: t.ACCENT, strokeWidth: 0 }} />
           </LineChart>
@@ -461,10 +464,10 @@ function TreadmillChart({ sessions }) {
       </div>
       {metricToggle}
       <ResponsiveContainer width="100%" height={160}>
-        <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+        <LineChart data={data} margin={{ top: 4, right: 6, left: 4, bottom: 0 }}>
           <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
           <XAxis dataKey="label" tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
-          <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
+          <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
           <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v, n) => [`${v} ${m.unit}`, n]} />
           {TREADMILL_TYPES.map((tp) => (
             <Line
@@ -692,7 +695,6 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
 
 export function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditSession }) {
   const t = THEME_2A;
-  const { ref, shine, needsPermission, requestPermission } = useBrassShine();
 
   const exerciseSeries = useMemo(() => {
     const map = {};
@@ -827,60 +829,31 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
 
   return (
     <ThemeContext.Provider value={THEME_2A}>
-      <div
-        ref={ref}
-        style={{
-          position: 'relative',
-          margin: '-24px calc(-1 * max(18px, env(safe-area-inset-right))) calc(-1 * (110px + env(safe-area-inset-bottom))) calc(-1 * max(18px, env(safe-area-inset-left)))',
-          padding: '24px max(18px, env(safe-area-inset-right)) calc(120px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
-          minHeight: '100vh',
-          background: `${STRIPES_2A}, ${t.BG}`,
-          color: t.TEXT, fontFamily: t.FONT,
-        }}
-      >
-        <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-        `}</style>
-
-        {needsPermission && (
-          <button
-            onClick={requestPermission}
-            style={{
-              position: 'absolute', top: 8, right: 'max(16px, env(safe-area-inset-right))', zIndex: 5,
-              display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 999,
-              border: '1px solid rgba(184,146,74,0.4)', background: 'rgba(23,21,18,0.72)',
-              backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-              color: '#E7C98A', fontFamily: t.FONT_MONO, fontSize: 10.5, fontWeight: 600,
-              letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer',
-            }}
-          >
-            <Sparkles size={13} /> Включить блик
-          </button>
-        )}
+      <div style={{ color: t.TEXT, fontFamily: t.FONT }}>
 
       <div style={{
         background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 20, boxShadow: t.CARD_SHADOW,
-        padding: '18px 20px', marginBottom: 30,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
+        padding: '16px 18px', marginBottom: 28,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <span style={{ width: 9, height: 9, borderRadius: '50%', background: streaks.currentWeekDone > 0 ? t.ACCENT_SOFT : t.TEXT_FAINT }} />
-          <span style={{ fontSize: 10.5, color: t.TEXT_DIM, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: streaks.currentWeekDone > 0 ? t.ACCENT_SOFT : t.TEXT_FAINT }} />
+          <span style={{ fontSize: 10, color: t.TEXT_DIM, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: t.FONT_MONO, whiteSpace: 'nowrap' }}>
             Неделя
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
           {streaks.currentWeekDays.map((d, i) => (
             <div
               key={d.date}
               title={dayLetters[i]}
               style={{
-                width: 24, height: 24, borderRadius: 8,
+                width: 22, height: 22, borderRadius: 7,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 10, fontWeight: 600, fontFamily: t.FONT_MONO,
                 flexShrink: 0, opacity: d.isFuture ? 0.5 : 1,
                 ...(d.done
-                  ? { color: t.ON_ACCENT, ...brassFill(shine) }
+                  ? { color: t.ON_ACCENT, ...brassFill }
                   : { color: t.TEXT_FAINT, border: `1.5px solid ${t.BORDER}` }),
               }}
             >
@@ -890,7 +863,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         </div>
         {streaks.weekMultiplier > 0 && (
           <span style={{
-            fontSize: 15, fontWeight: 600, fontFamily: t.FONT_MONO, flexShrink: 0, ...brassText(shine),
+            fontSize: 15, fontWeight: 600, fontFamily: t.FONT_MONO, flexShrink: 0, ...brassText,
           }}>
             ×{streaks.weekMultiplier}
           </span>
@@ -939,7 +912,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
             {recordList.map(([name, r]) => (
               <div key={name} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: CREAM, border: 'none', borderRadius: 14, padding: '12px 15px',
+                background: CREAM, ...CREAM_BLUR, border: 'none', borderRadius: 14, padding: '12px 15px',
               }}>
                 <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{
