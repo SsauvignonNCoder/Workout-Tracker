@@ -388,6 +388,98 @@ function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete }) {
   );
 }
 
+const MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+function monthLabel(m) { const [y, mo] = m.split('-'); return `${MONTHS_RU[parseInt(mo, 10) - 1]} ${y}`; }
+
+// Строит дерево архива: Год → Месяц → Неделя → [сессии], всё по убыванию.
+function buildArchiveTree(list) {
+  const years = {};
+  list.forEach((s) => {
+    const year = s.date.slice(0, 4);
+    const month = s.date.slice(0, 7);
+    const wk = getMonday(s.date);
+    years[year] = years[year] || { year, count: 0, months: {} };
+    years[year].count++;
+    const M = (years[year].months[month] = years[year].months[month] || { month, count: 0, weeks: {} });
+    M.count++;
+    const W = (M.weeks[wk] = M.weeks[wk] || { weekStart: wk, count: 0, items: [] });
+    W.count++; W.items.push(s);
+  });
+  return Object.values(years)
+    .sort((a, b) => b.year.localeCompare(a.year))
+    .map((Y) => ({
+      ...Y,
+      months: Object.values(Y.months)
+        .sort((a, b) => b.month.localeCompare(a.month))
+        .map((M) => ({
+          ...M,
+          weeks: Object.values(M.weeks)
+            .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
+            .map((W) => ({ ...W, items: W.items.sort((a, b) => b.date.localeCompare(a.date)) })),
+        })),
+    }));
+}
+
+function ArchiveMonthGroup({ month, onEdit, onDelete }) {
+  const t = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
+          padding: '11px 13px', background: 'transparent', border: `1px solid ${t.BORDER}`, borderRadius: 10,
+          cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+        }}
+      >
+        <span style={{ color: t.TEXT_DIM, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ color: t.TEXT_FAINT, fontSize: 10 }}>{expanded ? '▼' : '▶'}</span>
+          {monthLabel(month.month)}
+        </span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 12 }}>{month.count} трен.</span>
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 6, paddingLeft: 8 }}>
+          {month.weeks.map((w) => (
+            <ArchiveWeekGroup key={w.weekStart} weekStart={w.weekStart} items={w.items} onEdit={onEdit} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArchiveYearGroup({ year, onEdit, onDelete }) {
+  const t = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
+          padding: '13px 14px', background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12,
+          cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+        }}
+      >
+        <span style={{ color: t.TEXT, fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, fontFamily: t.FONT_MONO }}>
+          <span style={{ color: t.ACCENT_SOFT, fontSize: 11 }}>{expanded ? '▼' : '▶'}</span>
+          {year.year}
+        </span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 12.5 }}>{year.count} трен.</span>
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 8, paddingLeft: 8 }}>
+          {year.months.map((m) => (
+            <ArchiveMonthGroup key={m.month} month={m} onEdit={onEdit} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditSession }) {
   const t = useTheme();
 
@@ -491,21 +583,17 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     }).filter((s) => s.points.length > 0);
   }, [selectedKeys, exerciseSeries, cardioSeries, measurements, bodyweightByDate, period]);
 
-  const sortedSessions = useMemo(() => [...(sessions || [])].reverse(), [sessions]);
-  const recentSessions = sortedSessions.slice(0, 5);
-  const archivedSessions = sortedSessions.slice(5);
-
-  const archiveWeeks = useMemo(() => {
-    const groups = {};
-    archivedSessions.forEach((s) => {
-      const wk = getMonday(s.date);
-      if (!groups[wk]) groups[wk] = [];
-      groups[wk].push(s);
-    });
-    return Object.entries(groups)
-      .map(([weekStart, items]) => ({ weekStart, items: items.sort((a, b) => b.date.localeCompare(a.date)) }))
-      .sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-  }, [archivedSessions]);
+  // «Эта неделя» = сессии текущей календарной недели; остальное → архив (Год→Месяц→Неделя).
+  const thisMonday = useMemo(() => getMonday(todayISO()), []);
+  const currentWeekSessions = useMemo(
+    () => [...(sessions || [])].filter((s) => getMonday(s.date) === thisMonday).sort((a, b) => b.date.localeCompare(a.date)),
+    [sessions, thisMonday],
+  );
+  const archivedSessions = useMemo(
+    () => [...(sessions || [])].filter((s) => getMonday(s.date) !== thisMonday),
+    [sessions, thisMonday],
+  );
+  const archiveTree = useMemo(() => buildArchiveTree(archivedSessions), [archivedSessions]);
 
   const streaks = useMemo(() => computeWeekStreak(sessions), [sessions]);
 
@@ -630,13 +718,19 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
       <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
-        Последние тренировки
+        Эта неделя
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
-        {recentSessions.map((s) => (
-          <SessionCard key={s.id} s={s} onEdit={onEditSession} onDelete={onDeleteSession} />
-        ))}
-      </div>
+      {currentWeekSessions.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
+          {currentWeekSessions.map((s) => (
+            <SessionCard key={s.id} s={s} onEdit={onEditSession} onDelete={onDeleteSession} />
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, marginBottom: 16, lineHeight: 1.5 }}>
+          На этой неделе тренировок пока нет.
+        </div>
+      )}
 
       {archivedSessions.length > 0 && (
         <>
@@ -653,11 +747,8 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           </button>
           {showArchive && (
             <div style={{ marginTop: 12 }}>
-              {archiveWeeks.map((w) => (
-                <ArchiveWeekGroup
-                  key={w.weekStart} weekStart={w.weekStart} items={w.items}
-                  onEdit={onEditSession} onDelete={onDeleteSession}
-                />
+              {archiveTree.map((y) => (
+                <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} />
               ))}
             </div>
           )}

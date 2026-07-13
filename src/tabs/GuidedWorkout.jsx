@@ -4,7 +4,8 @@ import {
   Flame, Dumbbell, CheckCircle2, Plus, Flag, Route,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
-import { Field, getInputStyle, MuscleBadge, isWeightlessExercise, secToClock, parseClock } from './workoutTabHelpers.jsx';
+import { todayISO } from '../dateUtils.js';
+import { Field, getInputStyle, getLabelInputStyle, MuscleBadge, isWeightlessExercise, secToClock, parseClock } from './workoutTabHelpers.jsx';
 
 const REST_SECONDS = 120;
 
@@ -36,6 +37,7 @@ function buildSteps(day) {
       fields: { distance: true, speed: true, incline: true, duration: true },
       target: { incline: '15', duration: '15-20' },
     });
+    out.push(SUMMARY_STEP);
     return out;
   }
   if (day.type === 'cardio') {
@@ -45,7 +47,7 @@ function buildSteps(day) {
       subtitle: 'Интервалы по секторам до общей цели',
       name: day.cardio.name,
       planDistance: day.cardio.distance, planIncline: day.cardio.incline,
-    }];
+    }, SUMMARY_STEP];
   }
   if (day.type === 'pool') {
     return [{
@@ -53,10 +55,12 @@ function buildSteps(day) {
       name: day.cardio.name,
       fields: { distance: false, speed: false, incline: false, duration: true },
       target: { duration: day.cardio.duration },
-    }];
+    }, SUMMARY_STEP];
   }
   return [];
 }
+
+const SUMMARY_STEP = { kind: 'summary', title: 'Итог тренировки', subtitle: 'Сон, энергия и заметки' };
 
 function fmtClock(sec) {
   const m = Math.floor(sec / 60);
@@ -121,6 +125,11 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     });
     return m;
   });
+  // Заметки по каждому упражнению (ключ — индекс шага).
+  const [exNotes, setExNotes] = useState({});
+  // Итоговый экран: сон, энергия, общее самочувствие.
+  const [summary, setSummary] = useState({ sleep: '', energy: 3, feeling: '' });
+  const [saving, setSaving] = useState(false);
 
   // ---- Таймер отдыха ----
   // Отсчёт по МЕТКЕ времени окончания (restEndRef), а не по «тиканью» setInterval:
@@ -329,13 +338,18 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
     });
   };
 
+  const setExNote = (val) => setExNotes((prev) => ({ ...prev, [stepIdx]: val }));
+
   const finish = () => {
+    // Упражнения → агрегат (число) + setLog + заметка. Пустые (без данных и заметки) пропускаем.
     const outEx = [];
     steps.forEach((s, i) => {
       if (s.kind !== 'exercise') return;
       const log = exLogs[i] || [];
       const weightless = isWeightlessExercise(s.name);
       const filled = log.filter((x) => (parseFloat(x.weight) || 0) > 0 || (parseInt(x.reps) || 0) > 0);
+      const note = (exNotes[i] || '').trim();
+      if (filled.length === 0 && !note) return;
       let maxW = 0, repsAtMax = 0, maxReps = 0;
       filled.forEach((x) => {
         const w = parseFloat(x.weight) || 0;
@@ -343,33 +357,27 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
         if (w >= maxW) { maxW = w; repsAtMax = r || repsAtMax; }
         if (r > maxReps) maxReps = r;
       });
-      const setsCount = filled.length || s.plannedSets;
       outEx.push({
         name: s.name,
-        weight: weightless ? '' : (maxW ? String(maxW) : ''),
-        reps: String(weightless ? (maxReps || '') : (repsAtMax || '')),
-        sets: String(setsCount),
-        targetReps: s.targetReps,
+        weight: weightless ? 0 : maxW,
+        reps: weightless ? maxReps : repsAtMax,
+        sets: Math.max(1, filled.length || s.plannedSets),
         setLog: filled.map((x) => ({
           weight: weightless ? 0 : (parseFloat(x.weight) || 0),
           reps: parseInt(x.reps) || 0,
         })),
+        ...(note ? { note } : {}),
       });
     });
 
     const outCardio = [];
     steps.forEach((s, i) => {
-      if (s.kind === 'exercise') return;
+      if (s.kind !== 'cardio' && s.kind !== 'pool') return;
       const c = cardioLogs[i] || {};
-      const hasData = (parseFloat(c.distance) || 0) > 0 || (parseFloat(c.speed) || 0) > 0
-        || (parseFloat(c.incline) || 0) > 0 || (parseInt(c.duration) || 0) > 0;
-      if (!hasData) return;
-      outCardio.push({
-        name: s.name,
-        distance: c.distance || '', speed: c.speed || '', incline: c.incline || '', duration: c.duration || '',
-        targetIncline: s.target && s.target.incline, targetDistance: s.target && s.target.distance,
-        targetDuration: s.target && s.target.duration,
-      });
+      const dist = parseFloat(c.distance) || 0, spd = parseFloat(c.speed) || 0;
+      const incl = parseFloat(c.incline) || 0, dur = parseInt(c.duration) || 0;
+      if (dist <= 0 && spd <= 0 && incl <= 0 && dur <= 0) return;
+      outCardio.push({ name: s.name, distance: dist, speed: spd, incline: incl, duration: dur });
     });
 
     // Секторы кардио-дня — каждый сектор отдельной записью «Сектор A/B/…».
@@ -382,15 +390,14 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
       let prevCum = 0;
       (data.sectors || []).forEach((sec, si) => {
         const cumSec = parseClock(sec.clock);
-        const hasData = (parseFloat(sec.distance) || 0) > 0 || (parseFloat(sec.speed) || 0) > 0
-          || (parseFloat(sec.incline) || 0) > 0 || cumSec > 0;
-        if (!hasData) return;
+        const dist = parseFloat(sec.distance) || 0, spd = parseFloat(sec.speed) || 0, incl = parseFloat(sec.incline) || 0;
+        if (dist <= 0 && spd <= 0 && incl <= 0 && cumSec <= 0) return;
         const deltaSec = cumSec > 0 ? Math.max(0, cumSec - prevCum) : 0;
         if (cumSec > 0) prevCum = cumSec;
         outCardio.push({
           name: `Сектор ${sectorLabel(si)}`,
-          distance: sec.distance || '', speed: sec.speed || '', incline: sec.incline || '',
-          duration: deltaSec ? String(Math.round(deltaSec / 60)) : '',
+          distance: dist, speed: spd, incline: incl,
+          duration: deltaSec ? Math.round(deltaSec / 60) : 0,
           durationSec: deltaSec || 0,
         });
       });
@@ -398,7 +405,21 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
 
     clearTimer();
     cancelBotAlert();
-    onComplete(outEx, outCardio);
+
+    if (outEx.length === 0 && outCardio.length === 0) { onClose(); return; }
+
+    const session = {
+      id: `${todayISO()}-${Date.now()}`,
+      date: todayISO(),
+      exercises: outEx,
+      cardio: outCardio,
+      sleep: summary.sleep ? Math.max(0, parseFloat(summary.sleep)) : null,
+      energy: summary.energy || 3,
+      feeling: (summary.feeling || '').trim(),
+      programDay: dayPlan.day || null,
+    };
+    setSaving(true);
+    onComplete(session);
   };
 
   const goNext = () => {
@@ -485,78 +506,24 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
       }}>
         <div key={stepIdx} className="guided-step-in" style={{ maxWidth: 480, margin: '0 auto' }}>
           {step.kind === 'exercise' ? (
-            <ExerciseStep step={step} sets={exLogs[stepIdx] || []} onSet={setExSet} onStartRest={startRest} records={records} restActive={restActive} />
+            <ExerciseStep
+              step={step} sets={exLogs[stepIdx] || []} onSet={setExSet} onStartRest={startRest}
+              records={records} note={exNotes[stepIdx] || ''} onNote={setExNote}
+            />
           ) : step.kind === 'sectors' ? (
             <SectorsStep
               step={step} data={sectorLogs[stepIdx]}
               onMeta={setSectorMeta} onField={setSectorField} onAdd={addSector} onRemove={removeSector}
             />
+          ) : step.kind === 'summary' ? (
+            <SummaryStep summary={summary} onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))} />
           ) : (
             <CardioStep step={step} value={cardioLogs[stepIdx] || {}} onChange={setCardioField} />
           )}
         </div>
       </div>
 
-      {/* Плашка таймера отдыха */}
-      {(restActive || restDone) && (
-        <div
-          className={restDone ? 'rest-done-flash' : ''}
-          style={{
-            flexShrink: 0, borderTop: `1px solid ${t.BORDER}`,
-            background: t.BG_RAISED,
-            padding: '12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left))',
-          }}
-        >
-          <div style={{
-            maxWidth: 480, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 14,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
-              <div style={{
-                width: 42, height: 42, borderRadius: 12, flexShrink: 0,
-                background: restDone ? t.POSITIVE_BG : t.ACCENT_BG,
-                color: restDone ? t.POSITIVE : t.ACCENT_SOFT,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                animation: restActive ? 'restPulse 1s ease-in-out infinite' : 'none',
-              }}>
-                {restDone ? <CheckCircle2 size={22} /> : <Timer size={22} />}
-              </div>
-              <div style={{ minWidth: 0 }}>
-                {restDone ? (
-                  <>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: t.POSITIVE }}>Отдых окончен!</div>
-                    <div style={{ fontSize: 12, color: t.TEXT_FAINT }}>Пора делать следующий подход</div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: t.TEXT, fontFamily: t.FONT_MONO, lineHeight: 1 }}>
-                      {fmtClock(restRemaining)}
-                    </div>
-                    <div style={{ fontSize: 12, color: t.TEXT_FAINT, marginTop: 2 }}>Отдых между подходами</div>
-                  </>
-                )}
-              </div>
-            </div>
-            <button
-              onClick={skipRest}
-              aria-label={restDone ? 'Понятно' : 'Пропустить отдых'}
-              title="Пропустить (как трек в наушниках)"
-              style={{
-                flexShrink: 0, display: 'flex', alignItems: 'center', gap: 7,
-                height: 44, padding: '0 15px', borderRadius: 12,
-                border: `1px solid ${restDone ? t.POSITIVE : t.ACCENT_BORDER}`,
-                background: restDone ? t.POSITIVE_BG : t.ACCENT_BG,
-                color: restDone ? t.POSITIVE : t.ACCENT_SOFT,
-                fontSize: 13.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-              }}
-            >
-              <Headphones size={18} />
-              {restDone ? 'Ок' : 'Пропустить'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Навигация */}
+      {/* Навигация + компактный таймер отдыха рядом с кнопками */}
       <div style={{
         flexShrink: 0, borderTop: `1px solid ${t.BORDER}`, background: t.BG,
         padding: '12px max(16px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left))',
@@ -575,6 +542,27 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
           >
             <ChevronLeft size={20} />
           </button>
+
+          {/* Небольшая иконка таймера отдыха (как кнопка «назад») — вместо большой плашки */}
+          {(restActive || restDone) && (
+            <button
+              onClick={skipRest}
+              aria-label={restDone ? 'Отдых окончен' : 'Пропустить отдых'}
+              title="Пропустить отдых"
+              className={restDone ? 'rest-done-flash' : ''}
+              style={{
+                ...btnBase, flex: '0 0 auto', minWidth: 66, padding: '0 10px', gap: 5,
+                border: `1px solid ${restDone ? t.POSITIVE : t.ACCENT_BORDER}`,
+                background: restDone ? t.POSITIVE_BG : t.ACCENT_BG,
+                color: restDone ? t.POSITIVE : t.ACCENT_SOFT,
+                fontFamily: t.FONT_MONO, fontSize: 13.5,
+                animation: restActive ? 'restPulse 1s ease-in-out infinite' : 'none',
+              }}
+            >
+              {restDone ? <CheckCircle2 size={18} /> : <><Timer size={16} />{fmtClock(restRemaining)}</>}
+            </button>
+          )}
+
           {(() => {
             const secData = step.kind === 'sectors' ? sectorLogs[stepIdx] : null;
             const finishLocked = step.kind === 'sectors' && !sectorGoalReached(secData);
@@ -585,22 +573,25 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
               if (target <= 0) lockedLabel = 'Укажи цель тренировки';
               else lockedLabel = `Осталось ${trimNum(Math.max(0, target - sectorAchieved(secData)))} ${unit}`;
             }
+            const disabled = finishLocked || saving;
             return (
               <button
                 onClick={goNext}
-                disabled={finishLocked}
+                disabled={disabled}
                 style={{
-                  ...btnBase, flex: 1,
+                  ...btnBase, flex: 1, minWidth: 0,
                   border: finishLocked ? `1px solid ${t.BORDER}` : 'none',
                   background: finishLocked ? t.BG_INPUT : (isLast ? t.POSITIVE : t.ACCENT_GRAD),
                   color: finishLocked ? t.TEXT_FAINT : t.ON_ACCENT,
                   boxShadow: (finishLocked || isLast) ? 'none' : t.GLOW,
-                  cursor: finishLocked ? 'default' : 'pointer',
+                  cursor: disabled ? 'default' : 'pointer', opacity: saving ? 0.7 : 1,
+                  overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                 }}
               >
                 {finishLocked
                   ? lockedLabel
-                  : isLast ? <><Check size={19} /> Завершить тренировку</> : <>Дальше <ChevronRight size={19} /></>}
+                  : saving ? 'Сохраняю…'
+                    : isLast ? <><Check size={19} /> Завершить и сохранить</> : <>Дальше <ChevronRight size={19} /></>}
               </button>
             );
           })()}
@@ -632,7 +623,7 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
   );
 }
 
-function ExerciseStep({ step, sets, onSet, onStartRest, records, restActive }) {
+function ExerciseStep({ step, sets, onSet, onStartRest, records, note, onNote }) {
   const t = useTheme();
   const weightless = isWeightlessExercise(step.name);
   const record = records && records[step.name];
@@ -712,6 +703,58 @@ function ExerciseStep({ step, sets, onSet, onStartRest, records, restActive }) {
           </div>
         );
       })}
+
+      {/* Самочувствие / заметка по упражнению */}
+      <div style={{ marginTop: 4 }}>
+        <Field label="Самочувствие · заметка">
+          <textarea
+            style={{ ...getLabelInputStyle(t), resize: 'vertical', minHeight: 52, fontFamily: 'inherit' }}
+            value={note}
+            onChange={(e) => onNote(e.target.value)}
+            placeholder="Как ощущения, техника, боль/дискомфорт…"
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+function SummaryStep({ summary, onChange }) {
+  const t = useTheme();
+  return (
+    <div>
+      <StepHeader icon={CheckCircle2} name="Итог тренировки" subtitle="Сон, энергия и общие заметки — и сохраняем" />
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <Field label="Сон, часы">
+          <input
+            style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
+            value={summary.sleep} onChange={(e) => onChange({ sleep: e.target.value })}
+            placeholder="7.5"
+          />
+        </Field>
+        <Field label="Энергия">
+          <div style={{ display: 'flex', gap: 4, paddingTop: 2 }}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                onClick={() => onChange({ energy: n })}
+                style={{
+                  flex: 1, height: 38, borderRadius: 8,
+                  border: `1px solid ${n <= summary.energy ? t.ACCENT : t.BORDER}`,
+                  background: n <= summary.energy ? t.ACCENT : 'transparent', cursor: 'pointer',
+                }}
+              />
+            ))}
+          </div>
+        </Field>
+      </div>
+      <Field label="Самочувствие, заметки">
+        <textarea
+          style={{ ...getLabelInputStyle(t), resize: 'vertical', minHeight: 64, fontFamily: 'inherit' }}
+          value={summary.feeling} onChange={(e) => onChange({ feeling: e.target.value })}
+          placeholder="Как прошло в целом, что почувствовал…"
+        />
+      </Field>
     </div>
   );
 }
@@ -924,7 +967,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
                     }}
                     type="text" inputMode="numeric"
                     value={sec.clock || ''} onChange={(e) => onClockChange(si, e.target.value)}
-                    placeholder="7:54"
+                    placeholder="00:00"
                   />
                 </Field>
               </div>

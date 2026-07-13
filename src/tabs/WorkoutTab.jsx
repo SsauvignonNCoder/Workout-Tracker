@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, X, Dumbbell, Pencil, Play } from 'lucide-react';
+import { Plus, X, Dumbbell, Pencil, Play, Check } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
 import { computeRecords } from '../gamification.js';
@@ -25,6 +25,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const [showProgramPicker, setShowProgramPicker] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [guidedOpen, setGuidedOpen] = useState(false);
+  const [guidedSaved, setGuidedSaved] = useState(false);
 
   useEffect(() => {
     if (editSession) {
@@ -45,8 +46,19 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       setEnergy(editSession.energy || 3);
       setFeeling(editSession.feeling || '');
       setProgramDay(editSession.programDay || null);
+    } else if (editingId) {
+      // Вышли из режима редактирования (сохранили/отменили) — сбрасываем черновик,
+      // иначе форма продолжала бы обновлять ту же тренировку даже при выборе нового дня.
+      setEditingId(null);
+      setExercises([]);
+      setCardio([]);
+      setSleep('');
+      setEnergy(3);
+      setFeeling('');
+      setProgramDay(null);
+      setProgramDetached(false);
     }
-  }, [editSession]);
+  }, [editSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (editingId) return;
@@ -133,15 +145,22 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     setCardio(pickedCardio);
   };
 
-  // Завершение пошаговой тренировки: переносим записанные результаты в форму,
-  // чтобы Никита мог дописать сон/энергию/самочувствие и сохранить как обычно.
-  const handleGuidedComplete = (loggedExercises, loggedCardio) => {
-    if (loggedExercises.length > 0) setExercises(loggedExercises);
-    if (loggedCardio.length > 0) setCardio(loggedCardio);
+  // Завершение пошаговой тренировки: сохраняем сессию сразу (гид сам собрал полную
+  // запись — упражнения+заметки, кардио, сон/энергия/самочувствие с шага «Итог»).
+  const handleGuidedComplete = async (session) => {
     setGuidedOpen(false);
-    setJustAppliedProgram(true);
-    setTimeout(() => setJustAppliedProgram(false), 1500);
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+    const next = [...(sessions || []), session].sort((a, b) => a.date.localeCompare(b.date));
+    await saveSessions(next);
+    if (session.programDay) {
+      await saveProfile({ ...(profile || {}), lastProgramDay: session.programDay });
+    }
+    // Сбрасываем привязку к дню — эффект подставит следующий день программы.
+    setExercises([]);
+    setCardio([]);
+    setProgramDay(null);
+    setProgramDetached(false);
+    setGuidedSaved(true);
+    setTimeout(() => setGuidedSaved(false), 3500);
   };
 
   const records = useMemo(() => computeRecords(sessions), [sessions]);
@@ -243,15 +262,33 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     if (onEditDone) onEditDone();
   };
 
+  // Тренировка из плана: показываем только выбор дня + кнопку «Начать тренировку»
+  // (всё остальное записывается внутри пошагового режима и сохраняется сразу).
+  const planMode = programDay && !editingId;
+
   return (
     <div>
-      <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
-        <Field label="Дата тренировки">
-          <DatePicker value={date} onChange={setDate} />
-        </Field>
-      </div>
+      {guidedSaved && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: t.POSITIVE_BG, border: `1px solid ${t.POSITIVE}`, borderRadius: 12,
+          padding: '11px 14px', marginBottom: 16, fontSize: 13.5, fontWeight: 700, color: t.POSITIVE,
+        }}>
+          <Check size={16} /> Тренировка сохранена — смотри во вкладке «Прогресс»
+        </div>
+      )}
 
-      <RepeatWorkoutPicker sessions={sessions} onPick={handlePickWorkout} />
+      {!planMode && (
+        <>
+          <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
+            <Field label="Дата тренировки">
+              <DatePicker value={date} onChange={setDate} />
+            </Field>
+          </div>
+
+          <RepeatWorkoutPicker sessions={sessions} onPick={handlePickWorkout} />
+        </>
+      )}
 
       {programDay ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 14 }}>
@@ -307,11 +344,18 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         </button>
       )}
 
+      {planMode && (
+        <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, textAlign: 'center', marginBottom: 16, lineHeight: 1.45 }}>
+          Вес, повторы, время и заметки запишешь прямо в тренировке — по завершении она сохранится в «Прогресс».
+        </div>
+      )}
+
       {programDay && (() => {
         const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
         return dayPlan && dayPlan.type === 'strength' ? <WarmupTip title={dayPlan.title} /> : null;
       })()}
 
+      {!planMode && (<>
       <div style={{ marginBottom: 8, fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
         Упражнения
       </div>
@@ -440,6 +484,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           ? (editingId ? 'Изменения сохранены ✓' : 'Сохранено ✓')
           : saving ? 'Сохраняю...' : (editingId ? 'Сохранить изменения' : 'Сохранить тренировку')}
       </button>
+      </>)}
 
       {guidedOpen && programDay && (() => {
         const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
