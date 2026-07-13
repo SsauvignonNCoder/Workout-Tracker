@@ -274,6 +274,186 @@ function SectorBlock({ sectors }) {
   );
 }
 
+// ---- Беговая дорожка: авто-классификация и отдельный график ----
+const TREADMILL_TYPES = [
+  { key: 'warmup', label: 'Разминка', color: '#5B8FB0' },
+  { key: 'finish', label: 'Кардио-финиш', color: '#C9A227' },
+  { key: 'cardio', label: 'Кардио-тренировка', color: '#5C8A4E' },
+];
+const TREADMILL_METRICS = [
+  { key: 'speed', label: 'Скорость', unit: 'км/ч' },
+  { key: 'distance', label: 'Дистанция', unit: 'км' },
+  { key: 'duration', label: 'Время', unit: 'мин' },
+];
+
+function isTreadmillName(name) { return (name || '').toLowerCase().includes('дорожк'); }
+
+// Классификация записи «беговая дорожка» по контексту тренировки + длительности.
+// В данных упражнения и кардио — разные списки, буквального «до/после» нет,
+// поэтому: есть силовые и <10 мин → разминка; есть силовые и ≥10 → кардио-финиш;
+// только кардио (или кардио-день/секторы) → кардио-тренировка.
+function classifyTreadmill(name, durationMin, hasStrength) {
+  if (/разминк/i.test(name || '')) return 'warmup';
+  if (!hasStrength) return 'cardio';
+  return durationMin > 0 && durationMin < 10 ? 'warmup' : 'finish';
+}
+
+function buildTreadmillPoints(sessions) {
+  const points = [];
+  (sessions || []).forEach((s) => {
+    const hasStrength = (s.exercises || []).some((e) => (e.name || '').trim());
+    const cardio = s.cardio || [];
+    const sectors = cardio.filter((c) => SECTOR_RE.test((c.name || '').trim()));
+    cardio.forEach((c) => {
+      if (SECTOR_RE.test((c.name || '').trim())) return; // секторы — ниже
+      if (!isTreadmillName(c.name)) return;
+      const duration = parseFloat(c.duration) || 0;
+      points.push({
+        id: `${s.id}-${c.name}`, date: s.date,
+        type: classifyTreadmill(c.name, duration, hasStrength),
+        speed: parseFloat(c.speed) || 0, distance: parseFloat(c.distance) || 0, duration,
+      });
+    });
+    if (sectors.length) {
+      const distance = sectors.reduce((a, c) => a + (parseFloat(c.distance) || 0), 0);
+      const durMin = sectors.reduce((a, c) => a + (c.durationSec != null ? c.durationSec / 60 : (parseFloat(c.duration) || 0)), 0);
+      const speed = durMin > 0 ? (distance * 60) / durMin : 0;
+      points.push({
+        id: `${s.id}-sectors`, date: s.date, type: 'cardio', isSectors: true,
+        speed: Math.round(speed * 10) / 10, distance: Math.round(distance * 100) / 100, duration: Math.round(durMin),
+        sectors: sectors.map((c, i) => ({
+          label: (c.name || '').replace(SECTOR_RE, '').trim() || String(i + 1),
+          speed: parseFloat(c.speed) || 0, distance: parseFloat(c.distance) || 0,
+          duration: c.durationSec != null ? Math.round(c.durationSec / 60) : (parseFloat(c.duration) || 0),
+        })),
+      });
+    }
+  });
+  return points.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function TreadmillChart({ sessions }) {
+  const t = useTheme();
+  const [metric, setMetric] = useState('speed');
+  const [drill, setDrill] = useState(null);
+  const points = useMemo(() => buildTreadmillPoints(sessions), [sessions]);
+  const m = TREADMILL_METRICS.find((x) => x.key === metric);
+
+  const metricToggle = (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+      {TREADMILL_METRICS.map((mm) => {
+        const active = mm.key === metric;
+        return (
+          <button
+            key={mm.key} onClick={() => setMetric(mm.key)}
+            style={{
+              flex: 1, padding: '8px', borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${active ? t.ACCENT : t.BORDER}`, background: active ? t.ACCENT_BG : 'transparent',
+              color: active ? t.ACCENT_SOFT : t.TEXT_DIM,
+            }}
+          >{mm.label}</button>
+        );
+      })}
+    </div>
+  );
+
+  const cardStyle = { background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 18, padding: '16px 16px 8px', marginBottom: 14, boxShadow: t.CARD_SHADOW };
+
+  if (points.length === 0) return null;
+
+  // Разбивка одного кардио-дня по секторам (раскрытие по тапу на точку).
+  if (drill) {
+    const data = drill.sectors.map((s) => ({ name: s.label, value: Math.round((s[metric] || 0) * 100) / 100 }));
+    return (
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <button
+            onClick={() => setDrill(null)} aria-label="Назад"
+            style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          >‹</button>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>Кардио-день · секторы</div>
+            <div style={{ fontSize: 12, color: t.TEXT_FAINT }}>{fmtDateFull(drill.date)}</div>
+          </div>
+        </div>
+        {metricToggle}
+        <ResponsiveContainer width="100%" height={170}>
+          <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
+            <XAxis dataKey="name" tick={{ fill: t.TEXT_FAINT, fontSize: 11 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
+            <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
+            <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v) => [`${v} ${m.unit}`, m.label]} />
+            <Line type="monotone" dataKey="value" name={m.label} stroke={t.ACCENT} strokeWidth={2.2} dot={{ r: 3, fill: t.ACCENT, strokeWidth: 0 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
+
+  // Основной график: точки по типам, разными цветами.
+  const rowsByDate = {};
+  points.forEach((p) => {
+    const d = p.date;
+    rowsByDate[d] = rowsByDate[d] || { date: d, label: fmtDateShort(d) };
+    rowsByDate[d][p.type] = Math.round((p[metric] || 0) * 100) / 100;
+    if (p.type === 'cardio' && p.isSectors) rowsByDate[d]._cardio = p;
+  });
+  const data = Object.values(rowsByDate).sort((a, b) => a.date.localeCompare(b.date));
+  const presentTypes = TREADMILL_TYPES.filter((tp) => points.some((p) => p.type === tp.key));
+  const hasSectors = points.some((p) => p.isSectors);
+
+  const makeDot = (typeKey, color, clickable) => (props) => {
+    const { cx, cy, payload } = props;
+    if (cx == null || cy == null || payload[typeKey] == null) return null;
+    const isClickable = clickable && payload._cardio;
+    return (
+      <circle
+        cx={cx} cy={cy} r={isClickable ? 4.8 : 3} fill={color}
+        stroke={isClickable ? t.BG_RAISED : undefined} strokeWidth={isClickable ? 1.5 : 0}
+        style={{ cursor: isClickable ? 'pointer' : 'default' }}
+        onClick={isClickable ? () => setDrill(payload._cardio) : undefined}
+      />
+    );
+  };
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 7 }}>
+        🏃 Беговая дорожка
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+        {presentTypes.map((tp) => (
+          <span key={tp.key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: tp.color, flexShrink: 0 }} />
+            <span style={{ color: t.TEXT_DIM, fontWeight: 600 }}>{tp.label}</span>
+          </span>
+        ))}
+      </div>
+      {metricToggle}
+      <ResponsiveContainer width="100%" height={160}>
+        <LineChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
+          <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={30} />
+          <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v, n) => [`${v} ${m.unit}`, n]} />
+          {TREADMILL_TYPES.map((tp) => (
+            <Line
+              key={tp.key} type="monotone" dataKey={tp.key} name={tp.label}
+              stroke={tp.color} strokeWidth={2.2} connectNulls
+              dot={makeDot(tp.key, tp.color, tp.key === 'cardio')} activeDot={{ r: 5 }}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+      {hasSectors && (
+        <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, margin: '2px 0 8px', lineHeight: 1.4 }}>
+          Тап по точке «кардио-тренировка» — разбивка того дня по секторам.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SessionCard({ s, onEdit, onDelete }) {
   const t = useTheme();
   const cardioAll = s.cardio || [];
@@ -517,8 +697,11 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     const exOpts = Object.entries(exerciseSeries)
       .filter(([, pts]) => pts.length >= 2)
       .map(([name]) => ({ key: `ex:${name}`, label: name, type: 'exercise' }));
+    // Беговая дорожка, разминка и секторы — отдельная плашка «Беговая дорожка» (TreadmillChart),
+    // поэтому из общего селектора их исключаем, чтобы не дублировать.
     const cardioOpts = Object.entries(cardioSeries)
-      .filter(([name, pts]) => pts.length >= 2 && !name.trim().toLowerCase().includes('бассейн'))
+      .filter(([name, pts]) => pts.length >= 2 && !name.trim().toLowerCase().includes('бассейн')
+        && !isTreadmillName(name) && !SECTOR_RE.test(name.trim()))
       .map(([name]) => ({ key: `cardio:${name}`, label: name, type: 'cardio' }));
     const bwOpts = (measurements || []).length >= 2
       ? [{ key: 'bw:weight', label: 'Вес тела', type: 'bodyweight' }]
@@ -665,6 +848,8 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         <MultiSeriesChart selectedSeries={selectedSeries} />
       )}
 
+      <TreadmillChart sessions={sessions} />
+
       <div style={{ height: 1, background: t.BORDER, margin: '22px 0 18px' }} />
 
       <button
@@ -747,9 +932,13 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           </button>
           {showArchive && (
             <div style={{ marginTop: 12 }}>
-              {archiveTree.map((y) => (
-                <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} />
-              ))}
+              {archiveTree.length > 1
+                ? archiveTree.map((y) => (
+                    <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} />
+                  ))
+                : (archiveTree[0]?.months || []).map((m) => (
+                    <ArchiveMonthGroup key={m.month} month={m} onEdit={onEditSession} onDelete={onDeleteSession} />
+                  ))}
             </div>
           )}
         </>

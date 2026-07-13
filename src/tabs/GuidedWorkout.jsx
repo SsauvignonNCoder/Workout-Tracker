@@ -507,7 +507,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
         <div key={stepIdx} className="guided-step-in" style={{ maxWidth: 480, margin: '0 auto' }}>
           {step.kind === 'exercise' ? (
             <ExerciseStep
-              step={step} sets={exLogs[stepIdx] || []} onSet={setExSet} onStartRest={startRest}
+              step={step} sets={exLogs[stepIdx] || []} onSet={setExSet}
               records={records} note={exNotes[stepIdx] || ''} onNote={setExNote}
             />
           ) : step.kind === 'sectors' ? (
@@ -543,23 +543,28 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
             <ChevronLeft size={20} />
           </button>
 
-          {/* Небольшая иконка таймера отдыха (как кнопка «назад») — вместо большой плашки */}
-          {(restActive || restDone) && (
+          {/* Небольшая иконка отдыха рядом со стрелками: в покое (на шаге упражнения)
+              запускает отдых 2 мин, активная — показывает отсчёт и пропускает по тапу. */}
+          {(step.kind === 'exercise' || restActive || restDone) && (
             <button
-              onClick={skipRest}
-              aria-label={restDone ? 'Отдых окончен' : 'Пропустить отдых'}
-              title="Пропустить отдых"
+              onClick={restActive || restDone ? skipRest : () => startRest()}
+              aria-label={restActive ? 'Пропустить отдых' : restDone ? 'Отдых окончен' : 'Отдых 2 минуты'}
+              title={restActive || restDone ? 'Пропустить отдых' : 'Запустить отдых 2 мин'}
               className={restDone ? 'rest-done-flash' : ''}
               style={{
-                ...btnBase, flex: '0 0 auto', minWidth: 66, padding: '0 10px', gap: 5,
-                border: `1px solid ${restDone ? t.POSITIVE : t.ACCENT_BORDER}`,
-                background: restDone ? t.POSITIVE_BG : t.ACCENT_BG,
-                color: restDone ? t.POSITIVE : t.ACCENT_SOFT,
+                ...btnBase, flex: '0 0 auto', minWidth: 66, padding: '0 11px', gap: 5,
+                border: `1px solid ${restDone ? t.POSITIVE : restActive ? t.ACCENT_BORDER : t.BORDER}`,
+                background: restDone ? t.POSITIVE_BG : restActive ? t.ACCENT_BG : t.BG_INPUT,
+                color: restDone ? t.POSITIVE : restActive ? t.ACCENT_SOFT : t.TEXT_DIM,
                 fontFamily: t.FONT_MONO, fontSize: 13.5,
                 animation: restActive ? 'restPulse 1s ease-in-out infinite' : 'none',
               }}
             >
-              {restDone ? <CheckCircle2 size={18} /> : <><Timer size={16} />{fmtClock(restRemaining)}</>}
+              {restDone
+                ? <CheckCircle2 size={18} />
+                : restActive
+                  ? <><Timer size={16} />{fmtClock(restRemaining)}</>
+                  : <><Timer size={16} />2:00</>}
             </button>
           )}
 
@@ -623,7 +628,7 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
   );
 }
 
-function ExerciseStep({ step, sets, onSet, onStartRest, records, note, onNote }) {
+function ExerciseStep({ step, sets, onSet, records, note, onNote }) {
   const t = useTheme();
   const weightless = isWeightlessExercise(step.name);
   const record = records && records[step.name];
@@ -649,7 +654,6 @@ function ExerciseStep({ step, sets, onSet, onStartRest, records, note, onNote })
       </div>
 
       {sets.map((s, si) => {
-        const isLastSet = si === sets.length - 1;
         return (
           <div key={si} style={{
             background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 16,
@@ -683,23 +687,6 @@ function ExerciseStep({ step, sets, onSet, onStartRest, records, note, onNote })
                 />
               </Field>
             </div>
-            {!isLastSet && (
-              <button
-                onClick={() => {
-                  // Перенос веса на следующий подход для удобства.
-                  if (!weightless && s.weight && !sets[si + 1].weight) onSet(si + 1, { weight: s.weight });
-                  onStartRest();
-                }}
-                style={{
-                  marginTop: 12, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                  padding: '11px', borderRadius: 12, border: `1px solid ${t.ACCENT_BORDER}`,
-                  background: t.ACCENT_BG, color: t.ACCENT_SOFT, fontSize: 13.5, fontWeight: 700,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                }}
-              >
-                <Timer size={16} /> Подход выполнен · отдых 2 мин
-              </button>
-            )}
           </div>
         );
       })}
