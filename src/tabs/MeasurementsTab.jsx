@@ -10,6 +10,30 @@ function average(nums) {
   return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
 }
 
+// Время с устройства в момент записи веса, в формате ЧЧ:ММ.
+// Хранится в поле `time` записи замера. Поле необязательное:
+// у всех замеров, сделанных до этой версии, его нет — тогда просто ничего не показываем.
+function nowTime() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+// Метка времени рядом с датой — намеренно мельче и бледнее самой даты.
+function TimeMark({ time, size = 11 }) {
+  const t = useTheme();
+  if (!time) return null;
+  return (
+    <span style={{
+      marginLeft: 6, fontSize: size, color: t.TEXT_FAINT, opacity: 0.7,
+      fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 400,
+    }}>
+      {time}
+    </span>
+  );
+}
+
 function WeightHistoryRow({ m, prevWeight, onDelete }) {
   const t = useTheme();
   const delta = prevWeight != null && m.weight != null ? Math.round((m.weight - prevWeight) * 10) / 10 : null;
@@ -22,7 +46,7 @@ function WeightHistoryRow({ m, prevWeight, onDelete }) {
       display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 2px',
       borderBottom: `1px solid ${t.BORDER}`, fontSize: 13.5,
     }}>
-      <span style={{ color: t.TEXT_DIM }}>{fmtDateShort(m.date)}</span>
+      <span style={{ color: t.TEXT_DIM }}>{fmtDateShort(m.date)}<TimeMark time={m.time} /></span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600 }}>{m.weight} кг</span>
         {delta != null && delta !== 0 && (
@@ -78,7 +102,7 @@ function WeekGroupRow({ weekStart, entries, onDelete }) {
               display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 2px',
               borderBottom: `1px solid ${t.BORDER}`, fontSize: 13,
             }}>
-              <span style={{ color: t.TEXT_FAINT }}>{fmtDateShort(m.date)}</span>
+              <span style={{ color: t.TEXT_FAINT }}>{fmtDateShort(m.date)}<TimeMark time={m.time} size={10.5} /></span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>{m.weight} кг</span>
                 {onDelete && (
@@ -157,13 +181,16 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError }) {
       return;
     }
     setSaving(true);
+    const time = nowTime();
     const existingIdx = (measurements || []).findIndex((m) => m.date === date);
     let next;
     if (existingIdx >= 0) {
+      // Перезапись веса за тот же день — время тоже обновляем: показываем,
+      // когда вес был зафиксирован в последний раз.
       next = [...measurements];
-      next[existingIdx] = { ...next[existingIdx], weight: w };
+      next[existingIdx] = { ...next[existingIdx], weight: w, time };
     } else {
-      next = [...(measurements || []), { id: `${date}-${Date.now()}`, date, weight: w }];
+      next = [...(measurements || []), { id: `${date}-${Date.now()}`, date, time, weight: w }];
     }
     next.sort((a, b) => a.date.localeCompare(b.date));
     await saveMeasurements(next);

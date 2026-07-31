@@ -42,12 +42,13 @@ create table sessions (
 
 create index sessions_user_date_idx on sessions (user_id, date);
 
--- Замеры веса
+-- Замеры веса. time_of_day — время с устройства в момент записи, 'ЧЧ:ММ' (может быть пустым).
 create table measurements (
   id text primary key,
   user_id uuid not null references users(id) on delete cascade,
   date text not null,
   weight numeric,
+  time_of_day text,
   created_at timestamptz default now()
 );
 

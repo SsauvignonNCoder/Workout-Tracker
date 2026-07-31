@@ -39,12 +39,15 @@ function sessionToRow(s, userId) {
   };
 }
 
+// В базе колонка называется time_of_day (слово time в SQL занято под тип данных),
+// внутри приложения поле короче — time. Формат 'ЧЧ:ММ'. Может быть пустым:
+// у замеров, сделанных до версии 1.0.0, времени нет — тогда оно просто не показывается.
 function measurementFromRow(row) {
-  return { id: row.id, date: row.date, weight: row.weight };
+  return { id: row.id, date: row.date, weight: row.weight, time: row.time_of_day || null };
 }
 
 function measurementToRow(m, userId) {
-  return { id: m.id, user_id: userId, date: m.date, weight: m.weight };
+  return { id: m.id, user_id: userId, date: m.date, weight: m.weight, time_of_day: m.time || null };
 }
 
 function profileFromRow(row) {

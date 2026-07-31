@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
-  Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw,
+  Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
-import { cooldownFor } from '../cooldown.js';
+import { cooldownFor, variantsOf } from '../cooldown.js';
 import { Field, getInputStyle, getLabelInputStyle, MuscleBadge, isWeightlessExercise, secToClock, parseClock } from './workoutTabHelpers.jsx';
 
 const REST_SECONDS = 120;
@@ -203,6 +203,9 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
   const [exNotes, setExNotes] = useState({});
   // Отметки «сделано» на шаге заминки (ключ — индекс упражнения заминки). В базу не пишем.
   const [cooldownDone, setCooldownDone] = useState({});
+  // Выбранный вариант упражнения заминки (ключ — индекс, значение — номер варианта).
+  // 0 = основное упражнение, дальше — замены из cooldown.js.
+  const [cooldownPick, setCooldownPick] = useState({});
   // Итоговый экран: сон, энергия, общее самочувствие.
   const [summary, setSummary] = useState({ sleep: '', energy: 3, feeling: '' });
   const [saving, setSaving] = useState(false);
@@ -228,6 +231,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
       setCardioLogs((prev) => ({ ...prev, ...cardio }));
       setSectorLogs((prev) => ({ ...prev, ...sectors }));
       if (d.cooldownDone) setCooldownDone(d.cooldownDone);
+      if (d.cooldownPick) setCooldownPick(d.cooldownPick);
       if (d.summary) setSummary((prev) => ({ ...prev, ...d.summary }));
       setStepIdx(Math.min(steps.length - 1, Math.max(0, parseInt(d.stepIdx, 10) || 0)));
     }
@@ -415,7 +419,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
   const snapshotRef = useRef(null);
   snapshotRef.current = {
     day: dayPlan && dayPlan.day, title: dayPlan && dayPlan.title,
-    stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, summary,
+    stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary,
   };
 
   useEffect(() => {
@@ -424,7 +428,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
       if (writeDraft(snapshotRef.current)) setDraftSavedAt(Date.now());
     }, 400);
     return () => clearTimeout(id);
-  }, [restoreOffer, saving, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, summary]);
+  }, [restoreOffer, saving, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary]);
 
   useEffect(() => {
     const flush = () => {
@@ -486,6 +490,13 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
 
   const setExNote = (val) => setExNotes((prev) => ({ ...prev, [stepIdx]: val }));
   const toggleCooldown = (i) => setCooldownDone((prev) => ({ ...prev, [i]: !prev[i] }));
+
+  // Перебор вариантов упражнения заминки по кругу. Отметку «сделано» сбрасываем:
+  // упражнение поменялось, значит его ещё не делали.
+  const swapCooldown = (i, total) => {
+    setCooldownPick((prev) => ({ ...prev, [i]: (((prev[i] || 0) + 1) % Math.max(1, total)) }));
+    setCooldownDone((prev) => (prev[i] ? { ...prev, [i]: false } : prev));
+  };
 
   const finish = () => {
     // Упражнения → агрегат (число) + setLog + заметка. Пустые (без данных и заметки) пропускаем.
@@ -737,7 +748,10 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete }) {
               onMeta={setSectorMeta} onField={setSectorField} onAdd={addSector} onRemove={removeSector}
             />
           ) : step.kind === 'cooldown' ? (
-            <CooldownStep step={step} done={cooldownDone} onToggle={toggleCooldown} />
+            <CooldownStep
+              step={step} done={cooldownDone} onToggle={toggleCooldown}
+              pick={cooldownPick} onSwap={swapCooldown}
+            />
           ) : step.kind === 'summary' ? (
             <SummaryStep summary={summary} onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))} />
           ) : (
@@ -987,7 +1001,7 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, wrapRef, flyin
   );
 }
 
-function CooldownStep({ step, done, onToggle }) {
+function CooldownStep({ step, done, onToggle, pick, onSwap }) {
   const t = useTheme();
   const items = step.items || [];
   const doneCount = items.filter((_, i) => done[i]).length;
@@ -1002,6 +1016,8 @@ function CooldownStep({ step, done, onToggle }) {
       }}>
         Записывать ничего не нужно — просто отметь, что сделал. Тянем на выдохе, спокойно,
         до ощущения натяжения, а не боли. Никаких пружинящих рывков.
+        Если упражнение не подходит (нет места, ноет сустав) — жми «заменить»,
+        подставится другой вариант на ту же зону.
       </div>
 
       <div style={{
@@ -1013,41 +1029,83 @@ function CooldownStep({ step, done, onToggle }) {
 
       {items.map((it, i) => {
         const isDone = !!done[i];
+        // Варианты слота: основное упражнение + замены из src/cooldown.js.
+        // Кнопка «заменить» перебирает их по кругу, выбор хранится в pick[i].
+        const variants = variantsOf(it);
+        const idx = (pick && pick[i]) || 0;
+        const cur = variants[idx] || variants[0] || it;
+        const hasAlts = variants.length > 1;
+
         return (
-          <button
+          <div
             key={i}
-            onClick={() => onToggle(i)}
             style={{
-              display: 'block', width: '100%', textAlign: 'left', boxSizing: 'border-box',
+              boxSizing: 'border-box',
               background: isDone ? t.POSITIVE_BG : t.BG_RAISED,
               border: `1px solid ${isDone ? t.POSITIVE : t.BORDER}`,
-              borderRadius: 16, padding: '13px 14px', marginBottom: 12,
-              boxShadow: isDone ? 'none' : t.CARD_SHADOW, cursor: 'pointer', fontFamily: 'inherit',
+              borderRadius: 16, marginBottom: 12,
+              boxShadow: isDone ? 'none' : t.CARD_SHADOW,
               transition: 'background 0.2s ease, border-color 0.2s ease',
+              overflow: 'hidden',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
-              <span style={{ flexShrink: 0, color: isDone ? t.POSITIVE : t.TEXT_FAINT, marginTop: 1 }}>
-                {isDone ? <CheckCircle2 size={20} /> : <Circle size={20} />}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontSize: 14.5, fontWeight: 700, color: t.TEXT, marginBottom: 3,
-                  textDecoration: isDone ? 'line-through' : 'none',
-                  textDecorationColor: t.TEXT_FAINT,
-                }}>
-                  {it.name}
+            <button
+              onClick={() => onToggle(i)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', boxSizing: 'border-box',
+                background: 'transparent', border: 'none', padding: '13px 14px 11px',
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
+                <span style={{ flexShrink: 0, color: isDone ? t.POSITIVE : t.TEXT_FAINT, marginTop: 1 }}>
+                  {isDone ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 14.5, fontWeight: 700, color: t.TEXT, marginBottom: 3,
+                    textDecoration: isDone ? 'line-through' : 'none',
+                    textDecorationColor: t.TEXT_FAINT,
+                  }}>
+                    {cur.name}
+                  </div>
+                  <div style={{
+                    fontSize: 12, fontWeight: 700, color: isDone ? t.POSITIVE : t.ACCENT_SOFT,
+                    fontFamily: t.FONT_MONO, marginBottom: 6,
+                  }}>
+                    {cur.dose}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45 }}>{cur.hint}</div>
                 </div>
-                <div style={{
-                  fontSize: 12, fontWeight: 700, color: isDone ? t.POSITIVE : t.ACCENT_SOFT,
-                  fontFamily: t.FONT_MONO, marginBottom: 6,
-                }}>
-                  {it.dose}
-                </div>
-                <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45 }}>{it.hint}</div>
               </div>
-            </div>
-          </button>
+            </button>
+
+            {hasAlts && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                padding: '0 14px 11px 46px',
+              }}>
+                <span style={{
+                  fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
+                  fontFamily: t.FONT_MONO, letterSpacing: '0.06em',
+                }}>
+                  {idx + 1} / {variants.length}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onSwap(i, variants.length); }}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 999,
+                    padding: '6px 12px', cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 11.5, fontWeight: 700, color: t.TEXT_DIM,
+                  }}
+                >
+                  <Shuffle size={13} />
+                  заменить
+                </button>
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
