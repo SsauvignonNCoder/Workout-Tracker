@@ -69,6 +69,35 @@ function fmtCardioResult(c) {
   return parts.join(' · ') || '—';
 }
 
+// Разбивка по подходам: «50×5, 55×4, 55×3» (для упражнений без веса — только повторы).
+// setLog сохраняется пошаговым режимом (GuidedWorkout) по каждому подходу отдельно.
+function fmtSetLog(ex) {
+  const weightless = isWeightlessExercise(ex.name) || !ex.weight;
+  return (ex.setLog || []).map((s) => {
+    const w = Number(s.weight) || 0;
+    const r = Number(s.reps) || 0;
+    return (weightless || !w) ? `${r}` : `${fmtNum(w)}×${r}`;
+  }).join(', ');
+}
+
+// Блок «Подходы и заметки» под таблицей дня: пофактическая разбивка по подходам
+// (видно, где повторы просели) и заметка, которую ты писал к упражнению.
+function pushExerciseDetails(lines, exercises) {
+  const rows = [];
+  (exercises || []).forEach((ex) => {
+    const parts = [];
+    if ((ex.setLog || []).length) parts.push(`подходы: ${fmtSetLog(ex)}`);
+    const note = (ex.note || '').trim();
+    if (note) parts.push(`_«${note.replace(/\s*\n\s*/g, ' ')}»_`);
+    if (parts.length) rows.push(`- **${ex.name}** — ${parts.join(' · ')}`);
+  });
+  if (rows.length) {
+    lines.push('');
+    lines.push('**Подходы и заметки:**');
+    rows.forEach((r) => lines.push(r));
+  }
+}
+
 // Лучшая (по весу, при равенстве — по повторам) запись каждого упражнения за список тренировок.
 function buildExerciseMap(sessionList) {
   const map = {};
@@ -229,6 +258,7 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
         if (usedIdx.has(i)) return;
         lines.push(`| ${cell(re.name)} _(вне плана)_ | ${cell(fmtExerciseResult(re))} | ${cell(deltaVsPrev(re, prevMap))} | ${cell(recordMark(re, priorRecords))} |`);
       });
+      pushExerciseDetails(lines, s.exercises);
       (s.cardio || []).forEach((c) => {
         lines.push('');
         lines.push(`Кардио-финишер: ${cell(c.name)} — ${cell(fmtCardioResult(c))}`);
@@ -267,6 +297,7 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
           lines.push(`| ${cell(re.name)} | ${cell(fmtExerciseResult(re))} | ${cell(deltaVsPrev(re, prevMap))} | ${cell(recordMark(re, priorRecords))} |`);
         });
       }
+      pushExerciseDetails(lines, s.exercises);
       (s.cardio || []).forEach((c) => lines.push(`- ${cell(c.name)}: ${cell(fmtCardioResult(c))}`));
     });
   }

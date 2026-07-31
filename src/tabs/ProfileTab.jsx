@@ -6,6 +6,7 @@ import {
   ACH_ICON, BODY_FIELDS, computeAchievements, computeTotalXpFromSessions, getLevelInfo,
 } from '../gamification.js';
 import { Field, getInputStyle } from './workoutTabHelpers.jsx';
+import { APP_VERSION } from '../version.js';
 
 function LevelCard({ levelInfo, totalXp }) {
   const t = useTheme();
@@ -395,6 +396,16 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
         saveSessions={saveSessions} saveMeasurements={saveMeasurements} saveProfile={saveProfile}
         setError={setError}
       />
+
+      {/* Версия приложения — самый низ профиля. Значение берётся из src/version.js,
+          история изменений — в CHANGELOG.md в корне репозитория. */}
+      <div style={{
+        marginTop: 18, paddingTop: 4, textAlign: 'center',
+        fontSize: 10.5, letterSpacing: '0.06em',
+        color: t.TEXT_FAINT, fontFamily: t.FONT_MONO, opacity: 0.75,
+      }}>
+        Дневник тренировок · v{APP_VERSION}
+      </div>
     </div>
   );
 }
