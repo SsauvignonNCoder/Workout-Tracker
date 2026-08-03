@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X, Dumbbell, Pencil, Play, Check } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
@@ -26,6 +27,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const [showProgramPicker, setShowProgramPicker] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [guidedOpen, setGuidedOpen] = useState(false);
+  const [guidedMin, setGuidedMin] = useState(false);
   const [guidedSaved, setGuidedSaved] = useState(false);
 
   useEffect(() => {
@@ -150,6 +152,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   // запись — упражнения+заметки, кардио, сон/энергия/самочувствие с шага «Итог»).
   const handleGuidedComplete = async (session) => {
     setGuidedOpen(false);
+    setGuidedMin(false);
     const next = [...(sessions || []), session].sort((a, b) => a.date.localeCompare(b.date));
     await saveSessions(next);
     if (session.programDay) {
@@ -487,16 +490,24 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       </button>
       </>)}
 
+      {/* Пошаговая тренировка рендерится в портал (в document.body), чтобы пережить
+          переключение вкладок (WorkoutTab при этом display:none) и чтобы свёрнутая
+          плашка висела над таб-баром на любой вкладке. Состояние гида сохраняется —
+          компонент остаётся смонтированным и в свёрнутом виде, таймеры продолжают идти. */}
       {guidedOpen && programDay && (() => {
         const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
         if (!dayPlan) return null;
-        return (
+        return createPortal(
           <GuidedWorkout
             dayPlan={dayPlan}
             records={records}
-            onClose={() => setGuidedOpen(false)}
+            minimized={guidedMin}
+            onMinimize={() => setGuidedMin(true)}
+            onExpand={() => setGuidedMin(false)}
+            onClose={() => { setGuidedOpen(false); setGuidedMin(false); }}
             onComplete={handleGuidedComplete}
-          />
+          />,
+          document.body,
         );
       })()}
     </div>

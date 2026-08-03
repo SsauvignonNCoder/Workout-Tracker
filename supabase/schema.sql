@@ -42,13 +42,12 @@ create table sessions (
 
 create index sessions_user_date_idx on sessions (user_id, date);
 
--- Замеры веса. time_of_day — время с устройства в момент записи, 'ЧЧ:ММ' (может быть пустым).
+-- Замеры веса
 create table measurements (
   id text primary key,
   user_id uuid not null references users(id) on delete cascade,
   date text not null,
   weight numeric,
-  time_of_day text,
   created_at timestamptz default now()
 );
 
@@ -104,3 +103,12 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 -- Вход через браузер — пользователь сам придумывает имя и PIN
 -- при регистрации, дальше входит этим же именем + PIN.
 -- ============================================================
+
+-- ============================================================
+-- v1.0.1 — длительность тренировки и субъективная тяжесть
+-- (пошаговый режим «Начать тренировку»): оба поля опциональны.
+-- Уже применено к боевой БД миграцией add_session_duration_and_difficulty.
+-- ============================================================
+alter table public.sessions
+  add column if not exists duration_sec integer,
+  add column if not exists difficulty integer;

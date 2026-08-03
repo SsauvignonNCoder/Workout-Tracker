@@ -20,6 +20,8 @@ function sessionFromRow(row) {
     cardio: row.cardio || [],
     sleep: row.sleep,
     energy: row.energy,
+    difficulty: row.difficulty ?? null,
+    durationSec: row.duration_sec ?? null,
     feeling: row.feeling || '',
     programDay: row.program_day,
   };
@@ -34,20 +36,19 @@ function sessionToRow(s, userId) {
     cardio: s.cardio || [],
     sleep: s.sleep,
     energy: s.energy,
+    difficulty: s.difficulty ?? null,
+    duration_sec: s.durationSec ?? null,
     feeling: s.feeling || '',
     program_day: s.programDay,
   };
 }
 
-// В базе колонка называется time_of_day (слово time в SQL занято под тип данных),
-// внутри приложения поле короче — time. Формат 'ЧЧ:ММ'. Может быть пустым:
-// у замеров, сделанных до версии 1.0.0, времени нет — тогда оно просто не показывается.
 function measurementFromRow(row) {
-  return { id: row.id, date: row.date, weight: row.weight, time: row.time_of_day || null };
+  return { id: row.id, date: row.date, weight: row.weight };
 }
 
 function measurementToRow(m, userId) {
-  return { id: m.id, user_id: userId, date: m.date, weight: m.weight, time_of_day: m.time || null };
+  return { id: m.id, user_id: userId, date: m.date, weight: m.weight };
 }
 
 function profileFromRow(row) {

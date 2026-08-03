@@ -4,7 +4,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { useTheme, ThemeContext } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
-import { MuscleBadge, isWeightlessExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
+import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
 
 function muscleLetter(name) {
@@ -244,7 +244,7 @@ const MONO = "'JetBrains Mono', 'SF Mono', monospace";
 const SECTOR_RE = /^сектор\s/i;
 
 // Плитки подходов: вес ярче, крестик с воздухом, повторы приглушены.
-function SetChips({ setLog, weightless }) {
+function SetChips({ setLog, weightless, timed }) {
   const t = useTheme();
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, marginTop: 5 }}>
@@ -254,7 +254,7 @@ function SetChips({ setLog, weightless }) {
           padding: '6px 12px', fontFamily: MONO, fontSize: 13, display: 'inline-flex', alignItems: 'center',
         }}>
           {weightless ? (
-            <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.reps}</span>
+            <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.reps}{timed ? ' с' : ''}</span>
           ) : (
             <>
               <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.weight}</span>
@@ -526,8 +526,10 @@ function SessionCard({ s, onEdit, onDelete }) {
           const rowStyle = { padding: '7px 0', borderBottom: last ? 'none' : `1px solid ${t.BORDER}`, fontSize: 13.5 };
           if (b.kind === 'ex') {
             const ex = b.ex;
-            const weightless = isWeightlessExercise(ex.name);
+            const timed = ex.timed || isTimeBasedExercise(ex.name);
+            const weightless = isWeightlessExercise(ex.name) || timed;
             const hasSetLog = Array.isArray(ex.setLog) && ex.setLog.length > 0;
+            const repUnit = timed ? ' с' : '';
             return (
               <div key={b.key} style={rowStyle}>
                 <div style={{ color: t.TEXT, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -535,10 +537,10 @@ function SessionCard({ s, onEdit, onDelete }) {
                   <span>{ex.name}</span>
                 </div>
                 {hasSetLog ? (
-                  <SetChips setLog={ex.setLog} weightless={weightless} />
+                  <SetChips setLog={ex.setLog} weightless={weightless} timed={timed} />
                 ) : (
                   <div style={{ color: t.TEXT_DIM, fontFamily: MONO, fontSize: 13 }}>
-                    {weightless ? `${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
+                    {weightless ? `${ex.reps}${repUnit}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
                   </div>
                 )}
               </div>
@@ -566,10 +568,12 @@ function SessionCard({ s, onEdit, onDelete }) {
           );
         })}
       </div>
-      {(s.sleep || s.energy || s.feeling) && (
+      {(s.sleep || s.energy || s.difficulty || s.durationSec || s.feeling) && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.BORDER}`, fontSize: 12.5, color: t.TEXT_FAINT, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          {s.durationSec > 0 && <span>⏱ {secToClock(s.durationSec)}</span>}
           {s.sleep && <span>Сон {s.sleep} ч</span>}
           {s.energy && <span>Энергия {s.energy}/5</span>}
+          {s.difficulty && <span>Тяжесть {s.difficulty}/5</span>}
           {s.feeling && <span style={{ flexBasis: '100%' }}>{s.feeling}</span>}
         </div>
       )}
@@ -913,34 +917,43 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       {showRecords && (
         recordList.length === 0 ? (
           <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, lineHeight: 1.5, marginBottom: 18 }}>
-            Рекорды появятся, как только сохранишь хотя бы одну тренировку с весом.
+            Рекорды появятся, как только сохранишь хотя бы одну тренировку.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
-            {recordList.map(([name, r]) => (
-              <div key={name} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                background: CREAM, ...CREAM_BLUR, border: 'none', borderRadius: 14, padding: '12px 15px',
-              }}>
-                <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{
-                    width: 22, height: 22, borderRadius: 7, background: 'rgba(10,10,10,0.10)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontFamily: t.FONT_MONO, fontSize: 11, fontWeight: 600, color: ON_CREAM, flexShrink: 0,
-                  }}>{muscleLetter(name)}</span>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: ON_CREAM, marginBottom: 2 }}>{name}</div>
-                    <div style={{ fontSize: 11, color: ON_CREAM_MUTED, fontFamily: t.FONT_MONO, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{fmtDateShort(r.date)} · {r.reps} повт</div>
+            {recordList.map(([name, r]) => {
+              // Рекорд может быть по весу, по повторам или по секундам (упражнения без веса / на время).
+              const bigValue = r.weight ? `${r.weight} кг`
+                : r.metric === 'sec' ? `${r.value} с`
+                : `${r.value} повт`;
+              const subLine = r.weight
+                ? `${fmtDateShort(r.date)}${r.reps ? ` · ${r.reps} повт` : ''}`
+                : fmtDateShort(r.date);
+              return (
+                <div key={name} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  background: CREAM, ...CREAM_BLUR, border: 'none', borderRadius: 14, padding: '12px 15px',
+                }}>
+                  <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{
+                      width: 22, height: 22, borderRadius: 7, background: 'rgba(10,10,10,0.10)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontFamily: t.FONT_MONO, fontSize: 11, fontWeight: 600, color: ON_CREAM, flexShrink: 0,
+                    }}>{muscleLetter(name)}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: ON_CREAM, marginBottom: 2 }}>{name}</div>
+                      <div style={{ fontSize: 11, color: ON_CREAM_MUTED, fontFamily: t.FONT_MONO, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{subLine}</div>
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 17, fontWeight: 600, color: ON_CREAM, fontFamily: t.FONT_MONO,
+                    flexShrink: 0, marginLeft: 12,
+                  }}>
+                    {bigValue}
                   </div>
                 </div>
-                <div style={{
-                  fontSize: 17, fontWeight: 600, color: ON_CREAM, fontFamily: t.FONT_MONO,
-                  flexShrink: 0, marginLeft: 12,
-                }}>
-                  {r.weight} кг
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )
       )}

@@ -3,7 +3,7 @@ import {
   Waves, ClipboardList, Scale, Layers, Puzzle, Moon, FileText,
 } from 'lucide-react';
 import { toISO, todayISO, shiftDate } from './dateUtils.js';
-import { categorizeExercise, MUSCLE_GROUPS } from './tabs/workoutTabHelpers.jsx';
+import { categorizeExercise, MUSCLE_GROUPS, isTimeBasedExercise } from './tabs/workoutTabHelpers.jsx';
 
 // Иконки достижений (lucide) вместо эмодзи — ключ совпадает с прежним полем icon.
 export const ACH_ICON = {
@@ -22,13 +22,32 @@ export const BODY_FIELDS = [
   { key: 'bodyFat', label: '% жира (опц.)' },
 ];
 
+// Личные рекорды по каждому упражнению.
+// Для упражнений с весом рекорд — максимальный рабочий вес: { weight, reps, date }.
+// Для упражнений без веса рекорд — максимум повторов, а для упражнений на время
+// (планка) — максимум секунд: { metric: 'reps' | 'sec', value, date }.
+// Разные формы записи не пересекаются: весовые упражнения дают .weight, безвесовые — .metric.
 export function computeRecords(sessions) {
   const records = {};
   (sessions || []).forEach((s) => {
     (s.exercises || []).forEach((ex) => {
-      if (!ex.weight) return;
-      if (!records[ex.name] || ex.weight > records[ex.name].weight) {
-        records[ex.name] = { weight: ex.weight, reps: ex.reps, date: s.date };
+      const w = Number(ex.weight) || 0;
+      if (w > 0) {
+        const prev = records[ex.name];
+        if (!prev || !prev.weight || w > prev.weight) {
+          records[ex.name] = { weight: w, reps: ex.reps, date: s.date };
+        }
+        return;
+      }
+      // Без веса — рекорд по повторам или по секундам (для упражнений на время).
+      const val = Number(ex.reps) || 0;
+      if (val <= 0) return;
+      const metric = (ex.timed || isTimeBasedExercise(ex.name)) ? 'sec' : 'reps';
+      const prev = records[ex.name];
+      // Весовой рекорд по этому имени (если вдруг есть) не перетираем безвесовым.
+      if (prev && prev.weight) return;
+      if (!prev || val > (prev.value || 0)) {
+        records[ex.name] = { metric, value: val, date: s.date };
       }
     });
   });
