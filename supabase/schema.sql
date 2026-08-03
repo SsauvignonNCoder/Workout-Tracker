@@ -26,7 +26,9 @@ create table users (
 
 create index users_telegram_id_idx on users (telegram_id);
 
--- Тренировки (силовые / кардио / бассейн) — принадлежат пользователю
+-- Тренировки (силовые / кардио / бассейн) — принадлежат пользователю.
+-- duration_sec — длительность тренировки в секундах (пошаговый режим, 1.0.1).
+-- difficulty — субъективная тяжесть тренировки 1–5 (1.0.1). Оба поля опциональны.
 create table sessions (
   id text primary key,
   user_id uuid not null references users(id) on delete cascade,
@@ -35,6 +37,8 @@ create table sessions (
   cardio jsonb not null default '[]',
   sleep numeric,
   energy integer,
+  difficulty integer,
+  duration_sec integer,
   feeling text,
   program_day integer,
   created_at timestamptz default now()
@@ -42,12 +46,13 @@ create table sessions (
 
 create index sessions_user_date_idx on sessions (user_id, date);
 
--- Замеры веса
+-- Замеры веса. time_of_day — время с устройства в момент записи, 'ЧЧ:ММ' (может быть пустым).
 create table measurements (
   id text primary key,
   user_id uuid not null references users(id) on delete cascade,
   date text not null,
   weight numeric,
+  time_of_day text,
   created_at timestamptz default now()
 );
 
@@ -95,6 +100,17 @@ create policy "allow all measurements" on measurements for all using (true) with
 create policy "allow all profile" on profile for all using (true) with check (true);
 
 -- ============================================================
+-- Миграции для уже существующих баз (идемпотентны — можно выполнять повторно):
+--   1.0.0 — время записи веса.
+--   1.0.1 — длительность и тяжесть тренировки.
+-- Уже применены к рабочей базе; здесь — для чистой установки и истории.
+-- ============================================================
+alter table measurements add column if not exists time_of_day text;
+alter table sessions
+  add column if not exists duration_sec integer,
+  add column if not exists difficulty integer;
+
+-- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.
 --
 -- Вход через Telegram — при первом открытии бота автоматически
@@ -103,12 +119,3 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 -- Вход через браузер — пользователь сам придумывает имя и PIN
 -- при регистрации, дальше входит этим же именем + PIN.
 -- ============================================================
-
--- ============================================================
--- v1.0.1 — длительность тренировки и субъективная тяжесть
--- (пошаговый режим «Начать тренировку»): оба поля опциональны.
--- Уже применено к боевой БД миграцией add_session_duration_and_difficulty.
--- ============================================================
-alter table public.sessions
-  add column if not exists duration_sec integer,
-  add column if not exists difficulty integer;
