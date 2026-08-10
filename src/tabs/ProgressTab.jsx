@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown, Timer } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { useTheme, ThemeContext } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
@@ -570,7 +570,11 @@ function SessionCard({ s, onEdit, onDelete }) {
       </div>
       {(s.sleep || s.energy || s.difficulty || s.durationSec || s.feeling) && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.BORDER}`, fontSize: 12.5, color: t.TEXT_FAINT, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {s.durationSec > 0 && <span>⏱ {secToClock(s.durationSec)}</span>}
+          {s.durationSec > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <Timer size={12} style={{ opacity: 0.8 }} /> {secToClock(s.durationSec)}
+            </span>
+          )}
           {s.sleep && <span>Сон {s.sleep} ч</span>}
           {s.energy && <span>Энергия {s.energy}/5</span>}
           {s.difficulty && <span>Тяжесть {s.difficulty}/5</span>}

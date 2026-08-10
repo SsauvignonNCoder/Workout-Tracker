@@ -16,22 +16,16 @@ import { getExerciseGuide } from '../exerciseGuides.js';
 const REST_SECONDS = 120;
 
 // Цвета свечения по итогу упражнения (пункт 5): зелёное — выполнено, красное —
-// не закрыт план / «WASTED», синее — новый рекорд.
+// не закрыт план / ничего не записано, синее — новый рекорд. Свечение без текста.
 const FLASH_GREEN = '#3FB27F';
 const FLASH_RED = '#E5484D';
 const FLASH_BLUE = '#5BA3E0';
 
-const PRAISES = [
-  'Отлично!', 'Чисто сделано!', 'Так держать!', 'Мощно!',
-  'Все подходы взял!', 'Ни одного пропуска!', 'Красиво!', 'Сильно!',
-];
-function pickPraise() { return PRAISES[Math.floor(Math.random() * PRAISES.length)]; }
-
-// Оценка выполнения упражнения при переходе дальше → тип свечения.
+// Оценка выполнения упражнения при переходе дальше → тип свечения (цвет).
 // green — все подходы записаны и в каждом повторов ≥ нижней границы плана;
 // record — побит личный рекорд (вес / повторы / секунды) → синее;
-// wasted — не записан ни один подход → красное + «WASTED»;
-// red — что-то записано, но план не закрыт.
+// wasted — не записан ни один подход → красное;
+// red — что-то записано, но план не закрыт → красное.
 function evalExercise(step, log, records) {
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
@@ -42,7 +36,7 @@ function evalExercise(step, log, records) {
   const withReps = arr.filter((x) => (parseInt(x.reps, 10) || 0) > 0);
 
   if (recorded.length === 0) {
-    return { type: 'wasted', title: 'WASTED', color: FLASH_RED, duration: 1900 };
+    return { type: 'wasted', color: FLASH_RED, duration: 1150 };
   }
 
   const rec = records && records[step.name];
@@ -57,15 +51,15 @@ function evalExercise(step, log, records) {
     isRecord = maxW > 0 && maxW > prev;
   }
   if (isRecord) {
-    return { type: 'record', title: 'Новый рекорд!', color: FLASH_BLUE, duration: 2200 };
+    return { type: 'record', color: FLASH_BLUE, duration: 1300 };
   }
 
   const allRecorded = planned > 0 && withReps.length >= planned;
   const allMeet = allRecorded && withReps.every((x) => (parseInt(x.reps, 10) || 0) >= Math.max(low, 1));
   if (allMeet) {
-    return { type: 'green', praise: pickPraise(), color: FLASH_GREEN, duration: 1700 };
+    return { type: 'green', color: FLASH_GREEN, duration: 950 };
   }
-  return { type: 'red', color: FLASH_RED, duration: 1500 };
+  return { type: 'red', color: FLASH_RED, duration: 850 };
 }
 
 // Секунды → «M:SS» / «H:MM:SS» для таймера всей тренировки.
@@ -205,6 +199,23 @@ function emptySector() { return { distance: '', speed: '', incline: '', clock: '
 
 // Буква сектора: 0→A, 1→B … после Z — просто номер.
 function sectorLabel(i) { return i < 26 ? String.fromCharCode(65 + i) : String(i + 1); }
+
+// Коды секторов вида «1A, 1B, 2A…»: цифра — километр по нарастающей дистанции
+// (0–1 км → «1», 1–2 км → «2», …), буква — порядковый сектор внутри этого километра.
+// Километр определяется по суммарной дистанции ДО начала сектора. Если дистанции
+// нет (кардио по времени) — все попадают в «1», буквы идут подряд.
+function sectorCodes(sectors) {
+  let cum = 0;
+  const counts = {};
+  return (sectors || []).map((s) => {
+    const km = Math.floor(cum) + 1;
+    const li = counts[km] || 0;
+    counts[km] = li + 1;
+    const letter = li < 26 ? String.fromCharCode(65 + li) : String(li + 1);
+    cum += parseFloat(s.distance) || 0;
+    return `${km}${letter}`;
+  });
+}
 
 // Достигнуто в единицах цели: дистанция — сумма км; время — максимум по нарастающему
 // таймеру дорожки (последнее показание), приведённое к минутам.
@@ -621,6 +632,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
       if (s.kind !== 'sectors') return;
       const data = sectorLogs[i];
       if (!data) return;
+      const codes = sectorCodes(data.sectors); // «1A», «1B», «2A»… по километрам (совпадает с UI)
       let prevCum = 0;
       (data.sectors || []).forEach((sec, si) => {
         const cumSec = parseClock(sec.clock);
@@ -629,7 +641,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
         const deltaSec = cumSec > 0 ? Math.max(0, cumSec - prevCum) : 0;
         if (cumSec > 0) prevCum = cumSec;
         outCardio.push({
-          name: `Сектор ${sectorLabel(si)}`,
+          name: `Сектор ${codes[si]}`,
           distance: dist, speed: spd, incline: incl,
           duration: deltaSec ? Math.round(deltaSec / 60) : 0,
           durationSec: deltaSec || 0,
@@ -779,45 +791,23 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
         .guided-step-in { animation: stepIn 0.25s ease-out; }
         @keyframes stepIn { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
 
-        /* Свечение по итогу упражнения (пункт 5) */
-        @keyframes flashCycle { 0% { opacity: 0; } 14% { opacity: 1; } 68% { opacity: 1; } 100% { opacity: 0; } }
-        @keyframes flashText { 0% { opacity: 0; transform: scale(0.82); } 20% { opacity: 1; transform: scale(1.05); } 40% { transform: scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: scale(1.02); } }
+        /* Свечение по итогу упражнения (пункт 5): поднимается снизу, из-под кнопок. Без текста. */
+        @keyframes flashRise { 0% { opacity: 0; transform: translateY(34px); } 24% { opacity: 1; transform: translateY(0); } 58% { opacity: 1; } 100% { opacity: 0; transform: translateY(0); } }
         @media (prefers-reduced-motion: reduce) {
           .guided-step-in { animation-duration: 1ms; }
         }
       `}</style>
 
-      {/* Свечение по итогу упражнения (пункт 5) */}
+      {/* Свечение по итогу упражнения (пункт 5): только свет снизу, из-под блока кнопок, без текста */}
       {flash && (
         <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 60, pointerEvents: 'none',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          animation: `flashCycle ${flash.duration}ms ease-in-out forwards`,
+          position: 'absolute', inset: 0, zIndex: 60, pointerEvents: 'none', overflow: 'hidden',
         }}>
           <div style={{
-            position: 'absolute', inset: 0,
-            background: `radial-gradient(circle at 50% 42%, ${flash.color}5C 0%, ${flash.color}24 38%, transparent 72%)`,
-            boxShadow: `inset 0 0 140px 40px ${flash.color}66`,
+            position: 'absolute', left: 0, right: 0, bottom: 0, height: '72%',
+            background: `radial-gradient(135% 100% at 50% 100%, ${flash.color}82 0%, ${flash.color}3A 28%, ${flash.color}14 48%, transparent 68%)`,
+            animation: `flashRise ${flash.duration}ms cubic-bezier(0.2,0.75,0.2,1) forwards`,
           }} />
-          {flash.title && (
-            <div style={{
-              position: 'relative', color: flash.color, fontWeight: 800,
-              fontSize: flash.type === 'wasted' ? 52 : 36, letterSpacing: '0.04em',
-              textShadow: `0 0 30px ${flash.color}`, fontFamily: t.FONT_DISPLAY,
-              textAlign: 'center', padding: '0 24px',
-              animation: `flashText ${flash.duration}ms ease-in-out forwards`,
-            }}>
-              {flash.title}
-            </div>
-          )}
-          {flash.praise && (
-            <div style={{
-              position: 'absolute', bottom: '18%', color: flash.color, fontWeight: 700,
-              fontSize: 15.5, letterSpacing: '0.02em', textShadow: `0 0 16px ${flash.color}99`,
-            }}>
-              {flash.praise}
-            </div>
-          )}
         </div>
       )}
 
@@ -1488,6 +1478,7 @@ function CardioStep({ step, value, onChange }) {
 function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
   const t = useTheme();
   const d = data || { metric: 'distance', target: '', sectors: [] };
+  const codes = sectorCodes(d.sectors); // подписи секторов «1A, 1B, 2A…» по километрам
   const isTime = d.metric === 'time';
   const unit = isTime ? 'мин' : 'км';
   const target = parseFloat(d.target) || 0;
@@ -1608,8 +1599,8 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
                   width: 24, height: 24, borderRadius: 7, background: t.ACCENT_BG, color: t.ACCENT_SOFT,
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 12, fontWeight: 700, fontFamily: t.FONT_MONO,
-                }}>{sectorLabel(si)}</span>
-                Сектор {sectorLabel(si)}
+                }}>{codes[si]}</span>
+                Сектор {codes[si]}
               </span>
               {(d.sectors.length > 1) && (
                 <button
