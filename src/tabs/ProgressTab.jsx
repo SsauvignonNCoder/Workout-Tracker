@@ -270,7 +270,7 @@ function SetChips({ setLog, weightless, timed }) {
 }
 
 // Блок секторов кардио: нарастающее время (мм:сс) + длительность каждого сектора.
-function SectorBlock({ sectors }) {
+function SectorBlock({ sectors, routeName }) {
   const t = useTheme();
   let cum = 0;
   const rows = sectors.map((c) => {
@@ -286,7 +286,7 @@ function SectorBlock({ sectors }) {
     <div style={{ padding: '9px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: t.TEXT, display: 'flex', alignItems: 'center', gap: 6 }}>
-          🏃 Кардио по секторам · {sectors.length}
+          🏃 {routeName || 'Кардио по секторам'} · {sectors.length}
         </span>
         <span style={{ fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, fontFamily: MONO }}>
           {totalDist > 0 ? `${Math.round(totalDist * 100) / 100} км · ` : ''}{secToClock(totalSec)}
@@ -369,6 +369,7 @@ function buildTreadmillPoints(sessions) {
       const elevation = sectors.reduce((a, c) => a + (parseFloat(c.distance) || 0) * (parseFloat(c.incline) || 0) * 10, 0);
       points.push({
         id: `${s.id}-sectors`, date: s.date, type: 'cardio', isSectors: true,
+        routeName: s.routeName || null,
         speed: Math.round(speed * 10) / 10, distance: Math.round(distance * 100) / 100, duration: Math.round(durMin),
         elevation: Math.round(elevation),
         // incline обязателен для «Подъёма» — из него строится профиль горы.
@@ -427,7 +428,7 @@ function TreadmillChart({ sessions }) {
             style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >‹</button>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>Кардио-день · секторы</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>{drill.routeName || 'Кардио-день · секторы'}</div>
             <div style={{ fontSize: 12, color: t.TEXT_FAINT }}>{fmtDateFull(drill.date)}</div>
           </div>
         </div>
@@ -591,7 +592,7 @@ function SessionCard({ s, onEdit, onDelete }) {
           }
           return (
             <div key={b.key} style={{ borderBottom: last ? 'none' : `1px solid ${t.BORDER}` }}>
-              <SectorBlock sectors={b.sectors} />
+              <SectorBlock sectors={b.sectors} routeName={s.routeName} />
             </div>
           );
         })}

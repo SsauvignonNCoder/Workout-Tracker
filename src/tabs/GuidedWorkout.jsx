@@ -10,6 +10,7 @@ import { cooldownFor, variantsOf } from '../cooldown.js';
 import {
   Field, getInputStyle, getLabelInputStyle, MuscleBadge,
   isWeightlessExercise, isTimeBasedExercise, repGoalLow, secToClock, parseClock,
+  clampIncline, MAX_INCLINE,
 } from './workoutTabHelpers.jsx';
 import { getExerciseGuide } from '../exerciseGuides.js';
 import { MountainBox } from '../MountainBox.jsx';
@@ -609,6 +610,19 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
     setCooldownDone((prev) => (prev[i] ? { ...prev, [i]: false } : prev));
   };
 
+  // Название маршрута с первого секторного шага, где он был выбран. Этап
+  // дописываем, чтобы «этап 2 из 3» не потерялся в истории.
+  const pickedRouteName = () => {
+    for (let i = 0; i < steps.length; i += 1) {
+      if (steps[i].kind !== 'sectors') continue;
+      const c = sectorLogs[i] && sectorLogs[i].climb;
+      if (c && c.name) {
+        return c.stages > 1 ? `${c.name} · этап ${c.stage}/${c.stages}` : c.name;
+      }
+    }
+    return null;
+  };
+
   const finish = () => {
     // Упражнения → агрегат (число) + setLog + заметка. Пустые (без данных и заметки) пропускаем.
     const outEx = [];
@@ -691,6 +705,10 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
       durationSec: Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1000)),
       feeling: (summary.feeling || '').trim(),
       programDay: dayPlan.day || null,
+      // Если на кардио-дне был выбран готовый маршрут — сохраняем его название,
+      // чтобы в «Прогрессе» тренировка называлась «Озеро Зеркальное», а не
+      // безликим «Кардио по секторам».
+      routeName: pickedRouteName(),
     };
     setSaving(true);
     clearDraft(); // данные ушли в базу — черновик больше не нужен
@@ -1526,8 +1544,8 @@ function CardioStep({ step, value, onChange }) {
           <div style={{ flex: '1 1 45%', minWidth: 130 }}>
             <Field label="Наклон, %">
               <input
-                style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
-                value={value.incline || ''} onChange={(e) => onChange({ incline: e.target.value })}
+                style={getInputStyle(t)} type="number" inputMode="decimal" min="0" max={MAX_INCLINE}
+                value={value.incline || ''} onChange={(e) => onChange({ incline: clampIncline(e.target.value) })}
                 placeholder={(step.target && step.target.incline) || '0'}
               />
             </Field>
@@ -1667,7 +1685,11 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
                   border: highlight ? `1px solid ${t.ACCENT}` : `1px solid ${t.BORDER}`,
                 }}
                 type="number" inputMode={inputMode} min="0"
-                value={sec[key] || ''} onChange={(e) => onField(si, { [key]: e.target.value })}
+                {...(key === 'incline' ? { max: MAX_INCLINE } : {})}
+                value={sec[key] || ''}
+                onChange={(e) => onField(si, {
+                  [key]: key === 'incline' ? clampIncline(e.target.value) : e.target.value,
+                })}
                 placeholder="0"
               />
             </Field>

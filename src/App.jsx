@@ -22,6 +22,7 @@ function sessionFromRow(row) {
     energy: row.energy,
     difficulty: row.difficulty ?? null,
     durationSec: row.duration_sec ?? null,
+    routeName: row.route_name ?? null,
     feeling: row.feeling || '',
     programDay: row.program_day,
   };
@@ -38,6 +39,7 @@ function sessionToRow(s, userId) {
     energy: s.energy,
     difficulty: s.difficulty ?? null,
     duration_sec: s.durationSec ?? null,
+    route_name: s.routeName ?? null,
     feeling: s.feeling || '',
     program_day: s.programDay,
   };

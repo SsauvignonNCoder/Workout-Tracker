@@ -28,7 +28,9 @@ create index users_telegram_id_idx on users (telegram_id);
 
 -- Тренировки (силовые / кардио / бассейн) — принадлежат пользователю.
 -- duration_sec — длительность тренировки в секундах (пошаговый режим, 1.0.1).
--- difficulty — субъективная тяжесть тренировки 1–5 (1.0.1). Оба поля опциональны.
+-- difficulty — субъективная тяжесть тренировки 1–5 (1.0.1).
+-- route_name — название выбранного маршрута для кардио-дня по секторам (1.0.3).
+-- Все три поля опциональны.
 create table sessions (
   id text primary key,
   user_id uuid not null references users(id) on delete cascade,
@@ -39,6 +41,7 @@ create table sessions (
   energy integer,
   difficulty integer,
   duration_sec integer,
+  route_name text,
   feeling text,
   program_day integer,
   created_at timestamptz default now()
@@ -103,12 +106,14 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 -- Миграции для уже существующих баз (идемпотентны — можно выполнять повторно):
 --   1.0.0 — время записи веса.
 --   1.0.1 — длительность и тяжесть тренировки.
+--   1.0.3 — название маршрута кардио-дня.
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
 alter table sessions
   add column if not exists duration_sec integer,
-  add column if not exists difficulty integer;
+  add column if not exists difficulty integer,
+  add column if not exists route_name text;
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.
