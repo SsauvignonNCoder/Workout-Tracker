@@ -6,6 +6,7 @@ import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js'
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
 import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
+import { MountainBox } from '../MountainBox.jsx';
 
 function muscleLetter(name) {
   const g = categorizeExercise(name);
@@ -325,6 +326,9 @@ const TREADMILL_METRICS = [
   { key: 'speed', label: 'Скорость', unit: 'км/ч' },
   { key: 'distance', label: 'Дистанция', unit: 'км' },
   { key: 'duration', label: 'Время', unit: 'мин' },
+  // «Подъём» — набор высоты. На общем графике это линия по метрам за тренировку,
+  // а в раскрытом кардио-дне вместо графика рисуется гора (ClimbMountain).
+  { key: 'elevation', label: 'Подъём', unit: 'м' },
 ];
 
 function isTreadmillName(name) { return (name || '').toLowerCase().includes('дорожк'); }
@@ -349,23 +353,31 @@ function buildTreadmillPoints(sessions) {
       if (SECTOR_RE.test((c.name || '').trim())) return; // секторы — ниже
       if (!isTreadmillName(c.name)) return;
       const duration = parseFloat(c.duration) || 0;
+      const dist = parseFloat(c.distance) || 0;
+      const incl = parseFloat(c.incline) || 0;
       points.push({
         id: `${s.id}-${c.name}`, date: s.date,
         type: classifyTreadmill(c.name, duration, hasStrength),
-        speed: parseFloat(c.speed) || 0, distance: parseFloat(c.distance) || 0, duration,
+        speed: parseFloat(c.speed) || 0, distance: dist, duration,
+        elevation: Math.round(dist * incl * 10), // км × % × 10 = метры набора
       });
     });
     if (sectors.length) {
       const distance = sectors.reduce((a, c) => a + (parseFloat(c.distance) || 0), 0);
       const durMin = sectors.reduce((a, c) => a + (c.durationSec != null ? c.durationSec / 60 : (parseFloat(c.duration) || 0)), 0);
       const speed = durMin > 0 ? (distance * 60) / durMin : 0;
+      const elevation = sectors.reduce((a, c) => a + (parseFloat(c.distance) || 0) * (parseFloat(c.incline) || 0) * 10, 0);
       points.push({
         id: `${s.id}-sectors`, date: s.date, type: 'cardio', isSectors: true,
         speed: Math.round(speed * 10) / 10, distance: Math.round(distance * 100) / 100, duration: Math.round(durMin),
+        elevation: Math.round(elevation),
+        // incline обязателен для «Подъёма» — из него строится профиль горы.
         sectors: sectors.map((c, i) => ({
           label: (c.name || '').replace(SECTOR_RE, '').trim() || String(i + 1),
           speed: parseFloat(c.speed) || 0, distance: parseFloat(c.distance) || 0,
+          incline: parseFloat(c.incline) || 0,
           duration: c.durationSec != null ? Math.round(c.durationSec / 60) : (parseFloat(c.duration) || 0),
+          elevation: Math.round((parseFloat(c.distance) || 0) * (parseFloat(c.incline) || 0) * 10),
         })),
       });
     }
@@ -388,7 +400,9 @@ function TreadmillChart({ sessions }) {
           <button
             key={mm.key} onClick={() => setMetric(mm.key)}
             style={{
-              flex: 1, padding: '8px', borderRadius: 9, fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              flex: 1, minWidth: 0, padding: '8px 3px', borderRadius: 9, fontSize: 12, fontWeight: 700,
+              cursor: 'pointer', fontFamily: 'inherit',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
               border: `1px solid ${active ? t.ACCENT : t.BORDER}`, background: active ? t.ACCENT_BG : 'transparent',
               color: active ? t.ACCENT_SOFT : t.TEXT_DIM,
             }}
@@ -418,15 +432,29 @@ function TreadmillChart({ sessions }) {
           </div>
         </div>
         {metricToggle}
-        <ResponsiveContainer width="100%" height={170}>
-          <LineChart data={data} margin={{ top: 4, right: 6, left: 4, bottom: 0 }}>
-            <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
-            <XAxis dataKey="name" tick={{ fill: t.TEXT_FAINT, fontSize: 11 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
-            <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
-            <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v) => [`${v} ${m.unit}`, m.label]} />
-            <Line type="monotone" dataKey="value" name={m.label} stroke={t.ACCENT} strokeWidth={2.2} dot={{ r: 3, fill: t.ACCENT, strokeWidth: 0 }} />
-          </LineChart>
-        </ResponsiveContainer>
+        {metric === 'elevation' ? (
+          <div style={{ marginBottom: 8 }}>
+            <MountainBox sectors={drill.sectors} />
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10,
+              fontFamily: MONO, fontSize: 11.5, color: t.TEXT_DIM,
+            }}>
+              <span>{drill.sectors.length} сект.</span>
+              <span>{drill.distance} км</span>
+              <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>↑ {drill.elevation} м</span>
+            </div>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={170}>
+            <LineChart data={data} margin={{ top: 4, right: 6, left: 4, bottom: 0 }}>
+              <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: t.TEXT_FAINT, fontSize: 11 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
+              <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
+              <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v) => [`${v} ${m.unit}`, m.label]} />
+              <Line type="monotone" dataKey="value" name={m.label} stroke={t.ACCENT} strokeWidth={2.2} dot={{ r: 3, fill: t.ACCENT, strokeWidth: 0 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
     );
   }

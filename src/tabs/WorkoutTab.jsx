@@ -69,7 +69,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     if (profile && programDay === null) {
       const last = profile.lastProgramDay;
       if (last) {
-        setProgramDay(last >= 20 ? 1 : last + 1);
+        setProgramDay(last >= PROGRAM_DAYS.length ? 1 : last + 1);
       }
     }
   }, [profile, programDay, editingId, programDetached]);

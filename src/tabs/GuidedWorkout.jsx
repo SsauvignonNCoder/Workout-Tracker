@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
   Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
-  ChevronDown, ChevronUp, HelpCircle,
+  ChevronDown, ChevronUp, HelpCircle, TrendingUp,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
@@ -12,6 +12,8 @@ import {
   isWeightlessExercise, isTimeBasedExercise, repGoalLow, secToClock, parseClock,
 } from './workoutTabHelpers.jsx';
 import { getExerciseGuide } from '../exerciseGuides.js';
+import { MountainBox } from '../MountainBox.jsx';
+import { ClimbPicker } from '../ClimbPicker.jsx';
 
 const REST_SECONDS = 120;
 
@@ -217,13 +219,34 @@ function sectorCodes(sectors) {
   });
 }
 
+// Набор высоты в метрах: наклон — это проценты (подъём на единицу горизонтали),
+// поэтому подъём сектора = дистанция × наклон/100. Сумма по всем секторам, км → м.
+// Та же формула строит профиль «горы» в визуале подъёма.
+export function sectorElevationGain(sectors) {
+  return (sectors || []).reduce((acc, s) => {
+    const d = parseFloat(s.distance) || 0;
+    const incl = parseFloat(s.incline) || 0;
+    return acc + d * (incl / 100);
+  }, 0) * 1000;
+}
+
+// Единицы целей: дистанция — км, время — минуты, высота — метры.
+export const SECTOR_METRICS = {
+  distance:  { label: 'Дистанция', unit: 'км',  goalLabel: 'Цель по дистанции, км',   ph: '3'   },
+  time:      { label: 'Время',     unit: 'мин', goalLabel: 'Цель по времени, мин',    ph: '40'  },
+  elevation: { label: 'Высота',    unit: 'м',   goalLabel: 'Цель по набору высоты, м', ph: '700' },
+};
+
 // Достигнуто в единицах цели: дистанция — сумма км; время — максимум по нарастающему
-// таймеру дорожки (последнее показание), приведённое к минутам.
+// таймеру дорожки (последнее показание), приведённое к минутам; высота — набор в метрах.
 function sectorAchieved(data) {
   if (!data) return 0;
   if (data.metric === 'time') {
     const maxSec = (data.sectors || []).reduce((mx, s) => Math.max(mx, parseClock(s.clock)), 0);
     return maxSec / 60; // минуты
+  }
+  if (data.metric === 'elevation') {
+    return sectorElevationGain(data.sectors); // метры
   }
   return (data.sectors || []).reduce((acc, s) => acc + (parseFloat(s.distance) || 0), 0); // км
 }
@@ -235,6 +258,9 @@ function sectorGoalReached(data) {
 }
 
 function trimNum(n) { return String(+(Number(n).toFixed(2))); }
+
+// Метры показываем целыми (670, а не 670.4), км и минуты — с десятыми.
+function fmtGoal(n, isElev) { return isElev ? String(Math.round(n)) : trimNum(n); }
 
 export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized, onMinimize, onExpand }) {
   const t = useTheme();
@@ -716,6 +742,22 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
     : step.kind === 'summary' ? 'Итог тренировки'
     : (step.title || step.name || 'Тренировка');
 
+  // Секторы для «Горы» на итоговом экране: собираем со всех секторных шагов
+  // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
+  const mountainSectors = [];
+  let mountainClimb = null;
+  steps.forEach((s, i) => {
+    if (s.kind !== 'sectors') return;
+    const data = sectorLogs[i];
+    if (data && data.climb && !mountainClimb) mountainClimb = data.climb;
+    (data && data.sectors ? data.sectors : []).forEach((sec) => {
+      mountainSectors.push({
+        distance: parseFloat(sec.distance) || 0,
+        incline: parseFloat(sec.incline) || 0,
+      });
+    });
+  });
+
   // ---- Свёрнутый режим (пункт 3): узкая плашка над таб-баром, тап — развернуть ----
   if (minimized) {
     return (
@@ -904,7 +946,12 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
               pick={cooldownPick} onSwap={swapCooldown}
             />
           ) : step.kind === 'summary' ? (
-            <SummaryStep summary={summary} onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))} />
+            <SummaryStep
+              summary={summary}
+              onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))}
+              mountainSectors={mountainSectors}
+              mountainClimb={mountainClimb}
+            />
           ) : (
             <CardioStep step={step} value={cardioLogs[stepIdx] || {}} onChange={setCardioField} />
           )}
@@ -962,9 +1009,11 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
             let lockedLabel = null;
             if (finishLocked) {
               const target = parseFloat(secData && secData.target) || 0;
-              const unit = secData && secData.metric === 'time' ? 'мин' : 'км';
+              const mKey = (secData && secData.metric) || 'distance';
+              const isElevGoal = mKey === 'elevation';
+              const unit = (SECTOR_METRICS[mKey] || SECTOR_METRICS.distance).unit;
               if (target <= 0) lockedLabel = 'Укажи цель тренировки';
-              else lockedLabel = `Осталось ${trimNum(Math.max(0, target - sectorAchieved(secData)))} ${unit}`;
+              else lockedLabel = `Осталось ${fmtGoal(Math.max(0, target - sectorAchieved(secData)), isElevGoal)} ${unit}`;
             }
             const disabled = finishLocked || saving || !!flash;
             return (
@@ -1306,11 +1355,36 @@ function Scale1to5({ label, value, onChange }) {
   );
 }
 
-function SummaryStep({ summary, onChange }) {
+function SummaryStep({ summary, onChange, mountainSectors, mountainClimb }) {
   const t = useTheme();
+  // Гора-награда: только для кардио-дня по секторам, где есть дистанция и наклон.
+  const gainM = Math.round(sectorElevationGain(mountainSectors));
+  const totalKm = (mountainSectors || []).reduce((a, s) => a + (parseFloat(s.distance) || 0), 0);
+  const showMountain = totalKm > 0;
+
   return (
     <div>
       <StepHeader icon={CheckCircle2} name="Итог тренировки" subtitle="Сон, энергия, тяжесть — и сохраняем" />
+
+      {showMountain && (
+        <div style={{ marginBottom: 18 }}>
+          <MountainBox sectors={mountainSectors} />
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 9,
+            fontFamily: t.FONT_MONO, fontSize: 11.5, color: t.TEXT_DIM,
+          }}>
+            <span>{Math.round(totalKm * 100) / 100} км</span>
+            <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>↑ {gainM} м</span>
+          </div>
+          {mountainClimb && (
+            <div style={{ marginTop: 7, fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45 }}>
+              <span style={{ fontWeight: 700, color: t.TEXT }}>{mountainClimb.name}</span>
+              {mountainClimb.stages > 1 && ` · этап ${mountainClimb.stage} из ${mountainClimb.stages}`}
+              {' · '}{mountainClimb.place}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
         <Field label="Сон, часы">
           <input
@@ -1480,7 +1554,9 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
   const d = data || { metric: 'distance', target: '', sectors: [] };
   const codes = sectorCodes(d.sectors); // подписи секторов «1A, 1B, 2A…» по километрам
   const isTime = d.metric === 'time';
-  const unit = isTime ? 'мин' : 'км';
+  const isElev = d.metric === 'elevation';
+  const M = SECTOR_METRICS[d.metric] || SECTOR_METRICS.distance;
+  const unit = M.unit;
   const target = parseFloat(d.target) || 0;
   const achieved = sectorAchieved(d);
   const reached = sectorGoalReached(d);
@@ -1499,7 +1575,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
     const active = d.metric === key;
     return (
       <button
-        onClick={() => onMeta({ metric: key })}
+        onClick={() => onMeta(active ? { metric: key } : { metric: key, target: '', climb: null })}
         style={{
           flex: 1, padding: '10px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
           fontSize: 13.5, fontWeight: 700,
@@ -1529,25 +1605,37 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
           Цель тренировки
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          {metricBtn('distance', 'Дистанция')}
-          {metricBtn('time', 'Время')}
+          {metricBtn('distance', SECTOR_METRICS.distance.label)}
+          {metricBtn('time', SECTOR_METRICS.time.label)}
+          {metricBtn('elevation', SECTOR_METRICS.elevation.label)}
         </div>
-        <Field label={isTime ? 'Цель по времени, мин' : 'Цель по дистанции, км'}>
+        <Field label={M.goalLabel}>
           <input
             style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
             value={d.target || ''} onChange={(e) => onMeta({ target: e.target.value })}
-            placeholder={isTime ? '40' : (step.planDistance || '3')}
+            placeholder={d.metric === 'distance' ? (step.planDistance || M.ph) : M.ph}
           />
         </Field>
+        {isElev && (
+          <div style={{ marginTop: 8, fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.45 }}>
+            Высота считается из дистанции и наклона каждого сектора: 0.2 км при 25% дают 50 м подъёма.
+          </div>
+        )}
+        {isElev && (
+          <ClimbPicker
+            currentClimb={d.climb}
+            onPick={({ target, sectors, climb }) => onMeta({ target, sectors, climb })}
+          />
+        )}
 
         {/* Прогресс к цели */}
         <div style={{ marginTop: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
             <span style={{ fontSize: 12.5, color: t.TEXT_DIM, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Route size={13} /> Пройдено
+              {isElev ? <TrendingUp size={13} /> : <Route size={13} />} {isElev ? 'Набрано' : 'Пройдено'}
             </span>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: reached ? t.POSITIVE : t.TEXT, fontFamily: t.FONT_MONO }}>
-              {trimNum(achieved)} / {target > 0 ? trimNum(target) : '—'} {unit}
+              {fmtGoal(achieved, isElev)} / {target > 0 ? fmtGoal(target, isElev) : '—'} {unit}
             </span>
           </div>
           <div style={{ height: 8, borderRadius: 5, background: t.BG_INPUT, overflow: 'hidden' }}>
@@ -1566,7 +1654,10 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
 
       {/* Секторы */}
       {(d.sectors || []).map((sec, si) => {
-        const distHighlight = !isTime; // при цели по дистанции подсвечиваем дистанцию
+        // Подсвечиваем поля, из которых считается цель: дистанция — км;
+        // высота — дистанция и наклон вместе; время — таймер дорожки (ниже).
+        const distHighlight = !isTime;
+        const inclHighlight = isElev;
         const inputBlock = (key, label, inputMode, highlight) => (
           <div style={{ flex: '1 1 45%', minWidth: 120 }}>
             <Field label={highlight ? `${label} · цель` : label}>
@@ -1615,7 +1706,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {inputBlock('distance', 'Дистанция, км', 'decimal', distHighlight)}
               {inputBlock('speed', 'Скорость, км/ч', 'decimal', false)}
-              {inputBlock('incline', 'Наклон, %', 'decimal', false)}
+              {inputBlock('incline', 'Наклон, %', 'decimal', inclHighlight)}
               <div style={{ flex: '1 1 45%', minWidth: 120 }}>
                 <Field label={`Таймер дорожки, мм:сс${isTime ? ' · цель' : ''}`}>
                   <input

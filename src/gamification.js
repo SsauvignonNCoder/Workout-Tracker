@@ -69,7 +69,7 @@ export function getMonday(iso) {
 
 // Пороги общего накопленного XP, необходимого для достижения уровня N (индекс = уровень - 1).
 // Прогрессия подобрана так, чтобы 50-й уровень был достижим примерно за 1-1.5 года
-// активных тренировок (5 дней в неделю со средним стрик-множителем).
+// активных тренировок (6 дней в неделю со средним стрик-множителем).
 export const LEVEL_THRESHOLDS = [0, 6, 13, 21, 30, 41, 53, 66, 80, 95, 111, 128, 146, 165, 185, 206, 228, 251, 275, 300, 326, 353, 381, 410, 440, 471, 503, 536, 570, 605, 641, 677, 713, 749, 785, 821, 857, 893, 929, 965, 1001, 1037, 1073, 1109, 1145, 1181, 1217, 1253, 1289, 1325];
 
 export function getLevelInfo(totalXp) {
@@ -95,11 +95,12 @@ export function getStreakMultiplier(streakDay) {
   return 1.2 + (5.0 - 1.2) * (streakDay - 2) / 18;
 }
 
-// День недели: 0 = воскресенье, 6 = суббота (стандарт JS Date)
+// День недели: 0 = воскресенье, 6 = суббота (стандарт JS Date).
+// Выходной теперь только воскресенье: суббота стала днём плана (бег).
 export function isWeekend(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   const day = new Date(y, m - 1, d).getDay();
-  return day === 0 || day === 6;
+  return day === 0;
 }
 
 // Считает длину стрика последовательных тренировочных дней, заканчивающегося датой sessionDate.
@@ -160,7 +161,7 @@ export const ACHIEVEMENTS = [
   {
     id: 'first-week',
     title: 'Первая неделя',
-    description: 'Закрыты все 5 тренировочных дней (Пн–Пт) одной недели без пропусков',
+    description: 'Закрыты все 6 тренировочных дней (Пн–Сб) одной недели без пропусков',
     xp: 10,
     icon: '🔥',
     check: ({ sessions }) => {
@@ -168,7 +169,7 @@ export const ACHIEVEMENTS = [
       const activeDates = new Set(sessions.map((s) => s.date));
       const mondays = new Set([...activeDates].map((d) => getMonday(d)));
       return [...mondays].some((monday) => {
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 6; i++) {
           if (!activeDates.has(shiftDate(monday, i))) return false;
         }
         return true;
@@ -475,7 +476,7 @@ export function totalPoolMinutes(sessions) {
   return total;
 }
 
-// Самый длинный стрик тренировочных дней (Пн-Пт, выходные не считаются) во всей истории,
+// Самый длинный стрик тренировочных дней (Пн-Сб, воскресенье не считается) во всей истории,
 // не только текущий — чтобы достижение оставалось разблокированным даже после паузы.
 export function currentMaxStreak(sessions) {
   const uniqueDates = [...new Set((sessions || []).map((s) => s.date))].sort();
@@ -528,20 +529,20 @@ export function computeWeekStreak(sessions) {
   const activeDates = new Set((sessions || []).map((s) => s.date));
   const todayMonday = getMonday(todayISO());
 
-  // Текущая неделя: 5 кружков пн..пт, true если в этот день была активность
+  // Текущая неделя: 6 кружков пн..сб, true если в этот день была активность
   const currentWeekDays = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const day = shiftDate(todayMonday, i);
     currentWeekDays.push({ date: day, done: activeDates.has(day), isFuture: day > todayISO() });
   }
 
-  // Считаем подряд идущие ПОЛНОСТЬЮ закрытые недели (все 5 будних дней),
+  // Считаем подряд идущие ПОЛНОСТЬЮ закрытые недели (все 6 дней плана, пн–сб),
   // начиная с недели перед текущей и далее в прошлое.
   let weekMultiplier = 0;
   let checkMonday = shiftDate(todayMonday, -7);
   while (true) {
     let allDone = true;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const day = shiftDate(checkMonday, i);
       if (!activeDates.has(day)) { allDone = false; break; }
     }
@@ -551,7 +552,7 @@ export function computeWeekStreak(sessions) {
   }
 
   const currentWeekDone = currentWeekDays.filter((d) => d.done).length;
-  const currentWeekComplete = currentWeekDone === 5;
+  const currentWeekComplete = currentWeekDone === 6;
   if (currentWeekComplete) weekMultiplier += 1;
 
   return { currentWeekDays, currentWeekDone, weekMultiplier, currentWeekComplete };
