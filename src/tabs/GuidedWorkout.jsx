@@ -756,9 +756,14 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   }
 
   const progressPct = Math.round(((stepIdx + 1) / steps.length) * 100);
-  const stepShort = step.kind === 'exercise' ? step.name
-    : step.kind === 'summary' ? 'Итог тренировки'
-    : (step.title || step.name || 'Тренировка');
+  const shortNameOf = (st) => (!st ? null
+    : st.kind === 'exercise' ? st.name
+    : st.kind === 'summary' ? 'Итог тренировки'
+    : (st.title || st.name || 'Тренировка'));
+  const stepShort = shortNameOf(step);
+  // Что будет после текущего шага — показываем прямо на упражнении, чтобы
+  // не гадать, сколько ещё осталось и к чему готовиться.
+  const nextShort = shortNameOf(steps[stepIdx + 1]);
 
   // Секторы для «Горы» на итоговом экране: собираем со всех секторных шагов
   // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
@@ -952,6 +957,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
               step={step} sets={exLogs[stepIdx] || []} onSet={setExSet}
               records={records} note={exNotes[stepIdx] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
+              nextName={nextShort}
             />
           ) : step.kind === 'sectors' ? (
             <SectorsStep
@@ -1138,7 +1144,7 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
   );
 }
 
-function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide }) {
+function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextName }) {
   const t = useTheme();
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
@@ -1182,6 +1188,18 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide }) {
           >
             <HelpCircle size={13} /> Как выполнять
           </button>
+        )}
+        {nextName && (
+          <span style={{
+            fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, background: t.BG_INPUT,
+            padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center',
+            gap: 5, maxWidth: '100%', minWidth: 0,
+          }}>
+            <ChevronRight size={12} style={{ flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Далее: {nextName}
+            </span>
+          </span>
         )}
       </div>
 

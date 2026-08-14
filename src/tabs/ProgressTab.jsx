@@ -868,7 +868,10 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     );
   }
 
-  const dayLetters = ['П', 'В', 'С', 'Ч', 'П'];
+  // Пн–Сб. Раньше здесь было пять однобуквенных подписей: шестой день (суббота)
+  // оставался пустым квадратом, а «П» и «С» не различали понедельник с пятницей
+  // и среду с субботой. Две буквы решают и то, и другое.
+  const dayLetters = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
   const sectionLabel = { fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO, marginBottom: 14 };
 
@@ -887,15 +890,15 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
             Неделя
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           {streaks.currentWeekDays.map((d, i) => (
             <div
               key={d.date}
               title={dayLetters[i]}
               style={{
-                width: 22, height: 22, borderRadius: 7,
+                width: 26, height: 22, borderRadius: 7,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 10, fontWeight: 600, fontFamily: t.FONT_MONO,
+                fontSize: 9.5, fontWeight: 600, fontFamily: t.FONT_MONO, letterSpacing: '-0.02em',
                 flexShrink: 0, opacity: d.isFuture ? 0.5 : 1,
                 ...(d.done
                   ? { color: t.ON_ACCENT, ...brassFill }
