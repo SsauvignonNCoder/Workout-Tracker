@@ -174,6 +174,25 @@ export function weekFilename(weekStart) {
   return `trenirovki-nedelya-${weekStart}.md`;
 }
 
+// На какой день программы похожи фактически сделанные упражнения. Нужен, когда
+// день заменён: вместо «всё пропущено» отчёт пишет, чем его заменили.
+// Считаем совпадения по нормализованным именам и берём шаблон с лучшим счётом.
+function guessDayTitle(exercises) {
+  const names = (exercises || []).map((e) => normName(e.name)).filter(Boolean);
+  if (!names.length) return null;
+  let best = null, bestHits = 0;
+  const seen = new Set();
+  PROGRAM_DAYS.forEach((d) => {
+    if (d.type !== 'strength' || seen.has(d.title)) return;
+    seen.add(d.title);
+    const plan = (d.exercises || []).map((e) => normName(e.name));
+    const hits = names.filter((n) => plan.includes(n)).length;
+    if (hits > bestHits) { bestHits = hits; best = d.title; }
+  });
+  // Меньше половины совпадений — уверенности нет, лучше промолчать.
+  return bestHits >= Math.max(2, Math.ceil(names.length / 2)) ? best : null;
+}
+
 // Собирает Markdown-отчёт по календарной неделе, начинающейся с weekStart (понедельник, ISO).
 export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
   // Рекорды, установленные ДО начала недели — чтобы «🏆 PR» отмечал именно новый максимум.
@@ -198,14 +217,33 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
   const prevInWeek = (allSessions || []).filter((s) => getMonday(s.date) === prevWeekStart);
   const prevMap = buildExerciseMap(prevInWeek);
 
-  const progWeeks = [...new Set(inWeek.filter((s) => s.programDay).map((s) => programWeekOf(s.programDay)))]
-    .sort((a, b) => a - b);
+  // Программная неделя у календарной ОДНА — та, в которую попало больше записей.
+  // Раньше здесь собирались все встреченные недели и плановыми считались ВСЕ их
+  // дни: если неделя легла на стык (дни 11–14 из одной, 17–18 из следующей),
+  // выходило 12 плановых дней вместо шести, и половина из них — «пропущено»,
+  // хотя четыре были сделаны на прошлой календарной неделе, а два ещё впереди.
+  const weekTally = new Map();
+  inWeek.forEach((s) => {
+    if (!s.programDay) return;
+    const w = programWeekOf(s.programDay);
+    weekTally.set(w, (weekTally.get(w) || 0) + 1);
+  });
+  const mainWeek = [...weekTally.entries()]
+    .sort((a, b) => (b[1] - a[1]) || (b[0] - a[0]))[0]?.[0] ?? null;
+  const progWeeks = mainWeek == null ? [] : [mainWeek];
 
   const sessionByDay = {};
   inWeek.forEach((s) => { if (s.programDay && !sessionByDay[s.programDay]) sessionByDay[s.programDay] = s; });
 
   const plannedDays = PROGRAM_DAYS.filter((d) => progWeeks.includes(programWeekOf(d.day)));
   const doneCount = plannedDays.filter((d) => sessionByDay[d.day]).length;
+
+  // Тренировки этой календарной недели, привязанные к ДРУГОЙ программной неделе.
+  // Они не «вне плана» и не «пропущены» — просто относятся к соседней неделе
+  // программы; показываем их отдельным блоком, без ложных пропусков.
+  const otherWeekDays = PROGRAM_DAYS
+    .filter((d) => sessionByDay[d.day] && !progWeeks.includes(programWeekOf(d.day)))
+    .sort((a, b) => a.day - b.day);
 
   // --- Сводка ---
   if (progWeeks.length) {
@@ -227,9 +265,19 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
 
   const renderedIds = new Set();
 
-  // --- Плановые дни ---
-  plannedDays.forEach((plan) => {
+  // --- Плановые дни + дни соседней программной недели ---
+  const renderList = [
+    ...plannedDays.map((d) => ({ plan: d, other: false })),
+    ...otherWeekDays.map((d) => ({ plan: d, other: true })),
+  ];
+  let otherHeaderShown = false;
+  renderList.forEach(({ plan, other }) => {
     const s = sessionByDay[plan.day];
+    if (other && !otherHeaderShown) {
+      otherHeaderShown = true;
+      lines.push('');
+      lines.push(`## Из соседней недели программы (${programWeekOf(plan.day)})`);
+    }
     lines.push('');
     if (!s) {
       lines.push(`## День ${plan.day} · ${plan.title} — ⚠️ пропущен`);
@@ -241,11 +289,24 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
     lines.push('');
 
     if (plan.type === 'strength') {
+      // Если из плана дня не сделано НИ ОДНОГО упражнения, а записаны другие —
+      // это не «день, где всё пропущено», а день, заменённый на другой. Простыня
+      // из шести строк «пропущено» в таком случае только сбивает с толку.
+      const planHit = (plan.exercises || []).some((pex) =>
+        (s.exercises || []).some((re) => normName(re.name) === normName(pex.name)));
+      const swapped = !planHit && (s.exercises || []).length > 0;
+      if (swapped) {
+        const guess = guessDayTitle(s.exercises);
+        lines.push(`_Заменён${guess ? ` на: ${guess}` : ''} — плановые упражнения этого дня не выполнялись._`);
+        lines.push('');
+      }
+
       lines.push(...TABLE_HEADER);
       const usedIdx = new Set();
       (plan.exercises || []).forEach((pex) => {
         const idx = (s.exercises || []).findIndex((re, i) => !usedIdx.has(i) && normName(re.name) === normName(pex.name));
         if (idx === -1) {
+          if (swapped) return; // день заменён — плановые строки не выводим
           lines.push(`| ${cell(pex.name)} | — | ⚠️ пропущено | — |`);
         } else {
           usedIdx.add(idx);
@@ -256,7 +317,8 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
       // Записанные упражнения, которых нет в плане.
       (s.exercises || []).forEach((re, i) => {
         if (usedIdx.has(i)) return;
-        lines.push(`| ${cell(re.name)} _(вне плана)_ | ${cell(fmtExerciseResult(re))} | ${cell(deltaVsPrev(re, prevMap))} | ${cell(recordMark(re, priorRecords))} |`);
+        const tag = swapped ? '' : ' _(вне плана)_';
+        lines.push(`| ${cell(re.name)}${tag} | ${cell(fmtExerciseResult(re))} | ${cell(deltaVsPrev(re, prevMap))} | ${cell(recordMark(re, priorRecords))} |`);
       });
       pushExerciseDetails(lines, s.exercises);
       (s.cardio || []).forEach((c) => {
