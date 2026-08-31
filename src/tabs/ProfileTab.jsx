@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Sun, Moon, LogOut, Award } from 'lucide-react';
+import { LogOut, Award } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO, fmtDateShort } from '../dateUtils.js';
 import {
@@ -102,17 +102,47 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       setConfirmingImport(true);
       return;
     }
+    // Разбор и проверка формы ДО записи. Раньше сюда уходило что угодно, что
+    // разобралось как JSON: мусорные записи попадали в состояние приложения, а
+    // upsert падал уже на стороне базы — и дальше приложение работало с
+    // содержимым, которого в базе нет.
+    let data;
     try {
-      const data = JSON.parse(importText.trim());
-      if (data.sessions) await saveSessions(data.sessions);
-      if (data.measurements) await saveMeasurements(data.measurements);
-      if (data.profile) await saveProfile(data.profile);
+      data = JSON.parse(importText.trim());
+    } catch (err) {
+      setConfirmingImport(false);
+      setError('Не удалось прочитать текст — проверь, что это полная копия из экспорта');
+      return;
+    }
+    const looksLikeRows = (arr) => Array.isArray(arr)
+      && arr.every((r) => r && typeof r === 'object' && typeof r.id === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date || ''));
+    if (!data || typeof data !== 'object'
+      || (data.sessions !== undefined && !looksLikeRows(data.sessions))
+      || (data.measurements !== undefined && !looksLikeRows(data.measurements))
+      || (data.profile !== undefined && (typeof data.profile !== 'object' || data.profile === null))) {
+      setConfirmingImport(false);
+      setError('Копия повреждена или это не тот текст — восстановление отменено, данные не тронуты');
+      return;
+    }
+
+    // Три части восстанавливаются по очереди и общей транзакции не образуют: если
+    // тренировки уже записались, а замеры не успели, восстановление окажется
+    // половинчатым. Сказать об этом честнее, чем показать общий баннер «не удалось
+    // сохранить» и оставить человека гадать, что именно доехало.
+    let done = 0;
+    try {
+      if (data.sessions) { await saveSessions(data.sessions); done += 1; }
+      if (data.measurements) { await saveMeasurements(data.measurements); done += 1; }
+      if (data.profile) { await saveProfile(data.profile); done += 1; }
       setMode(null);
       setImportText('');
       setConfirmingImport(false);
     } catch (err) {
       setConfirmingImport(false);
-      setError('Не удалось прочитать текст — проверь, что это полная копия из экспорта');
+      if (done > 0) {
+        setError('Восстановление прошло не полностью — часть данных заменена, часть осталась прежней. Проверь связь и повтори: текст копии не стёрт.');
+      }
+      // При done === 0 общий баннер от save* уже всё сказал.
     }
   };
 
@@ -213,7 +243,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
   );
 }
 
-export function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, mode, isDark, cycle, onLogout }) {
+export function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, onLogout }) {
   const t = useTheme();
   const [draft, setDraft] = useState(() => {
     const init = {};
@@ -243,7 +273,12 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
     BODY_FIELDS.forEach((f) => {
       next[f.key] = draft[f.key] ? Math.max(0, parseFloat(draft[f.key])) : null;
     });
-    await saveProfile(next);
+    try {
+      await saveProfile(next);
+    } catch (e) {
+      setSaving(false);
+      return; // сообщение уже показал saveProfile — «Сохранено ✓» не рисуем
+    }
     setSaving(false);
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 2200);
@@ -354,25 +389,9 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
         Настройки
       </div>
 
-      {cycle && (
-        <button
-          onClick={cycle}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
-            padding: '14px 16px', borderRadius: 12, border: `1px solid ${t.BORDER}`,
-            background: t.BG_RAISED, color: t.TEXT, fontSize: 15, fontWeight: 600,
-            cursor: 'pointer', fontFamily: 'inherit', marginBottom: 10, boxSizing: 'border-box',
-          }}
-        >
-          <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {isDark ? <Moon size={18} color={t.TEXT_DIM} /> : <Sun size={18} color={t.TEXT_DIM} />}
-            Тема оформления
-          </span>
-          <span style={{ fontSize: 13, color: t.TEXT_FAINT, fontWeight: 500 }}>
-            {mode === 'auto' ? (isDark ? 'Авто · ночь' : 'Авто · день') : (isDark ? 'Тёмная' : 'Светлая')}
-          </span>
-        </button>
-      )}
+      {/* Кнопка «Тема оформления» удалена в 1.0.6. Она крутила подпись
+          «Авто · ночь → Светлая → Тёмная», но не меняла ничего: приложение
+          жёстко в теме 2A с 13 июля. */}
 
       {onLogout && (
         <button

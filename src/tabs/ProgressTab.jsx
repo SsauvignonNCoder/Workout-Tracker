@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown, Timer } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { useTheme, ThemeContext } from '../theme.js';
+import { useTheme, ThemeContext, THEME_2A, FROST, brassFill, brassText } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
 import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
@@ -13,41 +13,14 @@ function muscleLetter(name) {
   return g ? g.letter : (name || '?').trim().charAt(0).toUpperCase();
 }
 
-// ---- Редизайн 2A: тёмная металлик-тема «Прогресса» ----
-// Фиксированная палитра (независимо от переключателя свет/тёмная) в форме токенов темы,
-// чтобы все дочерние useTheme() внутри вкладки получили её через ThemeContext.Provider.
-export const THEME_2A = {
-  ACCENT: '#C79A4E', ACCENT_SOFT: '#E4C57E', ACCENT_DEEP: '#9E7A34', POSITIVE: '#93A86A',
-  BG: '#0A0A0A', BG_RAISED: '#171512', BG_INPUT: '#1C1A16', BORDER: 'rgba(242,235,221,0.12)',
-  TEXT: '#F2EBDD', TEXT_DIM: '#8F897C', TEXT_FAINT: '#6E6A60',
-  ACCENT_GRAD: 'linear-gradient(100deg,#8B6B2E,#C79A4E,#F5E3AE,#C79A4E,#8B6B2E)', ON_ACCENT: '#0A0A0A',
-  ACCENT_BG: 'rgba(199,154,78,0.15)', ACCENT_BORDER: 'rgba(184,146,74,0.30)',
-  POSITIVE_BG: 'rgba(147,168,106,0.16)',
-  GLOW: '0 0 22px rgba(184,146,74,0.40)', NAV_BG: 'rgba(23,21,18,0.10)',
-  CARD_SHADOW: '0 16px 40px rgba(0,0,0,0.4)',
-  FONT: "'Space Grotesk', system-ui, sans-serif",
-  FONT_DISPLAY: "'Space Grotesk', system-ui, sans-serif",
-  FONT_MONO: "'JetBrains Mono', 'SF Mono', monospace",
-};
+// Токены темы 2A (THEME_2A, FROST, brassFill, brassText) переехали в src/theme.js —
+// раньше App.jsx импортировал тему из вкладки, что было перевёрнутой зависимостью.
+//
 // Крем — светлые карточки (селектор + рекорды). Над тёмным фоном настоящая
 // прозрачность даёт серый, поэтому оставляем солидный крем.
 const CREAM = '#F2EBDD';
 const ON_CREAM = '#0A0A0A';
 const ON_CREAM_MUTED = '#6B655A';
-const CREAM_BLUR = {};
-// Фрост-стекло для полупрозрачных плашек над полосатым фоном. Подложка НАМЕРЕННО лёгкая
-// (~0.28), иначе она перекрывает эффект и блюр «не виден» — тот же приём, что в таб-баре.
-export const FROST = {
-  background: 'rgba(20,18,15,0.44)',
-  backdropFilter: 'blur(18px) saturate(1.35)',
-  WebkitBackdropFilter: 'blur(18px) saturate(1.35)',
-};
-export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.038) 0px, rgba(242,224,166,0.038) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.032) 11px, rgba(184,146,74,0.032) 12.5px, transparent 12.5px, transparent 22px)';
-export const BG_2A = '#0A0A0A';
-export const BRASS_SHEEN = 'linear-gradient(100deg,#6E5424 0%,#C79A4E 14%,#F5E3AE 24%,#FFF6DC 30%,#F5E3AE 36%,#C79A4E 46%,#8B6B2E 58%,#C79A4E 70%,#F5E3AE 78%,#C79A4E 88%,#6E5424 100%)';
-// Блик берётся из CSS-переменной --shine (её пишет useBrassShine на ref-контейнере).
-export const brassFill = { backgroundImage: BRASS_SHEEN, backgroundSize: '220% 220%', backgroundPosition: 'var(--shine, 50% 50%)' };
-export const brassText = { ...brassFill, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' };
 
 function average(nums) {
   if (!nums.length) return null;
@@ -96,7 +69,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
         onClick={() => setOpen(!open)}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
-          background: CREAM, ...CREAM_BLUR, border: 'none', borderRadius: 14,
+          background: CREAM, border: 'none', borderRadius: 14,
           padding: '14px 16px', color: ON_CREAM, fontSize: 14, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
         }}
@@ -798,11 +771,16 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
   const records = useMemo(() => computeRecords(sessions), [sessions]);
   const recordList = useMemo(() => Object.entries(records).sort((a, b) => a[0].localeCompare(b[0])), [records]);
 
+  // Первая серия подставляется РОВНО ОДИН РАЗ — как начальное значение, а не как
+  // инвариант. Раньше этот эффект зависел от selectedKeys и возвращал серию обратно
+  // сразу же, как только снимали последнюю галочку: очистить график было невозможно.
+  const seededRef = React.useRef(false);
   useEffect(() => {
-    if (selectedKeys.length === 0 && options.length > 0) {
-      setSelectedKeys([options[0].key]);
-    }
-  }, [options, selectedKeys]);
+    if (seededRef.current) return;
+    if (options.length === 0) return;
+    seededRef.current = true;
+    setSelectedKeys((prev) => (prev.length > 0 ? prev : [options[0].key]));
+  }, [options]);
 
   const toggleSeries = (key) => {
     setSelectedKeys((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
@@ -968,7 +946,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
               return (
                 <div key={name} style={{
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  background: CREAM, ...CREAM_BLUR, border: 'none', borderRadius: 14, padding: '12px 15px',
+                  background: CREAM, border: 'none', borderRadius: 14, padding: '12px 15px',
                 }}>
                   <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{
@@ -996,7 +974,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
-      <WeekExportPanel sessions={sessions} />
+      <WeekExportPanel sessions={sessions} measurements={measurements} />
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 

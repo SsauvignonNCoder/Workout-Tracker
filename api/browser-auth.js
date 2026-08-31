@@ -48,6 +48,41 @@ function hashPin(pin) {
   return { pinHash: scryptHex(pin, salt), pinSalt: salt };
 }
 
+// Поиск пользователя по имени без учёта регистра.
+//
+// Раньше здесь стоял просто .ilike('display_name', name).maybeSingle(), и это
+// давало две неприятности. Во-первых, ilike уходит в SQL LIKE, где % и _ —
+// подстановочные знаки (а сам PostgREST вдобавок превращает * в %): имя вида
+// «Никит_» находило «Никиту». Во-вторых, при совпадении нескольких строк
+// maybeSingle() отвечал ошибкой, то есть вход падал пятисоткой.
+//
+// Поэтому ilike оставлен только как грубый фильтр по индексу (спецсимволы в нём
+// экранированы), а точное совпадение проверяется уже здесь, в коде — именно оно и
+// является гарантией, фильтр лишь сужает выборку.
+//
+// ВНИМАНИЕ, не «чини» это добавлением `*` в класс экранирования — станет хуже.
+// PostgREST заменяет `*` на `%` уже ПОСЛЕ разбора значения, поэтому отправленное
+// `\*` превратится в `\%`, то есть в поиск литерального процента, и пользователь с
+// звёздочкой в имени не найдётся вообще и не сможет войти. Незаэкранированная `*`
+// всего лишь расширяет выборку, а лишнее отсеет точное сравнение ниже. Чтобы
+// проблема не росла, новые имена со звёздочкой и процентом просто не регистрируем
+// (см. валидацию в обработчике), а лимит выборки взят с запасом.
+function likePattern(name) {
+  return name.replace(/([\\%_])/g, '\\$1');
+}
+
+async function findLocalUserByName(supabaseAdmin, name) {
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('id, display_name, pin_hash, pin_salt')
+    .ilike('display_name', likePattern(name))
+    .is('telegram_id', null)
+    .limit(500);
+  if (error) throw error;
+  const wanted = name.toLowerCase();
+  return (data || []).find((u) => String(u.display_name || '').toLowerCase() === wanted) || null;
+}
+
 // Возвращает true, если pin подходит под сохранённый хэш (новая или старая схема).
 function verifyPin(pin, user) {
   if (user.pin_salt) {
@@ -94,19 +129,21 @@ export default async function handler(req, res) {
     res.status(400).json({ error: 'PIN должен состоять только из цифр' });
     return;
   }
+  // Только для НОВЫХ имён: символы, которые PostgREST и SQL LIKE понимают как
+  // подстановочные, делают поиск по имени шире, чем задумано. Существующие имена
+  // с такими символами (если вдруг есть) войти по-прежнему смогут — точное
+  // сравнение в findLocalUserByName от ложного совпадения защищает.
+  if (mode === 'register' && /[%_*\\]/.test(displayName)) {
+    res.status(400).json({ error: 'В имени нельзя использовать символы % _ * и обратный слэш' });
+    return;
+  }
 
   const name = displayName.trim();
   const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
     if (mode === 'register') {
-      const { data: existing, error: findErr } = await supabaseAdmin
-        .from('users')
-        .select('id')
-        .ilike('display_name', name)
-        .is('telegram_id', null)
-        .maybeSingle();
-      if (findErr) throw findErr;
+      const existing = await findLocalUserByName(supabaseAdmin, name);
       if (existing) {
         res.status(409).json({ error: 'Это имя уже занято — выбери другое или войди с существующим PIN' });
         return;
@@ -125,13 +162,7 @@ export default async function handler(req, res) {
     }
 
     if (mode === 'login') {
-      const { data: user, error: findErr } = await supabaseAdmin
-        .from('users')
-        .select('id, display_name, pin_hash, pin_salt')
-        .ilike('display_name', name)
-        .is('telegram_id', null)
-        .maybeSingle();
-      if (findErr) throw findErr;
+      const user = await findLocalUserByName(supabaseAdmin, name);
 
       if (!user || !verifyPin(pin, user)) {
         res.status(401).json({ error: 'Неверное имя или PIN' });

@@ -1,14 +1,22 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Dumbbell } from 'lucide-react';
-import { THEMES } from './theme.js';
+import { Dumbbell, Send } from 'lucide-react';
+import { THEME_2A } from './theme.js';
 
 // ============================================================
 // Авторизация — два способа входа, у каждого свой аккаунт:
 // 1. Telegram Mini App — автоматически, по подписи initData (без PIN)
 // 2. Обычный браузер — имя + PIN, регистрация/вход
+//
+// Экран входа рендерится ДО ThemeContext.Provider, поэтому палитру берёт
+// напрямую из THEME_2A. До 1.0.6 он брал её из THEMES.dark — палитры прошлого
+// редизайна: вход был янтарно-коричневым, а само приложение чёрно-латунным.
 // ============================================================
 
 const AUTH_SESSION_KEY = 'workout-tracker-auth';
+// Признак того, что пользователь вышел ЯВНО. Без него автоматический вход по
+// initData срабатывал сразу после нажатия «Выйти из аккаунта» и возвращал в
+// приложение — внутри Telegram выйти было физически невозможно.
+const LOGOUT_FLAG_KEY = 'workout-tracker-logged-out';
 
 function getTelegramWebApp() {
   if (typeof window === 'undefined') return null;
@@ -57,6 +65,9 @@ export function AuthGate({ children }) {
       return null;
     }
   });
+  const [loggedOut, setLoggedOut] = useState(() => {
+    try { return sessionStorage.getItem(LOGOUT_FLAG_KEY) === '1'; } catch (e) { return false; }
+  });
   const [telegramFailed, setTelegramFailed] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
   const [name, setName] = useState('');
@@ -66,11 +77,18 @@ export function AuthGate({ children }) {
 
   const tg = useMemo(() => getTelegramWebApp(), []);
 
+  const clearLogoutFlag = () => {
+    try { sessionStorage.removeItem(LOGOUT_FLAG_KEY); } catch (e) { /* no-op */ }
+    setLoggedOut(false);
+  };
+
   useEffect(() => {
     if (session) { setChecking(false); return; }
 
     (async () => {
-      if (tg) {
+      // Явный выход отключает автовход по initData до следующего запуска
+      // Mini App или до нажатия «Войти через Telegram».
+      if (tg && !loggedOut) {
         tg.ready();
         tg.expand();
         const result = await tryTelegramAuth(tg);
@@ -84,7 +102,7 @@ export function AuthGate({ children }) {
       }
       setChecking(false);
     })();
-  }, [session, tg]);
+  }, [session, tg, loggedOut]);
 
   const handleSubmit = async () => {
     setErr('');
@@ -95,18 +113,28 @@ export function AuthGate({ children }) {
     const result = await browserAuth(authMode, name.trim(), pin);
     setBusy(false);
     if (result.error) { setErr(result.error); return; }
+    clearLogoutFlag();
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(result));
     setSession(result);
   };
 
+  // Вернуться к автоматическому входу после явного выхода (только внутри Telegram).
+  const handleTelegramLogin = () => {
+    setErr('');
+    clearLogoutFlag();
+    setChecking(true);
+  };
+
   const handleLogout = () => {
     sessionStorage.removeItem(AUTH_SESSION_KEY);
+    try { sessionStorage.setItem(LOGOUT_FLAG_KEY, '1'); } catch (e) { /* no-op */ }
+    setLoggedOut(true);
     setSession(null);
   };
 
   if (session) return children({ userId: session.userId, displayName: session.displayName, onLogout: handleLogout });
 
-  const t = THEMES.dark;
+  const t = THEME_2A;
 
   if (checking) {
     return <div style={{ background: t.BG, minHeight: '100vh' }} />;
@@ -115,7 +143,7 @@ export function AuthGate({ children }) {
   return (
     <div style={{
       background: t.BG, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 20, fontFamily: "'Manrope', system-ui, -apple-system, sans-serif",
+      padding: 20, fontFamily: t.FONT,
     }}>
       <div style={{ width: '100%', maxWidth: 340 }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
@@ -134,6 +162,25 @@ export function AuthGate({ children }) {
             ? 'Не получилось войти через Telegram — войди по имени и PIN'
             : authMode === 'login' ? 'Введи своё имя и PIN' : 'Придумай имя и PIN — минимум 4 символа'}
         </p>
+
+        {/* Кнопка показывается всегда, когда мы внутри Telegram и не авторизованы.
+            Привязывать её к флагу выхода было нельзя: `handleTelegramLogin`
+            сбрасывает флаг сразу, ещё до результата повторной попытки, и при
+            неудаче (моргнула сеть) кнопка исчезала — а у того, кто никогда не
+            заводил браузерный PIN, войти в этот момент было уже нечем. */}
+        {tg && (
+          <button
+            onClick={handleTelegramLogin}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%',
+              boxSizing: 'border-box', padding: '13px 14px', borderRadius: 12,
+              border: `1px solid ${t.ACCENT_BORDER}`, background: t.BG_RAISED, color: t.TEXT,
+              fontSize: 14.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 16,
+            }}
+          >
+            <Send size={16} color={t.ACCENT_SOFT} /> Войти через Telegram
+          </button>
+        )}
 
         <input
           type="text"
@@ -158,7 +205,7 @@ export function AuthGate({ children }) {
           style={{
             width: '100%', boxSizing: 'border-box', background: t.BG_INPUT, border: `1px solid ${t.BORDER}`,
             borderRadius: 10, padding: '13px 14px', color: t.TEXT, fontSize: 17, marginBottom: 10,
-            outline: 'none', textAlign: 'center', letterSpacing: '0.15em',
+            outline: 'none', textAlign: 'center', letterSpacing: '0.15em', fontFamily: t.FONT_MONO,
           }}
         />
 

@@ -3,14 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#16100A" />
+    <meta name="theme-color" content="#0A0A0A" />
     <title>Дневник тренировок</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Manrope убран: он остался от редизайна 30 июня и не используется с 13 июля,
+         когда тема 2A свелась к двум шрифтам (Space Grotesk + JetBrains Mono).
+         Пять начертаний скачивались на мобильном впустую. -->
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
-  <body style="margin: 0; padding: 0; background: #16100A; font-family: 'Manrope', system-ui, -apple-system, sans-serif;">
+  <!-- Фон и шрифт должны совпадать с темой 2A: пока React не отрисовался, экран
+       показывает именно их. С коричневым #16100A каждый запуск начинался вспышкой
+       цвета из позапрошлого редизайна. -->
+  <body style="margin: 0; padding: 0; background: #0A0A0A; font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

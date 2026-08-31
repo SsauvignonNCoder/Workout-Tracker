@@ -148,15 +148,9 @@ export const ACHIEVEMENTS = [
     description: 'Рабочий вес в жиме лёжа сравнялся или превысил вес тела',
     xp: 5,
     icon: '🏋️',
-    check: ({ sessions, measurements }) => {
-      const latestWeightEntry = (measurements || []).slice().sort((a, b) => a.date.localeCompare(b.date)).pop();
-      if (!latestWeightEntry || !latestWeightEntry.weight) return false;
-      const records = computeRecords(sessions);
-      const benchNames = Object.keys(records).filter((name) => /жим.*лёж/i.test(name));
-      if (benchNames.length === 0) return false;
-      const bestBench = Math.max(...benchNames.map((name) => records[name].weight));
-      return bestBench >= latestWeightEntry.weight;
-    },
+    // Через bestLiftRatio — ровно та же проверка, что у приседа и тяги ниже.
+    // Своя копия здесь повторяла и ту же ошибку с NaN на безвесовых рекордах.
+    check: ({ sessions, measurements }) => bestLiftRatio(sessions, measurements, /жим.*лёж/i) >= 1,
   },
   {
     id: 'first-week',
@@ -312,9 +306,12 @@ export const ACHIEVEMENTS = [
     xp: 10,
     icon: '🎯',
     check: ({ sessions }) => {
-      const types = ['беговая дорожка', 'велотренажёр', 'эллипсо', 'гребн', 'степпер', 'бассейн'];
+      // Сверяем по нормализованным именам (ё→е): «велотренажер», набранный
+      // вручную, раньше не засчитывался, потому что в списке стояло «велотренажёр».
+      const norm = (s) => (s || '').toLowerCase().replace(/ё/g, 'е');
+      const types = ['беговая дорожка', 'велотренажер', 'эллипсо', 'гребн', 'степпер', 'бассейн'].map(norm);
       const usedNames = new Set();
-      (sessions || []).forEach((s) => (s.cardio || []).forEach((c) => usedNames.add(c.name.toLowerCase())));
+      (sessions || []).forEach((s) => (s.cardio || []).forEach((c) => usedNames.add(norm(c.name))));
       return types.every((type) => [...usedNames].some((name) => name.includes(type)));
     },
   },
@@ -445,10 +442,15 @@ export function bestLiftRatio(sessions, measurements, nameRegex) {
   const latestWeightEntry = (measurements || []).slice().sort((a, b) => a.date.localeCompare(b.date)).pop();
   if (!latestWeightEntry || !latestWeightEntry.weight) return 0;
   const records = computeRecords(sessions);
-  const matchNames = Object.keys(records).filter((name) => nameRegex.test(name));
-  if (matchNames.length === 0) return 0;
-  const bestWeight = Math.max(...matchNames.map((name) => records[name].weight));
-  return bestWeight / latestWeightEntry.weight;
+  // Берём только рекорды весовой формы: у безвесовых поле weight отсутствует, и
+  // Math.max по ним давал NaN — достижение после этого не открывалось никогда и
+  // никак себя не проявляло.
+  const weights = Object.keys(records)
+    .filter((name) => nameRegex.test(name))
+    .map((name) => Number(records[name].weight) || 0)
+    .filter((w) => w > 0);
+  if (weights.length === 0) return 0;
+  return Math.max(...weights) / latestWeightEntry.weight;
 }
 
 // Максимум повторов в одном подходе для упражнений, чьё название подходит под regex.

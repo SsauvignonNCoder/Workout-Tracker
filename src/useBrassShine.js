@@ -42,17 +42,37 @@ export function useBrassShine() {
     const el = rootRef.current;
     if (el) el.addEventListener('mousemove', onMouseMove);
 
-    const tick = () => {
+    // Авто-анимация перелива. Кадр раз в ~50 мс, а не на каждый кадр экрана:
+    // блик медленный, разницы не видно, а работы по пересчёту стилей втрое меньше.
+    // Плюс цикл полностью останавливается, когда вкладка/Mini App не на экране —
+    // раньше он крутился весь сеанс без перерыва.
+    const FRAME_MS = 50;
+    let lastFrame = 0;
+    const tick = (now) => {
+      rafId.current = requestAnimationFrame(tick);
+      if (now - lastFrame < FRAME_MS) return;
+      lastFrame = now;
       if (Date.now() - lastInput.current > 900) {
         const t = Date.now() / 2600;
         setShine(50 + Math.sin(t) * 40, 50 + Math.cos(t * 0.7) * 40);
       }
-      rafId.current = requestAnimationFrame(tick);
     };
-    rafId.current = requestAnimationFrame(tick);
+    const start = () => {
+      if (rafId.current == null) rafId.current = requestAnimationFrame(tick);
+    };
+    const stop = () => {
+      if (rafId.current != null) { cancelAnimationFrame(rafId.current); rafId.current = null; }
+    };
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') stop();
+      else start();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    onVisibility();
 
     return () => {
-      cancelAnimationFrame(rafId.current);
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('deviceorientation', onOrientation);
       if (el) el.removeEventListener('mousemove', onMouseMove);
     };

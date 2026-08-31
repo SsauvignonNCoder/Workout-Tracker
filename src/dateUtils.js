@@ -11,6 +11,17 @@ export const shiftDate = (iso, days) => {
   return toISO(dt);
 };
 
+// Утреннее окно взвешивания. В это время приложение открывается сразу на вкладке
+// «Вес» — взвешивание происходит именно тогда, и лишний тап каждое утро ни к чему.
+// Границы включают начало и не включают конец: 6:00–9:59.
+export const WEIGH_IN_FROM_HOUR = 6;
+export const WEIGH_IN_TO_HOUR = 10;
+
+export const isWeighInTime = (d = new Date()) => {
+  const h = d.getHours();
+  return h >= WEIGH_IN_FROM_HOUR && h < WEIGH_IN_TO_HOUR;
+};
+
 export const fmtDateShort = (iso) => {
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });

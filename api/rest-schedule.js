@@ -18,6 +18,22 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const QSTASH_TOKEN = process.env.QSTASH_TOKEN;
 const ALERT_SECRET = process.env.REST_ALERT_SECRET;
 
+// Виды уведомлений. Клиент передаёт только `kind`, текст выбирается здесь —
+// так эндпоинт не превращается в способ отправить боту произвольное сообщение,
+// а тексты лежат в одном месте.
+const ALERTS = {
+  rest: {
+    text: '⏱️ Отдых окончен — следующий подход',
+    defaultDelay: 120,
+    maxDelay: 900,
+  },
+  protein: {
+    text: '🥤 Час после тренировки — время протеинового коктейля',
+    defaultDelay: 3600,
+    maxDelay: 7200,
+  },
+};
+
 function checkTelegramAuth(initData) {
   const params = new URLSearchParams(initData);
   const hash = params.get('hash');
@@ -54,7 +70,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { initData, duration } = req.body || {};
+  const { initData, duration, kind } = req.body || {};
   if (!initData || typeof initData !== 'string') {
     res.status(400).json({ error: 'Не передан initData' });
     return;
@@ -63,8 +79,13 @@ export default async function handler(req, res) {
   const tgUser = checkTelegramAuth(initData);
   if (!tgUser) { res.status(401).json({ error: 'Подпись initData не подтверждена' }); return; }
 
+  const alert = ALERTS[kind] || ALERTS.rest;
+
   const chatId = tgUser.id;
-  const delaySec = Math.min(900, Math.max(5, parseInt(duration, 10) || 120));
+  // Потолок задержки свой у каждого вида: таймеру отдыха больше пятнадцати минут
+  // не нужно, а напоминанию после тренировки нужен час. Общий потолок в 900 секунд
+  // раньше молча обрезал бы такое напоминание до пятнадцати минут.
+  const delaySec = Math.min(alert.maxDelay, Math.max(5, parseInt(duration, 10) || alert.defaultDelay));
 
   const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0];
   const host = req.headers.host;
@@ -80,7 +101,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         chat_id: chatId,
-        text: '⏱️ Отдых окончен — следующий подход',
+        text: alert.text,
         secret: ALERT_SECRET,
       }),
     });

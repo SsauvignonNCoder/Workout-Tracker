@@ -7,7 +7,7 @@ import { listExportableWeeks, buildWeekMarkdown, weekFilename } from '../weekExp
 // Панель экспорта результатов недели в Markdown-файл.
 // Итог включает: результат по каждому упражнению, прогрессию к прошлой неделе,
 // отметку личных рекордов и маркировку упражнений/дней плана, которые не были записаны.
-export function WeekExportPanel({ sessions }) {
+export function WeekExportPanel({ sessions, measurements }) {
   const t = useTheme();
   const weeks = useMemo(() => listExportableWeeks(sessions), [sessions]);
   const [open, setOpen] = useState(false);
@@ -22,8 +22,8 @@ export function WeekExportPanel({ sessions }) {
     : (weeks[0] ? weeks[0].weekStart : null);
 
   const md = useMemo(
-    () => (activeWeek ? buildWeekMarkdown(activeWeek, sessions) : ''),
-    [activeWeek, sessions],
+    () => (activeWeek ? buildWeekMarkdown(activeWeek, sessions, { measurements }) : ''),
+    [activeWeek, sessions, measurements],
   );
 
   if (weeks.length === 0) return null;

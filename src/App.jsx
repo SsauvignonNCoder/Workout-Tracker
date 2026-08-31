@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, User, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Dumbbell, Ruler, LineChart as LineIcon, User, Sparkles, X } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
-import { ThemeContext, useTheme, useThemeController } from './theme.js';
+import { ThemeContext, useTheme, THEME_2A, STRIPES_2A, brassFill } from './theme.js';
 import { useBrassShine } from './useBrassShine.js';
-import { brassFill, STRIPES_2A, THEME_2A } from './tabs/ProgressTab.jsx';
+import { isWeighInTime } from './dateUtils.js';
 import { AuthGate } from './auth.jsx';
 import { WorkoutTab } from './tabs/WorkoutTab.jsx';
 import { MeasurementsTab } from './tabs/MeasurementsTab.jsx';
 import { ProgressTab } from './tabs/ProgressTab.jsx';
 import { ProfileTab } from './tabs/ProfileTab.jsx';
+import { AssistantTab } from './tabs/AssistantTab.jsx';
 
 // ------- Преобразование между форматом БД (snake_case) и форматом приложения (camelCase) -------
 
@@ -120,6 +121,21 @@ function useStorage(userId) {
     })();
   }, [userId]);
 
+  // Записи, которые не доехали до базы из-за ошибки сети. Ключ — имя таблицы,
+  // значение — множество id. Нужны, потому что состояние в приложении обновляется
+  // оптимистично: после неудачной отправки next уже лежит в React-стейте, и при
+  // следующем сохранении diff сравнил бы запись саму с собой и решил, что она не
+  // менялась — то есть в базу она не уехала бы уже НИКОГДА. Держим её «грязной»,
+  // пока upsert не подтвердится.
+  const dirtyRef = useRef({ sessions: new Set(), measurements: new Set() });
+
+  // То же самое для удалений, и по отдельной причине. Удалённая запись пропадает
+  // из состояния сразу, поэтому в следующий раз `removedIds` (разница между prev и
+  // next) её уже не увидит — её просто нет ни там, ни там. То есть не дошедшее
+  // удаление не повторялось бы никогда, и «удалённая» тренировка возвращалась бы
+  // из базы при следующей загрузке. Держим такие id здесь, пока delete не пройдёт.
+  const pendingDeleteRef = useRef({ sessions: new Set(), measurements: new Set() });
+
   // Сохраняем только то, что реально изменилось: сравниваем next с prev по id и
   // по содержимому (через JSON.stringify самой строки для БД, чтобы формат сравнения
   // всегда совпадал с тем, что реально уйдёт в upsert), и отправляем только
@@ -130,9 +146,20 @@ function useStorage(userId) {
   async function diffAndUpsert(table, prevList, nextList, toRow) {
     const prevById = new Map(prevList.map((item) => [item.id, item]));
     const nextIds = new Set(nextList.map((item) => item.id));
-    const removedIds = [...prevById.keys()].filter((id) => !nextIds.has(id));
+    const dirty = dirtyRef.current[table];
+    const pendingDelete = pendingDeleteRef.current[table];
+
+    // Если запись вернулась в список (восстановление из резервной копии), снимаем
+    // её с удаления — иначе доудалили бы только что восстановленное.
+    if (pendingDelete) pendingDelete.forEach((id) => { if (nextIds.has(id)) pendingDelete.delete(id); });
+
+    const removedIds = [...new Set([
+      ...[...prevById.keys()].filter((id) => !nextIds.has(id)),
+      ...(pendingDelete ? [...pendingDelete] : []),
+    ])];
 
     const changed = nextList.filter((item) => {
+      if (dirty && dirty.has(item.id)) return true; // прошлая отправка не дошла — повторяем
       const prevItem = prevById.get(item.id);
       if (!prevItem) return true; // новая запись
       return JSON.stringify(toRow(prevItem, userId)) !== JSON.stringify(toRow(item, userId));
@@ -140,13 +167,30 @@ function useStorage(userId) {
 
     if (changed.length > 0) {
       const { error: upsertErr } = await supabase.from(table).upsert(changed.map((item) => toRow(item, userId)));
-      if (upsertErr) throw upsertErr;
+      if (upsertErr) {
+        if (dirty) changed.forEach((item) => dirty.add(item.id));
+        throw upsertErr;
+      }
+      if (dirty) changed.forEach((item) => dirty.delete(item.id));
     }
     if (removedIds.length > 0) {
-      const { error: delErr } = await supabase.from(table).delete().in('id', removedIds);
-      if (delErr) throw delErr;
+      // Фильтр по user_id обязателен: id генерится как `${date}-${Date.now()}` и
+      // теоретически может совпасть у двух пользователей, а RLS на этих таблицах
+      // открыта (осознанный компромисс, см. §3.2) и сама от этого не защитит.
+      const { error: delErr } = await supabase.from(table).delete().eq('user_id', userId).in('id', removedIds);
+      if (delErr) {
+        if (pendingDelete) removedIds.forEach((id) => pendingDelete.add(id));
+        throw delErr;
+      }
+      if (dirty) removedIds.forEach((id) => dirty.delete(id));
+      if (pendingDelete) removedIds.forEach((id) => pendingDelete.delete(id));
     }
   }
+
+  // ВАЖНО: save* пробрасывают ошибку наружу. Раньше они её глотали, и вызывающий
+  // экран показывал «Сохранено ✓» поверх несостоявшейся записи — самый дорогой баг
+  // из найденных. Теперь вызывающий обязан поймать ошибку и не врать пользователю.
+  const SAVE_ERROR = 'Не удалось сохранить — данные остались в приложении, повторю при следующем сохранении';
 
   const saveSessions = async (next) => {
     const prev = sessions || [];
@@ -154,7 +198,8 @@ function useStorage(userId) {
     try {
       await diffAndUpsert('sessions', prev, next, sessionToRow);
     } catch (e) {
-      setError('Не удалось сохранить — попробуй ещё раз');
+      setError(SAVE_ERROR);
+      throw e;
     }
   };
 
@@ -164,7 +209,8 @@ function useStorage(userId) {
     try {
       await diffAndUpsert('measurements', prev, next, measurementToRow);
     } catch (e) {
-      setError('Не удалось сохранить — попробуй ещё раз');
+      setError(SAVE_ERROR);
+      throw e;
     }
   };
 
@@ -174,44 +220,66 @@ function useStorage(userId) {
       const { error: upsertErr } = await supabase.from('profile').upsert(profileToRow(next, userId));
       if (upsertErr) throw upsertErr;
     } catch (e) {
-      setError('Не удалось сохранить — попробуй ещё раз');
+      setError(SAVE_ERROR);
+      throw e;
     }
   };
 
   return { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile };
 }
 
-function Pill({ children, active, onClick, icon: Icon }) {
-  // Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые иконки.
+// Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые
+// иконки. Отдельный случай — `main`: «Тренировка» стоит в середине бара и помечена
+// как главная, поэтому даже неактивной она держит акцентную заливку, иконку покрупнее
+// и чуть приподнята над общей линией. Новых цветов для этого не заводилось — только
+// ACCENT_BG / ACCENT_BORDER / ACCENT_SOFT из темы 2A.
+function Pill({ children, active, onClick, icon: Icon, main }) {
   const ON_BRASS = '#0A0A0A';
+  const DIM = '#8F897C';
+  const iconColor = active ? ON_BRASS : main ? '#E4C57E' : DIM;
   return (
     <button
       onClick={onClick}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-        padding: active ? '12px 8px' : '12px 4px', borderRadius: 15, flex: active ? 2.6 : 0.55, minWidth: 0,
-        border: 'none',
-        color: active ? ON_BRASS : '#8F897C',
+        // Высота задана явно и одинакова у всех вкладок. Иначе её определяет самая
+        // высокая «пилюля» в ряду, а состав ряда меняется при переключении: у
+        // активной вкладки иконка 16 px и подпись, у неактивных — 20, у главной —
+        // 22 плюс обводка. От этого бар прыгал по высоте на каждом переключении.
+        // 46 px заодно держит цель нажатия выше рекомендованных 44.
+        height: 46, boxSizing: 'border-box',
+        padding: active ? '0 8px' : '0 3px', borderRadius: 15,
+        flex: active ? 2.6 : main ? 0.75 : 0.55, minWidth: 0,
+        border: !active && main ? '1px solid rgba(184,146,74,0.30)' : '1px solid transparent',
+        color: active ? ON_BRASS : DIM,
         boxShadow: active ? '0 4px 16px rgba(0,0,0,0.4), 0 0 22px rgba(184,146,74,0.45)' : 'none',
+        transform: !active && main ? 'translateY(-2px)' : 'none',
         fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
         transition: 'flex 0.25s ease, color 0.2s ease',
         fontFamily: "'Space Grotesk', system-ui, sans-serif",
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        ...(active ? brassFill : { background: 'transparent' }),
+        ...(active ? brassFill : { background: main ? 'rgba(199,154,78,0.15)' : 'transparent' }),
       }}
     >
-      {Icon && <Icon size={active ? 16 : 20} strokeWidth={2.2} color={active ? ON_BRASS : '#8F897C'} style={{ flexShrink: 0, transition: 'all 0.2s ease' }} />}
+      {Icon && <Icon size={active ? 16 : main ? 22 : 20} strokeWidth={2.2} color={iconColor} style={{ flexShrink: 0, transition: 'all 0.2s ease' }} />}
       {active && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{children}</span>}
     </button>
   );
 }
 
-function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogout }) {
+function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   const t = useTheme();
   const { ref: brassRef } = useBrassShine();
   const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage(userId);
-  const TAB_ORDER = ['workout', 'measurements', 'progress', 'profile'];
-  const [tab, setTab] = useState('workout');
+  // Порядок в баре: «Тренировка» посередине как главная, ассистент между ней и
+  // профилем. Порядок задаёт и направление свайпов.
+  const TAB_ORDER = ['progress', 'measurements', 'workout', 'assistant', 'profile'];
+  // Стартовый экран зависит от времени: утром, в окно взвешивания, приложение
+  // открывается сразу на «Весе», в остальное время — на «Тренировке». Проверка
+  // делается ОДИН раз, при инициализации: если приложение открыто и время вышло
+  // за границу окна, вкладка сама собой не переключится — это было бы дёрганьем
+  // экрана под руками.
+  const [tab, setTab] = useState(() => (isWeighInTime() ? 'measurements' : 'workout'));
   const [slideDir, setSlideDir] = useState(0); // -1 left, 1 right, 0 none
   const touchRef = React.useRef({ x: 0, y: 0, active: false });
 
@@ -245,7 +313,9 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
 
   const handleDeleteSession = async (id) => {
     const next = (sessions || []).filter((s) => s.id !== id);
-    await saveSessions(next);
+    // Ошибку показывает сам saveSessions (баннер вверху) — здесь только гасим
+    // проброс, чтобы не улетал необработанный rejection.
+    try { await saveSessions(next); } catch (e) { /* сообщение уже показано */ }
   };
 
   const [editingSession, setEditingSession] = useState(null);
@@ -311,9 +381,9 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       }} />
       <div style={{ position: 'relative', zIndex: 1 }}>
       <style>{`
-        * {
-          transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, fill 0.4s ease, stroke 0.4s ease;
-        }
+        /* Глобального transition на «*» здесь больше нет: он остался от эпохи
+           переключения светлой/тёмной темы (её нет с 13 июля), а стоил пересчёта
+           стилей на каждое изменение любого цвета — на iOS это заметно. */
         @keyframes saveBounce {
           0% { transform: scale(1); }
           35% { transform: scale(0.96); }
@@ -357,9 +427,13 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
         .item-fade-in {
           animation: itemFadeIn 0.3s ease-out backwards;
         }
+        /* Только прозрачность, без transform. Трансформация на этом элементе делает
+           его containing block для потомков с position: fixed — то есть на все 0.35 с
+           анимации нижний таб-бар переставал быть прижатым к экрану и уезжал вниз
+           вместе с длинной страницей. Сдвиг на 6 px того не стоил. */
         @keyframes contentFadeIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; }
+          to { opacity: 1; }
         }
         .content-fade-in {
           animation: contentFadeIn 0.35s ease-out;
@@ -398,7 +472,7 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
       >
         <WorkoutTab
           sessions={sessions} saveSessions={saveSessions} setError={setError}
-          profile={profile} saveProfile={saveProfile}
+          profile={profile} saveProfile={saveProfile} userId={userId}
           editSession={editingSession} onEditDone={handleEditDone}
         />
       </div>
@@ -413,11 +487,12 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
         >
           {tab === 'measurements' && <MeasurementsTab measurements={measurements} saveMeasurements={saveMeasurements} setError={setError} />}
           {tab === 'progress' && <ProgressTab sessions={sessions} measurements={measurements} profile={profile} onDeleteSession={handleDeleteSession} onEditSession={handleEditSession} />}
+          {tab === 'assistant' && <AssistantTab />}
           {tab === 'profile' && (
             <ProfileTab
               profile={profile} saveProfile={saveProfile} sessions={sessions} setError={setError}
               measurements={measurements} saveSessions={saveSessions} saveMeasurements={saveMeasurements}
-              mode={mode} isDark={isDark} cycle={cycle} onLogout={onLogout}
+              onLogout={onLogout}
             />
           )}
         </div>
@@ -429,18 +504,21 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
         background: `linear-gradient(to top, ${t.BG} 38%, transparent)`,
         paddingTop: 22,
       }}>
+        {/* Пять вкладок вместо четырёх: зазор и внутренний отступ ужаты, иначе на
+            320 px неактивной иконке остаётся ровно её ширина без запаса. */}
         <div style={{
-          display: 'flex', gap: 6, width: '100%', maxWidth: 480, minWidth: 0, alignItems: 'center',
-          padding: 9,
+          display: 'flex', gap: 5, width: '100%', maxWidth: 480, minWidth: 0, alignItems: 'center',
+          padding: 8,
           margin: '0 max(14px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left))',
           background: 'rgba(23,21,18,0.10)', backdropFilter: 'blur(22px) saturate(1.4)', WebkitBackdropFilter: 'blur(22px) saturate(1.4)',
           border: '1px solid rgba(184,146,74,0.28)', borderRadius: 24,
           boxShadow: '0 0 0 1px rgba(255,255,255,0.06) inset, 0 16px 40px rgba(0,0,0,0.4), 0 0 52px rgba(184,146,74,0.5)',
           boxSizing: 'border-box',
         }}>
-          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell}>Тренировка</Pill>
-          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler}>Вес</Pill>
           <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon}>Прогресс</Pill>
+          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler}>Вес</Pill>
+          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell} main>Тренировка</Pill>
+          <Pill active={tab === 'assistant'} onClick={() => goToTab('assistant')} icon={Sparkles}>Ассистент</Pill>
           <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
         </div>
       </div>
@@ -450,17 +528,14 @@ function WorkoutTrackerInner({ mode, isDark, cycle, userId, displayName, onLogou
 }
 
 export default function WorkoutTracker() {
-  // Редизайн 2A применён ко всему приложению: тёмная металлик-тема фиксированно
-  // (переключатель свет/тёмная в профиле больше не влияет на вид).
-  const { mode, isDark, cycle } = useThemeController();
+  // Тема одна — 2A. Хук useThemeController (режим авто/светлая/тёмная) удалён
+  // в 1.0.6: он не влиял ни на что с 13 июля, но продолжал работать и держал
+  // интервал на 60 секунд, а в профиле ему соответствовала кнопка-обманка.
   return (
     <AuthGate>
       {({ userId, displayName, onLogout }) => (
         <ThemeContext.Provider value={THEME_2A}>
-          <WorkoutTrackerInner
-            mode={mode} isDark={isDark} cycle={cycle}
-            userId={userId} displayName={displayName} onLogout={onLogout}
-          />
+          <WorkoutTrackerInner userId={userId} displayName={displayName} onLogout={onLogout} />
         </ThemeContext.Provider>
       )}
     </AuthGate>

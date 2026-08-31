@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, Dumbbell, Pencil, Play, Check } from 'lucide-react';
-import { useTheme } from '../theme.js';
+import { useTheme, FROST } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
 import { computeRecords } from '../gamification.js';
 import {
@@ -10,9 +10,9 @@ import {
   STARTER_EXERCISES, STARTER_CARDIO, PROGRAM_DAYS,
 } from './workoutTabHelpers.jsx';
 import { GuidedWorkout } from './GuidedWorkout.jsx';
-import { FROST } from './ProgressTab.jsx';
+import { scheduleProteinReminder } from '../botAlerts.js';
 
-export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, editSession, onEditDone }) {
+export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, userId, editSession, onEditDone }) {
   const t = useTheme();
   const [date, setDate] = useState(todayISO());
   const [exercises, setExercises] = useState([]);
@@ -34,9 +34,15 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     if (editSession) {
       setEditingId(editSession.id);
       setDate(editSession.date);
+      // note и timed переносим в форму как есть и возвращаем обратно при сохранении.
+      // Редактировать их здесь нельзя (заметки пишутся в пошаговом режиме), но и
+      // терять нельзя: до 1.0.6 они просто не переносились, и любая правка веса
+      // стирала заметки по всем упражнениям этой тренировки.
       const exList = (editSession.exercises || []).map((e) => ({
         name: e.name, weight: String(e.weight || ''), reps: String(e.reps || ''), sets: String(e.sets || ''),
         ...(e.setLog ? { setLog: e.setLog } : {}),
+        ...(e.note ? { note: e.note } : {}),
+        ...(e.timed ? { timed: true } : {}),
       }));
       setExercises(exList);
       const cardioList = (editSession.cardio || []).map((c) => ({
@@ -148,21 +154,41 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     setCardio(pickedCardio);
   };
 
+  // Напоминание про протеиновый коктейль через час после сохранённой тренировки —
+  // тем же механизмом отложенных сообщений бота, что и таймер отдыха.
+  //
+  // Только для тренировки, записанной СЕГОДНЯ: с версии 1.0.6 день можно записать
+  // задним числом, и напоминание «выпей коктейль» через час после занесения
+  // позавчерашней тренировки было бы просто мусором. Вне Telegram отправлять
+  // некуда — botAlerts тихо пропустит.
+  const remindAboutProtein = (sessionDate) => {
+    if (sessionDate !== todayISO()) return;
+    scheduleProteinReminder();
+  };
+
   // Завершение пошаговой тренировки: сохраняем сессию сразу (гид сам собрал полную
   // запись — упражнения+заметки, кардио, сон/энергия/самочувствие с шага «Итог»).
+  //
+  // Гид закрываем ТОЛЬКО после подтверждённой записи в базу. Раньше он закрывался
+  // первой же строкой, а черновик стирался ещё до отправки — при обрыве сети
+  // тренировка оставалась только в памяти React и исчезала при перезагрузке
+  // Mini App. Теперь ошибка пробрасывается обратно в гид: он остаётся открытым
+  // на шаге «Итог», черновик цел, кнопку можно нажать ещё раз.
   const handleGuidedComplete = async (session) => {
+    const next = [...(sessions || []), session].sort((a, b) => a.date.localeCompare(b.date));
+    await saveSessions(next); // бросит при ошибке — гид покажет сообщение и не закроется
+    if (session.programDay) {
+      try { await saveProfile({ ...(profile || {}), lastProgramDay: session.programDay }); } catch (e) { /* не критично */ }
+    }
+    remindAboutProtein(session.date);
     setGuidedOpen(false);
     setGuidedMin(false);
-    const next = [...(sessions || []), session].sort((a, b) => a.date.localeCompare(b.date));
-    await saveSessions(next);
-    if (session.programDay) {
-      await saveProfile({ ...(profile || {}), lastProgramDay: session.programDay });
-    }
     // Сбрасываем привязку к дню — эффект подставит следующий день программы.
     setExercises([]);
     setCardio([]);
     setProgramDay(null);
     setProgramDetached(false);
+    setDate(todayISO());
     setGuidedSaved(true);
     setTimeout(() => setGuidedSaved(false), 3500);
   };
@@ -198,6 +224,8 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         reps: Math.max(0, parseInt(e.reps) || 0),
         sets: Math.max(1, parseInt(e.sets) || 1),
         ...(Array.isArray(e.setLog) && e.setLog.length ? { setLog: e.setLog } : {}),
+        ...(e.note ? { note: e.note } : {}),
+        ...(e.timed ? { timed: true } : {}),
       }));
     const validCardio = cardio
       .filter((c) => c.name.trim())
@@ -225,7 +253,15 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
             }
           : s)
         .sort((a, b) => a.date.localeCompare(b.date));
-      await saveSessions(next);
+      try {
+        await saveSessions(next);
+      } catch (e) {
+        // Баннер с ошибкой уже показал saveSessions. Главное — не рисовать
+        // «Изменения сохранены ✓» поверх несостоявшейся записи и остаться в
+        // режиме редактирования, чтобы можно было нажать ещё раз.
+        setSaving(false);
+        return;
+      }
       setSaving(false);
       setJustSaved(true);
       setTimeout(() => {
@@ -246,10 +282,20 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       programDay: programDay || null,
     };
     const next = [...(sessions || []), entry].sort((a, b) => a.date.localeCompare(b.date));
-    await saveSessions(next);
-    if (programDay) {
-      await saveProfile({ ...(profile || {}), lastProgramDay: programDay });
+    try {
+      await saveSessions(next);
+    } catch (e) {
+      // Не чистим форму: введённое должно остаться на экране, чтобы попытку
+      // можно было повторить, не набирая всё заново.
+      setSaving(false);
+      return;
     }
+    if (programDay) {
+      // Отметка «последний день программы» некритична — если не доехала,
+      // тренировка всё равно сохранена, а следующий день подставится вручную.
+      try { await saveProfile({ ...(profile || {}), lastProgramDay: programDay }); } catch (e) { /* не критично */ }
+    }
+    remindAboutProtein(date);
     setSaving(false);
     setExercises([]);
     setCardio([]);
@@ -282,17 +328,16 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         </div>
       )}
 
-      {!planMode && (
-        <>
-          <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
-            <Field label="Дата тренировки">
-              <DatePicker value={date} onChange={setDate} />
-            </Field>
-          </div>
+      {/* Выбор даты виден всегда, в том числе в plan mode. До 1.0.6 он здесь
+          прятался, а пошаговый режим жёстко сохранял тренировку сегодняшним
+          числом — записать плановый день задним числом было невозможно вообще. */}
+      <div style={{ marginBottom: planMode ? 14 : 18, minWidth: 0, width: '100%' }}>
+        <Field label="Дата тренировки">
+          <DatePicker value={date} onChange={setDate} />
+        </Field>
+      </div>
 
-          <RepeatWorkoutPicker sessions={sessions} onPick={handlePickWorkout} />
-        </>
-      )}
+      {!planMode && <RepeatWorkoutPicker sessions={sessions} onPick={handlePickWorkout} />}
 
       {programDay ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 14 }}>
@@ -500,6 +545,8 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         return createPortal(
           <GuidedWorkout
             dayPlan={dayPlan}
+            date={date}
+            userId={userId}
             records={records}
             minimized={guidedMin}
             onMinimize={() => setGuidedMin(true)}

@@ -9,10 +9,11 @@ import { todayISO } from '../dateUtils.js';
 import { cooldownFor, variantsOf } from '../cooldown.js';
 import {
   Field, getInputStyle, getLabelInputStyle, MuscleBadge,
-  isWeightlessExercise, isTimeBasedExercise, repGoalLow, secToClock, parseClock,
+  isWeightlessExercise, isTimeBasedExercise, repGoalLow, secToClock, parseClock, formatClockInput,
   clampIncline, MAX_INCLINE,
 } from './workoutTabHelpers.jsx';
 import { getExerciseGuide } from '../exerciseGuides.js';
+import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
 import { ClimbPicker } from '../ClimbPicker.jsx';
 
@@ -80,29 +81,36 @@ function fmtElapsed(sec) {
 // кардио, свернул приложение) — и всё введённое пропадало. Поэтому после каждого
 // изменения кладём черновик в localStorage устройства, а при следующем открытии того же
 // дня предлагаем продолжить. Черновик живёт сутки и стирается после успешного сохранения.
-const DRAFT_KEY = 'wt:guided-draft:v1';
+// Ключ черновика привязан к пользователю: до 1.0.6 он был один на всё устройство,
+// и на общем телефоне черновик одного аккаунта предлагался другому. Старый ключ
+// v1 просто перестаёт читаться — терять там нечего, черновик живёт сутки.
+const DRAFT_KEY_BASE = 'wt:guided-draft:v2';
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
-function readDraft() {
+function draftKey(userId) {
+  return `${DRAFT_KEY_BASE}:${userId || 'anon'}`;
+}
+
+function readDraft(userId) {
   try {
-    const raw = window.localStorage.getItem(DRAFT_KEY);
+    const raw = window.localStorage.getItem(draftKey(userId));
     if (!raw) return null;
     const d = JSON.parse(raw);
-    if (!d || d.v !== 1 || !d.savedAt) return null;
+    if (!d || d.v !== 2 || !d.savedAt) return null;
     if (Date.now() - d.savedAt > DRAFT_TTL_MS) return null;
     return d;
   } catch (e) { return null; }
 }
 
-function writeDraft(payload) {
+function writeDraft(userId, payload) {
   try {
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...payload, v: 1, savedAt: Date.now() }));
+    window.localStorage.setItem(draftKey(userId), JSON.stringify({ ...payload, v: 2, savedAt: Date.now() }));
     return true;
   } catch (e) { return false; }
 }
 
-function clearDraft() {
-  try { window.localStorage.removeItem(DRAFT_KEY); } catch (e) { /* no-op */ }
+function clearDraft(userId) {
+  try { window.localStorage.removeItem(draftKey(userId)); } catch (e) { /* no-op */ }
 }
 
 // Черновик мог быть записан для другой версии плана (упражнение добавили/убрали).
@@ -263,8 +271,21 @@ function trimNum(n) { return String(+(Number(n).toFixed(2))); }
 // Метры показываем целыми (670, а не 670.4), км и минуты — с десятыми.
 function fmtGoal(n, isElev) { return isElev ? String(Math.round(n)) : trimNum(n); }
 
-export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized, onMinimize, onExpand }) {
+export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, records, onClose, onComplete, minimized, onMinimize, onExpand }) {
   const t = useTheme();
+
+  // День программы и дата ФИКСИРУЮТСЯ на момент запуска и дальше не слушают пропы.
+  //
+  // Причина: пока тренировка идёт в свёрнутом виде, под ней остаётся живой
+  // WorkoutTab с выбором дня и даты — и то, и другое можно переключить, ничего
+  // при этом не закрывая. Раньше новый `dayPlan` доезжал до открытого гида,
+  // `buildSteps` пересобирал шаги под другой день, а уже введённые подходы
+  // (`exLogs`, `stepIdx`) оставались от прежнего — записанный вес оказывался
+  // приписан к упражнению, которого ты не делал. Смена даты тем же путём
+  // сохраняла тренировку задним числом. Ошибки при этом не показывалось.
+  const [dayPlan] = useState(() => dayPlanProp);
+  const [workoutDate] = useState(() => dateProp || todayISO());
+
   const steps = useMemo(() => buildSteps(dayPlan), [dayPlan]);
 
   const [stepIdx, setStepIdx] = useState(0);
@@ -316,6 +337,11 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   // Итоговый экран: сон, энергия, тяжесть тренировки, общее самочувствие.
   const [summary, setSummary] = useState({ sleep: '', energy: 3, difficulty: 3, feeling: '' });
   const [saving, setSaving] = useState(false);
+  // Сообщение о неудачной записи в базу (шаг «Итог»). Пока оно есть — гид открыт,
+  // черновик цел, кнопку «Завершить и сохранить» можно нажать ещё раз.
+  const [saveError, setSaveError] = useState('');
+  // Подтверждение досрочного завершения кардио-дня, когда цель не добрана.
+  const [confirmEarly, setConfirmEarly] = useState(false);
 
   // Живой отсчёт времени тренировки (обновляем раз в секунду).
   useEffect(() => {
@@ -328,8 +354,12 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   // ---- Восстановление черновика ----
   const draftRef = useRef(null);
   const [restoreOffer, setRestoreOffer] = useState(() => {
-    const d = readDraft();
-    if (d && dayPlan && d.day === dayPlan.day) { draftRef.current = d; return true; }
+    const d = readDraft(userId);
+    // Сверяем и день программы, и дату тренировки. Раньше сверялся только день:
+    // черновик вчерашнего дня 5 предлагался как «продолжить» сегодняшний, причём
+    // вместе с вчерашней меткой старта — и в durationSec уезжала тренировка на
+    // много часов.
+    if (d && dayPlan && d.day === dayPlan.day && d.date === workoutDate) { draftRef.current = d; return true; }
     return false;
   });
   const [draftSavedAt, setDraftSavedAt] = useState(0);
@@ -348,14 +378,20 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
       if (d.cooldownDone) setCooldownDone(d.cooldownDone);
       if (d.cooldownPick) setCooldownPick(d.cooldownPick);
       if (d.summary) setSummary((prev) => ({ ...prev, ...d.summary }));
-      if (d.startedAt) startedAtRef.current = d.startedAt; // продолжаем отсчёт времени с момента старта
+      // Продолжаем отсчёт с момента старта, но только если он правдоподобен:
+      // тренировка длиннее шести часов — это забытый черновик, а не длинная
+      // тренировка, и такой durationSec только мусорит в истории.
+      const MAX_RESUMABLE_MS = 6 * 60 * 60 * 1000;
+      if (d.startedAt && Date.now() - d.startedAt < MAX_RESUMABLE_MS) {
+        startedAtRef.current = d.startedAt;
+      }
       setStepIdx(Math.min(steps.length - 1, Math.max(0, parseInt(d.stepIdx, 10) || 0)));
     }
     setRestoreOffer(false);
   };
 
   const dropDraft = () => {
-    clearDraft();
+    clearDraft(userId);
     draftRef.current = null;
     setRestoreOffer(false);
   };
@@ -412,32 +448,18 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   };
 
   // Планирование бот-уведомления (звук в наушники при выключенном экране).
-  // Вне Telegram (нет initData) — тихо пропускаем: работает только клиентский таймер.
+  // Сама отправка живёт в src/botAlerts.js — тем же путём уходит напоминание про
+  // протеин после тренировки. Вне Telegram всё тихо пропускается: работает только
+  // клиентский таймер.
   const scheduleBotAlert = useCallback(async (durationSec) => {
-    try {
-      const tg = window.Telegram && window.Telegram.WebApp;
-      const initData = tg && tg.initData;
-      if (!initData) return;
-      const r = await fetch('/api/rest-schedule', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, duration: durationSec }),
-      });
-      if (!r.ok) return;
-      const data = await r.json().catch(() => null);
-      if (data && data.messageId) restMsgIdRef.current = data.messageId;
-    } catch (e) { /* сеть/бэкенд недоступны — клиентский таймер всё равно работает */ }
+    const id = await postBotAlert('rest', durationSec);
+    if (id) restMsgIdRef.current = id;
   }, []);
 
   const cancelBotAlert = useCallback(async () => {
     const id = restMsgIdRef.current;
     restMsgIdRef.current = null;
-    if (!id) return;
-    try {
-      await fetch('/api/rest-cancel', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId: id }),
-      });
-    } catch (e) { /* no-op */ }
+    await deleteBotAlert(id);
   }, []);
 
   const finishRest = useCallback(() => {
@@ -529,7 +551,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   // когда приложение уходит в фон (в этот момент React уже может не успеть отработать).
   const snapshotRef = useRef(null);
   snapshotRef.current = {
-    day: dayPlan && dayPlan.day, title: dayPlan && dayPlan.title,
+    day: dayPlan && dayPlan.day, title: dayPlan && dayPlan.title, date: workoutDate,
     stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary,
     startedAt: startedAtRef.current,
   };
@@ -537,16 +559,16 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   useEffect(() => {
     if (restoreOffer || saving) return undefined; // не затираем черновик до решения пользователя
     const id = setTimeout(() => {
-      if (writeDraft(snapshotRef.current)) setDraftSavedAt(Date.now());
+      if (writeDraft(userId, snapshotRef.current)) setDraftSavedAt(Date.now());
     }, 400);
     return () => clearTimeout(id);
-  }, [restoreOffer, saving, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary]);
+  }, [restoreOffer, saving, userId, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary]);
 
   useEffect(() => {
     const flush = () => {
       if (restoreOffer || saving) return;
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') return;
-      writeDraft(snapshotRef.current);
+      writeDraft(userId, snapshotRef.current);
     };
     document.addEventListener('visibilitychange', flush);
     window.addEventListener('pagehide', flush);
@@ -554,11 +576,14 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
       document.removeEventListener('visibilitychange', flush);
       window.removeEventListener('pagehide', flush);
     };
-  }, [restoreOffer, saving]);
+  }, [restoreOffer, saving, userId]);
 
-  // При смене шага — прокрутка наверх.
+  // При смене шага — прокрутка наверх, плюс сброс «одноразовых» состояний футера:
+  // подтверждения досрочного завершения и сообщения о неудачном сохранении.
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setConfirmEarly(false);
+    setSaveError('');
   }, [stepIdx]);
 
   const step = steps[stepIdx];
@@ -623,7 +648,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
     return null;
   };
 
-  const finish = () => {
+  const finish = async () => {
     // Упражнения → агрегат (число) + setLog + заметка. Пустые (без данных и заметки) пропускаем.
     const outEx = [];
     steps.forEach((s, i) => {
@@ -692,11 +717,11 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
     clearTimer();
     cancelBotAlert();
 
-    if (outEx.length === 0 && outCardio.length === 0) { clearDraft(); onClose(); return; }
+    if (outEx.length === 0 && outCardio.length === 0) { clearDraft(userId); onClose(); return; }
 
     const session = {
-      id: `${todayISO()}-${Date.now()}`,
-      date: todayISO(),
+      id: `${workoutDate}-${Date.now()}`,
+      date: workoutDate,
       exercises: outEx,
       cardio: outCardio,
       sleep: summary.sleep ? Math.max(0, parseFloat(summary.sleep)) : null,
@@ -711,8 +736,17 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
       routeName: pickedRouteName(),
     };
     setSaving(true);
-    clearDraft(); // данные ушли в базу — черновик больше не нужен
-    onComplete(session);
+    setSaveError('');
+    try {
+      // Черновик стираем ТОЛЬКО после подтверждённой записи в базу. Раньше он
+      // стирался прямо здесь, до отправки: при обрыве сети тренировка оставалась
+      // лишь в памяти React и пропадала вместе с выгрузкой Mini App.
+      await onComplete(session);
+      clearDraft(userId);
+    } catch (e) {
+      setSaving(false);
+      setSaveError('Не удалось сохранить — проверь связь и нажми ещё раз. Всё введённое на месте.');
+    }
   };
 
   const advance = () => {
@@ -764,6 +798,8 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
   // Что будет после текущего шага — показываем прямо на упражнении, чтобы
   // не гадать, сколько ещё осталось и к чему готовиться.
   const nextShort = shortNameOf(steps[stepIdx + 1]);
+  // Весь остаток тренировки — для разворачивающегося списка под чипом «Далее».
+  const restShortNames = steps.slice(stepIdx + 1).map(shortNameOf).filter(Boolean);
 
   // Секторы для «Горы» на итоговом экране: собираем со всех секторных шагов
   // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
@@ -957,7 +993,7 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
               step={step} sets={exLogs[stepIdx] || []} onSet={setExSet}
               records={records} note={exNotes[stepIdx] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
-              nextName={nextShort}
+              nextName={nextShort} restNames={restShortNames}
             />
           ) : step.kind === 'sectors' ? (
             <SectorsStep
@@ -987,6 +1023,15 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
         flexShrink: 0, borderTop: `1px solid ${t.BORDER}`, background: t.BG,
         padding: '12px max(16px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left))',
       }}>
+        {saveError && (
+          <div style={{
+            maxWidth: 480, margin: '0 auto 10px', boxSizing: 'border-box',
+            background: t.ACCENT_BG, border: `1px solid ${t.ACCENT}`, borderRadius: 10,
+            padding: '9px 12px', fontSize: 12.5, fontWeight: 600, color: t.ACCENT_SOFT, lineHeight: 1.4,
+          }}>
+            {saveError}
+          </div>
+        )}
         <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', gap: 10 }}>
           <button
             onClick={goPrev}
@@ -1028,37 +1073,54 @@ export function GuidedWorkout({ dayPlan, records, onClose, onComplete, minimized
           )}
 
           {(() => {
+            // Цель кардио-дня больше НЕ запирает кнопку намертво. Раньше при
+            // недоборе она была disabled: не добежал 2 км из 6 — сохранить
+            // тренировку было нельзя вообще, только руками занижать цель. А у
+            // субботнего дня цель пустая по замыслу плана, и кнопка не работала
+            // до её ввода. Теперь недобор — это предупреждение в два тапа.
             const secData = step.kind === 'sectors' ? sectorLogs[stepIdx] : null;
-            const finishLocked = step.kind === 'sectors' && !sectorGoalReached(secData);
-            let lockedLabel = null;
-            if (finishLocked) {
+            const goalShort = step.kind === 'sectors' && !sectorGoalReached(secData);
+            let shortLabel = null;
+            if (goalShort) {
               const target = parseFloat(secData && secData.target) || 0;
               const mKey = (secData && secData.metric) || 'distance';
               const isElevGoal = mKey === 'elevation';
               const unit = (SECTOR_METRICS[mKey] || SECTOR_METRICS.distance).unit;
-              if (target <= 0) lockedLabel = 'Укажи цель тренировки';
-              else lockedLabel = `Осталось ${fmtGoal(Math.max(0, target - sectorAchieved(secData)), isElevGoal)} ${unit}`;
+              if (target <= 0) shortLabel = 'Цель не задана — дальше?';
+              else shortLabel = `Осталось ${fmtGoal(Math.max(0, target - sectorAchieved(secData)), isElevGoal)} ${unit}`;
             }
-            const disabled = finishLocked || saving || !!flash;
+            const armed = goalShort && confirmEarly;
+            const disabled = saving || !!flash;
+            const handleClick = () => {
+              if (goalShort && !confirmEarly) {
+                setConfirmEarly(true);
+                try {
+                  const tg = window.Telegram && window.Telegram.WebApp;
+                  if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+                } catch (e) { /* no-op */ }
+                return;
+              }
+              goNext();
+            };
             return (
               <button
-                onClick={goNext}
+                onClick={handleClick}
                 disabled={disabled}
                 style={{
                   ...btnBase, flex: 1, minWidth: 0,
-                  border: finishLocked ? `1px solid ${t.BORDER}` : 'none',
-                  background: finishLocked ? t.BG_INPUT : (isLast ? t.POSITIVE : t.ACCENT_GRAD),
-                  color: finishLocked ? t.TEXT_FAINT : t.ON_ACCENT,
-                  boxShadow: (finishLocked || isLast) ? 'none' : t.GLOW,
+                  border: goalShort && !armed ? `1px solid ${t.BORDER}` : 'none',
+                  background: goalShort && !armed ? t.BG_INPUT : (armed ? t.ACCENT_DEEP : (isLast ? t.POSITIVE : t.ACCENT_GRAD)),
+                  color: goalShort && !armed ? t.TEXT_DIM : t.ON_ACCENT,
+                  boxShadow: (goalShort || isLast) ? 'none' : t.GLOW,
                   cursor: disabled ? 'default' : 'pointer', opacity: saving ? 0.7 : 1,
                   overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                   transition: 'background 0.25s ease, box-shadow 0.25s ease',
                 }}
               >
-                {finishLocked
-                  ? lockedLabel
-                  : saving ? 'Сохраняю…'
-                    : isLast ? <><Check size={19} /> Завершить и сохранить</> : <>Дальше <ChevronRight size={19} /></>}
+                {saving ? 'Сохраняю…'
+                  : armed ? (isLast ? <><Check size={19} /> Всё равно завершить</> : <>Всё равно дальше <ChevronRight size={19} /></>)
+                    : goalShort ? shortLabel
+                      : isLast ? <><Check size={19} /> Завершить и сохранить</> : <>Дальше <ChevronRight size={19} /></>}
               </button>
             );
           })()}
@@ -1144,8 +1206,11 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
   );
 }
 
-function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextName }) {
+function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextName, restNames = [] }) {
   const t = useTheme();
+  // Список оставшихся шагов свёрнут по умолчанию и закрывается сам при переходе
+  // к следующему упражнению (компонент пересоздаётся по key={stepIdx}).
+  const [restOpen, setRestOpen] = useState(false);
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
   const record = records && records[step.name];
@@ -1190,18 +1255,60 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextN
           </button>
         )}
         {nextName && (
-          <span style={{
-            fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, background: t.BG_INPUT,
-            padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center',
-            gap: 5, maxWidth: '100%', minWidth: 0,
-          }}>
-            <ChevronRight size={12} style={{ flexShrink: 0 }} />
+          <button
+            onClick={() => setRestOpen((v) => !v)}
+            aria-expanded={restOpen}
+            style={{
+              fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, background: t.BG_INPUT,
+              border: `1px solid ${t.BORDER}`,
+              padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center',
+              gap: 5, maxWidth: '100%', minWidth: 0, cursor: restNames.length ? 'pointer' : 'default',
+              fontFamily: 'inherit',
+            }}
+          >
+            {restOpen
+              ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
+              : <ChevronRight size={12} style={{ flexShrink: 0 }} />}
+            {/* Название обрезаем многоточием: длинное имя не должно ни переносить
+                строку, ни растягивать чип. Полное имя видно в развёрнутом списке. */}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               Далее: {nextName}
             </span>
-          </span>
+            {restNames.length > 1 && (
+              <span style={{ flexShrink: 0, opacity: 0.8, fontFamily: t.FONT_MONO }}>+{restNames.length - 1}</span>
+            )}
+          </button>
         )}
       </div>
+
+      {/* Что осталось до конца тренировки. Список — весь остаток шагов, а не только
+          упражнения: заминка и итог тоже часть плана, и их полезно видеть. */}
+      {nextName && restOpen && restNames.length > 0 && (
+        <div className="dropdown-open" style={{
+          background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 14,
+          padding: '10px 12px', marginBottom: 14,
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
+            letterSpacing: '0.1em', fontFamily: t.FONT_MONO, marginBottom: 8,
+          }}>
+            Осталось · {restNames.length}
+          </div>
+          {restNames.map((nm, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 9, padding: '5px 0',
+              fontSize: 13.5, color: i === 0 ? t.TEXT : t.TEXT_DIM,
+              fontWeight: i === 0 ? 600 : 400,
+            }}>
+              <span style={{
+                flexShrink: 0, width: 18, textAlign: 'right',
+                fontSize: 11, fontFamily: t.FONT_MONO, color: t.TEXT_FAINT,
+              }}>{i + 1}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nm}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div>
         {sets.map((s, si) => {
@@ -1598,14 +1705,9 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
   const reached = sectorGoalReached(d);
   const pct = target > 0 ? Math.min(100, (achieved / target) * 100) : 0;
 
-  // Ввод таймера дорожки: авто-подстановка двоеточия (754 → 7:54) — чтобы можно было
-  // печатать с цифровой клавиатуры без ручного двоеточия.
-  const onClockChange = (si, raw) => {
-    const digits = String(raw).replace(/\D/g, '').slice(0, 4);
-    let formatted = digits;
-    if (digits.length > 2) formatted = `${digits.slice(0, digits.length - 2)}:${digits.slice(-2)}`;
-    onField(si, { clock: formatted });
-  };
+  // Форматирование живёт в workoutTabHelpers рядом с parseClock/secToClock —
+  // там же, где остальная арифметика времени.
+  const onClockChange = (si, raw) => onField(si, { clock: formatClockInput(raw) });
 
   const metricBtn = (key, label) => {
     const active = d.metric === key;

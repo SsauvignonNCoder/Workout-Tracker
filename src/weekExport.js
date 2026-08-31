@@ -14,11 +14,13 @@
 
 import { shiftDate, fmtDateShort, fmtDateFull, todayISO } from './dateUtils.js';
 import { getMonday, computeRecords } from './gamification.js';
-import { PROGRAM_DAYS, isWeightlessExercise } from './tabs/workoutTabHelpers.jsx';
+import { PROGRAM_DAYS, isWeightlessExercise, secToClock } from './tabs/workoutTabHelpers.jsx';
 
 export const PROGRAM_WEEK_LABEL = { 1: 'База', 2: 'Объём', 3: 'Интенсив', 4: 'Разгрузка' };
 
-// Номер недели программы (1..4) для program-дня 1..20.
+// Номер недели программы (1..4) для program-дня 1..24 (шесть дней в неделе, Пн–Сб).
+// Делитель 6 зашит числом здесь и в двух местах workoutTabHelpers.jsx — если в
+// цикле когда-нибудь появится седьмой день, править надо все три.
 export function programWeekOf(day) {
   return Math.floor((day - 1) / 6) + 1;
 }
@@ -144,10 +146,31 @@ function recordMark(ex, priorRecords) {
   if (isWeightlessExercise(ex.name) || !ex.weight) return '—';
   const w = Number(ex.weight) || 0;
   const pr = priorRecords[ex.name];
-  if (!pr) return '🆕 новое';
+  // Рекорд бывает двух форм: по весу ({weight, reps}) и безвесовой ({metric, value}).
+  // Если раньше упражнение писалось без веса (например, подтягивания со своим
+  // весом), а теперь с довеском, то pr.weight здесь undefined. Раньше это давало
+  // строку «рекорд  кг» с пустым числом, и настоящий PR не отмечался вовсе —
+  // ведь сравнения с undefined все ложны. Веса для сравнения нет → это первый
+  // весовой результат по упражнению, то есть «новое».
+  if (!pr || !pr.weight) return '🆕 новое';
   if (w > pr.weight) return `🏆 PR (+${fmtNum(w - pr.weight)} кг)`;
   if (w === pr.weight) return `= PR (${fmtNum(pr.weight)} кг)`;
   return `рекорд ${fmtNum(pr.weight)} кг`;
+}
+
+// Замеры веса, попавшие в календарную неделю, начинающуюся с weekStart.
+function weightsInWeek(measurements, weekStart) {
+  const weekEnd = shiftDate(weekStart, 6);
+  return (measurements || [])
+    .filter((m) => m && m.date >= weekStart && m.date <= weekEnd && m.weight != null)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function avgWeight(list) {
+  const vals = list.map((m) => Number(m.weight)).filter((w) => isFinite(w) && w > 0);
+  if (!vals.length) return null;
+  return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
 }
 
 function tonnage(sessionList) {
@@ -261,6 +284,24 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
       : ' (= как на прошлой неделе)';
   }
   lines.push(tonLine);
+
+  // Вес: среднее за неделю и сдвиг к среднему прошлой недели. Сами записи —
+  // отдельным блоком в конце отчёта, чтобы не забивать сводку.
+  const weekWeights = weightsInWeek(opts.measurements, weekStart);
+  const prevWeights = weightsInWeek(opts.measurements, prevWeekStart);
+  const curAvg = avgWeight(weekWeights);
+  const prevAvg = avgWeight(prevWeights);
+  if (curAvg != null) {
+    let wLine = `**Средний вес:** ${fmtNum(curAvg)} кг`;
+    if (prevAvg != null) {
+      const d = Math.round((curAvg - prevAvg) * 10) / 10;
+      wLine += d > 0 ? ` (▲ +${fmtNum(d)} кг к прошлой неделе)`
+        : d < 0 ? ` (▼ ${fmtNum(d)} кг к прошлой неделе)`
+        : ' (= как на прошлой неделе)';
+    }
+    wLine += ` · замеров: ${weekWeights.length}`;
+    lines.push(wLine);
+  }
   lines.push('');
 
   const renderedIds = new Set();
@@ -334,8 +375,12 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
     }
 
     const note = [];
+    // Длительность пишется в сессию пошаговым режимом (durationSec) с версии 1.0.1.
+    // У тренировок, записанных руками, её нет — тогда просто не выводим.
+    if (s.durationSec > 0) note.push(`длительность ${secToClock(s.durationSec)}`);
     if (s.sleep) note.push(`сон ${fmtNum(s.sleep)} ч`);
     if (s.energy) note.push(`энергия ${s.energy}/5`);
+    if (s.difficulty) note.push(`тяжесть ${s.difficulty}/5`);
     const feeling = (s.feeling || '').trim();
     if (note.length || feeling) {
       lines.push('');
@@ -362,6 +407,31 @@ export function buildWeekMarkdown(weekStart, allSessions, opts = {}) {
       pushExerciseDetails(lines, s.exercises);
       (s.cardio || []).forEach((c) => lines.push(`- ${cell(c.name)}: ${cell(fmtCardioResult(c))}`));
     });
+  }
+
+  // --- Вес по дням ---
+  if (weekWeights.length) {
+    lines.push('');
+    lines.push('## Вес');
+    lines.push('');
+    lines.push('| Дата | Вес | Δ |');
+    lines.push('| --- | --- | --- |');
+    weekWeights.forEach((m, i) => {
+      // Дельта к предыдущему замеру: внутри недели — к соседней строке, у первой
+      // строки — к последнему замеру прошлой недели, если он есть.
+      const prev = i > 0 ? weekWeights[i - 1] : prevWeights[prevWeights.length - 1];
+      let d = '—';
+      if (prev && prev.weight != null) {
+        const diff = Math.round((Number(m.weight) - Number(prev.weight)) * 10) / 10;
+        d = diff > 0 ? `+${fmtNum(diff)} ▲` : diff < 0 ? `${fmtNum(diff)} ▼` : '=';
+      }
+      const when = `${fmtDateShort(m.date)}${m.time ? ` ${m.time}` : ''}`;
+      lines.push(`| ${cell(when)} | ${fmtNum(m.weight)} кг | ${cell(d)} |`);
+    });
+    if (curAvg != null) {
+      lines.push('');
+      lines.push(`_Среднее за неделю: ${fmtNum(curAvg)} кг${prevAvg != null ? ` · прошлая неделя: ${fmtNum(prevAvg)} кг` : ''}_`);
+    }
   }
 
   lines.push('');

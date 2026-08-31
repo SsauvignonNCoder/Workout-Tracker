@@ -47,8 +47,10 @@ function WeightHistoryRow({ m, prevWeight, onDelete }) {
       borderBottom: `1px solid ${t.BORDER}`, fontSize: 13.5,
     }}>
       <span style={{ color: t.TEXT_DIM }}>{fmtDateShort(m.date)}<TimeMark time={m.time} /></span>
+      {/* Порядок справа: отклонение → вес → крестик. Вес стоит последним перед
+          крестиком и потому всегда на одном месте по горизонтали, а бейдж
+          отклонения — переменной ширины — уезжает влево и колонку цифр не двигает. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600 }}>{m.weight} кг</span>
         {delta != null && delta !== 0 && (
           <span style={{
             display: 'flex', alignItems: 'center', gap: 3, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
@@ -60,6 +62,7 @@ function WeightHistoryRow({ m, prevWeight, onDelete }) {
             {delta > 0 ? '+' : ''}{delta}
           </span>
         )}
+        <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600 }}>{m.weight} кг</span>
         {onDelete && (
           <button onClick={onDelete} style={{ background: 'transparent', border: 'none', color: t.TEXT_FAINT, cursor: 'pointer', padding: 2, display: 'flex' }}>
             <X size={14} />
@@ -151,7 +154,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError }) {
 
   const handleDelete = async (id) => {
     const next = (measurements || []).filter((m) => m.id !== id);
-    await saveMeasurements(next);
+    try { await saveMeasurements(next); } catch (e) { /* сообщение уже показал saveMeasurements */ }
   };
 
   const { currentWeekEntries, pastWeeks } = useMemo(() => {
@@ -193,7 +196,14 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError }) {
       next = [...(measurements || []), { id: `${date}-${Date.now()}`, date, time, weight: w }];
     }
     next.sort((a, b) => a.date.localeCompare(b.date));
-    await saveMeasurements(next);
+    try {
+      await saveMeasurements(next);
+    } catch (e) {
+      // Не чистим поле и не рисуем «Сохранено ✓» — значение остаётся на экране,
+      // чтобы попытку можно было повторить.
+      setSaving(false);
+      return;
+    }
     setSaving(false);
     setWeight('');
     setJustSaved(true);
@@ -235,10 +245,14 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError }) {
             Средний вес
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            {/* Подписи по числу дней, а не «за неделю / за месяц»: считается
+                скользящее окно от сегодня, тогда как список ниже сгруппирован по
+                календарным неделям с понедельника. Одинаковые слова при разной
+                арифметике давали два несовпадающих числа на одном экране. */}
             {[
-              { label: 'За неделю', value: stats.week },
-              { label: 'За месяц', value: stats.month },
-              { label: 'За год', value: stats.year },
+              { label: '7 дней', value: stats.week },
+              { label: '30 дней', value: stats.month },
+              { label: '365 дней', value: stats.year },
             ].map((s) => (
               <div key={s.label} style={{
                 flex: 1, minWidth: 0, background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10,
