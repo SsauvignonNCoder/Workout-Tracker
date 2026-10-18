@@ -261,6 +261,43 @@ export function pauseAllTimers(timers, at = Date.now()) {
   return changed ? out : timers;
 }
 
+// Секундомер идёт, пока ты на упражнении: при входе на шаг-упражнение
+// он запускается сам и продолжает накопленное, все остальные встают на паузу.
+// stepId = null (кардио, заминка, итог) — стоят все. Ничего не поменялось —
+// тот же объект.
+export function runOnlyTimer(timers, stepId, now = Date.now()) {
+  const src = timers || {};
+  const out = {};
+  let changed = false;
+  Object.keys(src).forEach((k) => {
+    const sw = src[k];
+    if (k !== stepId && swIsRunning(sw)) { out[k] = swPause(sw, now); changed = true; } else out[k] = sw;
+  });
+  if (stepId && !swIsRunning(src[stepId])) {
+    out[stepId] = { acc: (src[stepId] && src[stepId].acc) || 0, since: now };
+    changed = true;
+  }
+  return changed ? out : timers;
+}
+
+// Восстановление черновика. Секундомер упражнения, на котором закрыли
+// приложение, идёт дальше, и время, пока оно было закрыто, засчитывается: со
+// шага никто не уходил. Но только после короткого перерыва. После долгого это
+// брошенная тренировка, и секундомер встаёт на моменте записи черновика (он
+// пишется и при сворачивании), дальше пойдёт с «сейчас». Остальные — на паузу.
+export const TIMER_RESUME_GAP_MS = 30 * 60 * 1000;
+
+export function restoreTimers(timers, curStepId, savedAt, now = Date.now()) {
+  const at = Math.min(savedAt || now, now);
+  const keepCur = now - at <= TIMER_RESUME_GAP_MS;
+  const out = {};
+  Object.keys(timers || {}).forEach((k) => {
+    const sw = timers[k];
+    out[k] = swIsRunning(sw) && !(keepCur && k === curStepId) ? swPause(sw, at) : sw;
+  });
+  return out;
+}
+
 // Коды секторов вида «1A, 1B, 2A…»: цифра — километр по нарастающей дистанции
 // (0–1 км → «1», 1–2 км → «2», …), буква — порядковый сектор внутри этого километра.
 // Километр определяется по суммарной дистанции ДО начала сектора. Если дистанции

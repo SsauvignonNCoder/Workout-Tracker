@@ -15,7 +15,7 @@ import {
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
   insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData,
-  clampSets, MAX_SETS, swElapsed, swIsRunning, swToggle, pauseAllTimers, sectorCodes,
+  clampSets, MAX_SETS, swElapsed, swIsRunning, swToggle, runOnlyTimer, restoreTimers, sectorCodes,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
@@ -283,10 +283,9 @@ export function GuidedWorkout({
       setExNotes(d.exNotes || {});
       setCardioLogs(d.cardioLogs || {});
       setSectorLogs(d.sectorLogs || {});
-      // Бегущий в момент выгрузки секундомер останавливаем на времени последней
-      // записи черновика: дальше этого момента неизвестно, шло ли упражнение
-      // или телефон просто лежал. Продолжить можно кнопкой.
-      setExTimers(pauseAllTimers(d.exTimers || {}, Math.min(d.savedAt || Date.now(), Date.now())));
+      // Секундомер текущего упражнения после короткого перерыва идёт дальше,
+      // после долгого — с момента записи черновика (см. restoreTimers).
+      setExTimers(restoreTimers(d.exTimers || {}, d.stepId, d.savedAt));
       if (d.cooldownDone) setCooldownDone(d.cooldownDone);
       if (d.cooldownPick) setCooldownPick(d.cooldownPick);
       if (d.summary) setSummary((prev) => ({ ...prev, ...d.summary }));
@@ -504,10 +503,17 @@ export function GuidedWorkout({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setConfirmEarly(false);
     setSaveError('');
-    // Секундомер упражнения останавливается, когда уходишь с шага: иначе
-    // забытый на одном упражнении он копил бы время всех следующих.
-    setExTimers((prev) => pauseAllTimers(prev));
   }, [stepId]);
+
+  // Секундомер упражнения идёт, пока ты на нём: сам стартует при входе на
+  // шаг-упражнение, встаёт на паузу при уходе («Дальше» / «Назад»), при
+  // возврате продолжает накопленное. Пока висит предложение восстановить
+  // черновик — не трогаем: шаг ещё не выбран.
+  const stepKind = step ? step.kind : null;
+  useEffect(() => {
+    if (restoreOffer) return;
+    setExTimers((prev) => runOnlyTimer(prev, stepKind === 'exercise' ? stepId : null));
+  }, [stepId, stepKind, restoreOffer]);
 
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
@@ -1373,7 +1379,7 @@ function ExerciseStep({
   const weightless = isWeightlessExercise(step.name) || timed;
   const record = records && records[step.name];
   const hasGuide = !!getExerciseGuide(step.name);
-  // Пометки плана («скамья», «лёгкий вес на первой неделе») — только пока
+  // Пометки плана («скамья», «со страховкой») — только пока
   // упражнение не заменено: к другому упражнению они не относятся.
   const planNotes = planNotesOf(step);
   const running = swIsRunning(timer);
@@ -1420,57 +1426,70 @@ function ExerciseStep({
           </button>
         )}
       />
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: planNotes && planNotes.tip ? 10 : 18 }}>
-        <span style={{
-          fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: t.ACCENT_BG,
-          padding: '5px 10px', borderRadius: 8, fontFamily: t.FONT_MONO,
-        }}>
-          Цель: {fmtTargetReps(step.targetReps, timed)} · {sets.length} подх
-        </span>
-        {recordText ? (
+      {/* Цель, рекорд, «Как выполнять» и «Далее» — всегда ровно две строки:
+          в первой цель и рекорд, во второй подсказка и что дальше. Строки не
+          переносятся: что не влезает по ширине, сокращается многоточием. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: planNotes && planNotes.tip ? 10 : 18 }}>
+        <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
           <span style={{
-            fontSize: 12, fontWeight: 700, color: t.TEXT_DIM, background: t.BG_INPUT,
-            padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
+            fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: t.ACCENT_BG,
+            padding: '5px 10px', borderRadius: 8, fontFamily: t.FONT_MONO, border: '1px solid transparent',
+            flex: '0 0 auto', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
-            <Flame size={12} /> Рекорд {recordText}
+            Цель: {fmtTargetReps(step.targetReps, timed)} · {sets.length} подх
           </span>
-        ) : null}
-        {hasGuide && (
-          <button
-            onClick={onGuide}
-            style={{
-              fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: 'transparent',
-              border: `1px solid ${t.ACCENT_BORDER}`, padding: '5px 10px', borderRadius: 8,
-              display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontFamily: 'inherit',
-            }}
-          >
-            <HelpCircle size={13} /> Как выполнять
-          </button>
-        )}
-        {nextName && (
-          <button
-            onClick={() => setRestOpen((v) => !v)}
-            aria-expanded={restOpen}
-            style={{
-              fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, background: t.BG_INPUT,
-              border: `1px solid ${t.BORDER}`,
-              padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center',
-              gap: 5, maxWidth: '100%', minWidth: 0, cursor: restNames.length ? 'pointer' : 'default',
-              fontFamily: 'inherit',
-            }}
-          >
-            {restOpen
-              ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
-              : <ChevronRight size={12} style={{ flexShrink: 0 }} />}
-            {/* Название обрезаем многоточием: длинное имя не должно ни переносить
-                строку, ни растягивать чип. Полное имя видно в развёрнутом списке. */}
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Далее: {nextName}
+          {recordText ? (
+            <span style={{
+              fontSize: 12, fontWeight: 700, color: t.TEXT_DIM, background: t.BG_INPUT,
+              padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
+              flex: '0 1 auto', minWidth: 0, border: '1px solid transparent',
+            }}>
+              <Flame size={12} style={{ flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Рекорд {recordText}</span>
             </span>
-            {restNames.length > 1 && (
-              <span style={{ flexShrink: 0, opacity: 0.8, fontFamily: t.FONT_MONO }}>+{restNames.length - 1}</span>
+          ) : null}
+        </div>
+        {(hasGuide || nextName) && (
+          <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
+            {hasGuide && (
+              <button
+                onClick={onGuide}
+                style={{
+                  fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: 'transparent',
+                  border: `1px solid ${t.ACCENT_BORDER}`, padding: '5px 10px', borderRadius: 8,
+                  display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontFamily: 'inherit',
+                  flex: '0 0 auto', whiteSpace: 'nowrap',
+                }}
+              >
+                <HelpCircle size={13} /> Как выполнять
+              </button>
             )}
-          </button>
+            {nextName && (
+              <button
+                onClick={() => setRestOpen((v) => !v)}
+                aria-expanded={restOpen}
+                style={{
+                  fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, background: t.BG_INPUT,
+                  border: `1px solid ${t.BORDER}`,
+                  padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center',
+                  gap: 5, flex: '0 1 auto', minWidth: 0, cursor: restNames.length ? 'pointer' : 'default',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {restOpen
+                  ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
+                  : <ChevronRight size={12} style={{ flexShrink: 0 }} />}
+                {/* Название обрезаем многоточием: длинное имя не должно ни переносить
+                    строку, ни растягивать чип. Полное имя видно в развёрнутом списке. */}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Далее: {nextName}
+                </span>
+                {restNames.length > 1 && (
+                  <span style={{ flexShrink: 0, opacity: 0.8, fontFamily: t.FONT_MONO }}>+{restNames.length - 1}</span>
+                )}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -1513,8 +1532,9 @@ function ExerciseStep({
       )}
 
       {/* Секундомер упражнения: сколько ушло на это упражнение вместе с отдыхом.
-          Запускается вручную, сам встаёт на паузу при уходе с шага. Время
-          сохраняется в тренировку (durationSec у упражнения). */}
+          Сам стартует при входе на шаг и встаёт на паузу при уходе с него;
+          кнопкой можно остановить вручную. Время сохраняется в тренировку
+          (durationSec у упражнения). */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
         background: t.BG_RAISED, border: `1px solid ${running ? t.ACCENT_BORDER : t.BORDER}`, borderRadius: 14,
