@@ -536,8 +536,23 @@ function SessionCard({ s, onEdit, onDelete }) {
               <div key={b.key} style={rowStyle}>
                 <div style={{ color: t.TEXT, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 7 }}>
                   <MuscleBadge name={ex.name} size={17} />
-                  <span>{ex.name}</span>
+                  <span style={{ minWidth: 0 }}>{ex.name}</span>
+                  {/* Секундомер упражнения из пошагового режима (1.1.0) */}
+                  {ex.durationSec > 0 && (
+                    <span style={{
+                      marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4,
+                      fontSize: 11.5, color: t.TEXT_FAINT, fontFamily: MONO,
+                    }}>
+                      <Timer size={11} style={{ opacity: 0.8 }} /> {secToClock(ex.durationSec)}
+                    </span>
+                  )}
                 </div>
+                {/* Пометки пошагового режима (1.1.0): упражнение заменили или добавили по ходу */}
+                {(ex.replacedFrom || ex.added) && (
+                  <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, marginBottom: 3, paddingLeft: categorizeExercise(ex.name) ? 24 : 0 }}>
+                    {ex.replacedFrom ? `вместо «${ex.replacedFrom}»` : 'добавлено в тренировке'}
+                  </div>
+                )}
                 {hasSetLog ? (
                   <SetChips setLog={ex.setLog} weightless={weightless} timed={timed} />
                 ) : (

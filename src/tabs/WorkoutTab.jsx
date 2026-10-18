@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, Dumbbell, Pencil, Play, Check } from 'lucide-react';
 import { useTheme, FROST } from '../theme.js';
@@ -6,11 +6,27 @@ import { todayISO } from '../dateUtils.js';
 import { computeRecords } from '../gamification.js';
 import {
   Field, getInputStyle, getLabelInputStyle, DatePicker, ExerciseRow, CardioRow,
-  emptyExercise, emptyCardio, RepeatWorkoutPicker, ProgramDayPicker, WarmupTip,
-  STARTER_EXERCISES, STARTER_CARDIO, PROGRAM_DAYS,
+  emptyExercise, emptyCardio, RepeatWorkoutPicker, ProgramDayPicker, WarmupTip, AutoGrowTextarea,
+  STARTER_EXERCISES, STARTER_CARDIO,
 } from './workoutTabHelpers.jsx';
+import { getPlan, getPlanDay, nextPlanDay, DEFAULT_PLAN_ID } from '../plans.js';
 import { GuidedWorkout } from './GuidedWorkout.jsx';
 import { scheduleProteinReminder } from '../botAlerts.js';
+
+// Поля упражнения, которые форма ручного ввода не редактирует, но обязана
+// донести до базы нетронутыми: подходы и заметки пишутся в пошаговом режиме,
+// там же — секундомер (1.1.0) и пометки «заменено» / «добавлено» (1.1.0).
+// До 1.0.6 note и timed здесь терялись — любая правка веса стирала заметки.
+function carryExerciseExtras(e) {
+  return {
+    ...(Array.isArray(e.setLog) && e.setLog.length ? { setLog: e.setLog } : {}),
+    ...(e.note ? { note: e.note } : {}),
+    ...(e.timed ? { timed: true } : {}),
+    ...(e.durationSec > 0 ? { durationSec: e.durationSec } : {}),
+    ...(e.replacedFrom ? { replacedFrom: e.replacedFrom } : {}),
+    ...(e.added ? { added: true } : {}),
+  };
+}
 
 export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, userId, editSession, onEditDone }) {
   const t = useTheme();
@@ -26,23 +42,31 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const [programDetached, setProgramDetached] = useState(false);
   const [showProgramPicker, setShowProgramPicker] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [guidedOpen, setGuidedOpen] = useState(false);
+  // План редактируемой тренировки: её день программы — номер внутри ЕЁ плана,
+  // а не того, что сейчас выбран в профиле.
+  const [editPlanId, setEditPlanId] = useState(null);
+  // Запущенная пошаговая тренировка: день и план фиксируются в момент старта
+  // (null — гид закрыт). До 1.1.0 портал рендерился от текущего programDay, и
+  // сброс дня под свёрнутой тренировкой (а теперь и смена плана в профиле)
+  // закрыл бы её посреди подхода.
+  const [guided, setGuided] = useState(null);
   const [guidedMin, setGuidedMin] = useState(false);
   const [guidedSaved, setGuidedSaved] = useState(false);
+
+  const profilePlanId = (profile && profile.planId) || DEFAULT_PLAN_ID;
+  const planId = editingId ? (editPlanId || DEFAULT_PLAN_ID) : profilePlanId;
+  const plan = getPlan(planId);
 
   useEffect(() => {
     if (editSession) {
       setEditingId(editSession.id);
+      setEditPlanId(editSession.planId || DEFAULT_PLAN_ID);
       setDate(editSession.date);
-      // note и timed переносим в форму как есть и возвращаем обратно при сохранении.
-      // Редактировать их здесь нельзя (заметки пишутся в пошаговом режиме), но и
-      // терять нельзя: до 1.0.6 они просто не переносились, и любая правка веса
-      // стирала заметки по всем упражнениям этой тренировки.
+      // Подходы, заметки, секундомер и пометки замены переносим в форму как есть
+      // и возвращаем обратно при сохранении (см. carryExerciseExtras).
       const exList = (editSession.exercises || []).map((e) => ({
         name: e.name, weight: String(e.weight || ''), reps: String(e.reps || ''), sets: String(e.sets || ''),
-        ...(e.setLog ? { setLog: e.setLog } : {}),
-        ...(e.note ? { note: e.note } : {}),
-        ...(e.timed ? { timed: true } : {}),
+        ...carryExerciseExtras(e),
       }));
       setExercises(exList);
       const cardioList = (editSession.cardio || []).map((c) => ({
@@ -59,6 +83,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       // Вышли из режима редактирования (сохранили/отменили) — сбрасываем черновик,
       // иначе форма продолжала бы обновлять ту же тренировку даже при выборе нового дня.
       setEditingId(null);
+      setEditPlanId(null);
       setExercises([]);
       setCardio([]);
       setSleep('');
@@ -69,21 +94,36 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     }
   }, [editSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Сменили план в профиле — выбранный день старого плана больше ни к чему не
+  // относится: сбрасываем, и эффект ниже подставит день из нового плана.
+  // Запущенную тренировку это не трогает — у неё свой снимок дня и плана.
+  const prevPlanIdRef = useRef(profilePlanId);
+  useEffect(() => {
+    if (prevPlanIdRef.current === profilePlanId) return;
+    prevPlanIdRef.current = profilePlanId;
+    if (editingId) return;
+    setProgramDay(null);
+    setProgramDetached(false);
+    setShowProgramPicker(false);
+    setExercises([]);
+    setCardio([]);
+  }, [profilePlanId, editingId]);
+
   useEffect(() => {
     if (editingId) return;
     if (programDetached) return;
     if (profile && programDay === null) {
-      const last = profile.lastProgramDay;
-      if (last) {
-        setProgramDay(last >= PROGRAM_DAYS.length ? 1 : last + 1);
-      }
+      // 0 — план только что выбран: начинаем с дня 1. До 1.1.0 здесь стояло
+      // `if (last)`, и ноль молча означал «ничего не подставлять».
+      const next = nextPlanDay(plan, profile.lastProgramDay);
+      if (next) setProgramDay(next);
     }
-  }, [profile, programDay, editingId, programDetached]);
+  }, [profile, programDay, editingId, programDetached, plan]);
 
   const [justAppliedProgram, setJustAppliedProgram] = useState(false);
 
   const applyProgramDay = (dayNum) => {
-    const dayPlan = PROGRAM_DAYS.find((d) => d.day === dayNum);
+    const dayPlan = getPlanDay(planId, dayNum);
     if (!dayPlan) return;
     setProgramDay(dayNum);
     setProgramDetached(false);
@@ -161,9 +201,13 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   // задним числом, и напоминание «выпей коктейль» через час после занесения
   // позавчерашней тренировки было бы просто мусором. Вне Telegram отправлять
   // некуда — botAlerts тихо пропустит.
-  const remindAboutProtein = (sessionDate) => {
+  //
+  // Вместе с заданием уходят id тренировки и дата: перед отправкой сервер сверится
+  // с базой и промолчит, если тренировку удалили или если за этот день появилась
+  // более поздняя (у неё будет своё напоминание).
+  const remindAboutProtein = (sessionId, sessionDate) => {
     if (sessionDate !== todayISO()) return;
-    scheduleProteinReminder();
+    scheduleProteinReminder(sessionId, sessionDate);
   };
 
   // Завершение пошаговой тренировки: сохраняем сессию сразу (гид сам собрал полную
@@ -177,11 +221,14 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const handleGuidedComplete = async (session) => {
     const next = [...(sessions || []), session].sort((a, b) => a.date.localeCompare(b.date));
     await saveSessions(next); // бросит при ошибке — гид покажет сообщение и не закроется
-    if (session.programDay) {
+    // «Последний день» двигаем, только если тренировка из того плана, что сейчас
+    // в профиле: план могли сменить, пока она шла, — тогда номер дня старого
+    // плана сбил бы отсчёт нового.
+    if (session.programDay && (session.planId || DEFAULT_PLAN_ID) === profilePlanId) {
       try { await saveProfile({ ...(profile || {}), lastProgramDay: session.programDay }); } catch (e) { /* не критично */ }
     }
-    remindAboutProtein(session.date);
-    setGuidedOpen(false);
+    remindAboutProtein(session.id, session.date);
+    setGuided(null);
     setGuidedMin(false);
     // Сбрасываем привязку к дню — эффект подставит следующий день программы.
     setExercises([]);
@@ -223,9 +270,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         weight: Math.max(0, parseFloat(e.weight) || 0),
         reps: Math.max(0, parseInt(e.reps) || 0),
         sets: Math.max(1, parseInt(e.sets) || 1),
-        ...(Array.isArray(e.setLog) && e.setLog.length ? { setLog: e.setLog } : {}),
-        ...(e.note ? { note: e.note } : {}),
-        ...(e.timed ? { timed: true } : {}),
+        ...carryExerciseExtras(e),
       }));
     const validCardio = cardio
       .filter((c) => c.name.trim())
@@ -280,6 +325,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       energy,
       feeling: feeling.trim(),
       programDay: programDay || null,
+      planId,
     };
     const next = [...(sessions || []), entry].sort((a, b) => a.date.localeCompare(b.date));
     try {
@@ -295,7 +341,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       // тренировка всё равно сохранена, а следующий день подставится вручную.
       try { await saveProfile({ ...(profile || {}), lastProgramDay: programDay }); } catch (e) { /* не критично */ }
     }
-    remindAboutProtein(date);
+    remindAboutProtein(entry.id, date);
     setSaving(false);
     setExercises([]);
     setCardio([]);
@@ -342,7 +388,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       {programDay ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 14 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <ProgramDayPicker value={programDay} onChange={applyProgramDay} />
+            <ProgramDayPicker plan={plan} value={programDay} onChange={applyProgramDay} />
           </div>
           <button
             onClick={() => {
@@ -375,13 +421,17 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       )}
       {showProgramPicker && !programDay && (
         <div style={{ marginBottom: 14 }}>
-          <ProgramDayPicker value={1} onChange={applyProgramDay} />
+          <ProgramDayPicker plan={plan} value={1} onChange={applyProgramDay} />
         </div>
       )}
 
       {programDay && !editingId && (
         <button
-          onClick={() => setGuidedOpen(true)}
+          onClick={() => {
+            if (guided) { setGuidedMin(false); return; } // уже идёт — просто развернуть
+            const dayPlan = getPlanDay(planId, programDay);
+            if (dayPlan) setGuided({ dayPlan, planId, date });
+          }}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
             background: t.ACCENT_GRAD, color: t.ON_ACCENT, border: 'none', borderRadius: 14,
@@ -400,8 +450,8 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       )}
 
       {programDay && (() => {
-        const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
-        return dayPlan && dayPlan.type === 'strength' ? <WarmupTip title={dayPlan.title} /> : null;
+        const dayPlan = getPlanDay(planId, programDay);
+        return dayPlan && dayPlan.type === 'strength' ? <WarmupTip day={dayPlan} /> : null;
       })()}
 
       {!planMode && (<>
@@ -491,8 +541,8 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
 
       <div style={{ marginBottom: 22 }}>
         <Field label="Самочувствие, заметки">
-          <textarea
-            style={{ ...getLabelInputStyle(t), resize: 'vertical', minHeight: 56, fontFamily: 'inherit' }}
+          <AutoGrowTextarea
+            style={{ ...getLabelInputStyle(t), minHeight: 56, fontFamily: 'inherit', lineHeight: 1.4 }}
             value={feeling}
             onChange={(e) => setFeeling(e.target.value)}
             placeholder="Как прошло, что почувствовал, есть жалобы..."
@@ -539,24 +589,22 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           переключение вкладок (WorkoutTab при этом display:none) и чтобы свёрнутая
           плашка висела над таб-баром на любой вкладке. Состояние гида сохраняется —
           компонент остаётся смонтированным и в свёрнутом виде, таймеры продолжают идти. */}
-      {guidedOpen && programDay && (() => {
-        const dayPlan = PROGRAM_DAYS.find((d) => d.day === programDay);
-        if (!dayPlan) return null;
-        return createPortal(
-          <GuidedWorkout
-            dayPlan={dayPlan}
-            date={date}
-            userId={userId}
-            records={records}
-            minimized={guidedMin}
-            onMinimize={() => setGuidedMin(true)}
-            onExpand={() => setGuidedMin(false)}
-            onClose={() => { setGuidedOpen(false); setGuidedMin(false); }}
-            onComplete={handleGuidedComplete}
-          />,
-          document.body,
-        );
-      })()}
+      {guided && createPortal(
+        <GuidedWorkout
+          dayPlan={guided.dayPlan}
+          planId={guided.planId}
+          date={guided.date}
+          userId={userId}
+          records={records}
+          knownNames={knownNames}
+          minimized={guidedMin}
+          onMinimize={() => setGuidedMin(true)}
+          onExpand={() => setGuidedMin(false)}
+          onClose={() => { setGuided(null); setGuidedMin(false); }}
+          onComplete={handleGuidedComplete}
+        />,
+        document.body,
+      )}
     </div>
   );
 }

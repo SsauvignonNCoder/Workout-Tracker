@@ -20,14 +20,14 @@ function telegramInitData() {
 
 // Планирует уведомление. Возвращает messageId (по нему можно отменить) или null,
 // если планировать некуда или не получилось — вызывающему это не мешает.
-export async function scheduleBotAlert(kind, durationSec) {
+export async function scheduleBotAlert(kind, durationSec, extra = {}) {
   try {
     const initData = telegramInitData();
     if (!initData) return null;
     const r = await fetch('/api/rest-schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, kind, duration: durationSec }),
+      body: JSON.stringify({ initData, kind, duration: durationSec, ...extra }),
     });
     if (!r.ok) return null;
     const data = await r.json().catch(() => null);
@@ -49,9 +49,14 @@ export async function cancelBotAlert(messageId) {
 }
 
 // Напоминание про протеиновый коктейль через час после сохранённой тренировки.
-// Отменять его не предусмотрено: пропущенное напоминание безобиднее лишнего кода.
+//
+// Отменять его не нужно: вместе с заданием уходят id тренировки и дата, и перед
+// самой отправкой сервер сверяется с базой (см. api/rest-fire.js). Если тренировку
+// удалили — напоминание молча не отправится, даже если удалили с другого
+// устройства. Если за тот же день сохранена более поздняя тренировка —
+// промолчит эта, а придёт напоминание от последней.
 export const PROTEIN_DELAY_SEC = 3600;
 
-export function scheduleProteinReminder() {
-  return scheduleBotAlert('protein', PROTEIN_DELAY_SEC);
+export function scheduleProteinReminder(sessionId, date) {
+  return scheduleBotAlert('protein', PROTEIN_DELAY_SEC, { sessionId, date });
 }

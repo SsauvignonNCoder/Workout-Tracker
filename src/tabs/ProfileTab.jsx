@@ -1,12 +1,118 @@
 import React, { useState, useMemo } from 'react';
-import { LogOut, Award } from 'lucide-react';
+import { LogOut, Award, CheckCircle2, Circle } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO, fmtDateShort } from '../dateUtils.js';
 import {
   ACH_ICON, BODY_FIELDS, computeAchievements, computeTotalXpFromSessions, getLevelInfo,
 } from '../gamification.js';
 import { Field, getInputStyle } from './workoutTabHelpers.jsx';
+import { PLANS, DEFAULT_PLAN_ID, getPlan } from '../plans.js';
 import { APP_VERSION } from '../version.js';
+
+// Выбор плана тренировок (1.1.0). Планы живут в src/plans.js; старый план не
+// удаляется — к нему привязаны все тренировки до 1.1.0, и на него можно
+// вернуться. Переключение сбрасывает «последний день» в 0: следующая
+// тренировка начнётся с первого дня выбранного плана. История и рекорды не
+// меняются — каждая тренировка помнит свой план.
+function PlanPicker({ profile, saveProfile }) {
+  const t = useTheme();
+  const current = (profile && profile.planId) || DEFAULT_PLAN_ID;
+  const [pending, setPending] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const lastDay = profile && profile.lastProgramDay;
+  const currentPlan = getPlan(current);
+
+  const confirm = async () => {
+    if (!pending) return;
+    setSaving(true);
+    try {
+      await saveProfile({ ...(profile || {}), planId: pending, lastProgramDay: 0 });
+      setPending(null);
+    } catch (e) {
+      // Сообщение уже показал saveProfile; выбор остаётся прежним.
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
+        План тренировок
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {PLANS.map((p) => {
+          const active = p.id === current;
+          const chosen = p.id === pending;
+          return (
+            <button
+              key={p.id}
+              onClick={() => setPending(active ? null : p.id)}
+              aria-pressed={active}
+              style={{
+                display: 'flex', alignItems: 'flex-start', gap: 11, width: '100%', textAlign: 'left',
+                boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
+                background: active ? t.ACCENT_BG : t.BG_RAISED,
+                border: `1px solid ${active || chosen ? t.ACCENT : t.BORDER}`,
+              }}
+            >
+              <span style={{ flexShrink: 0, marginTop: 1, color: active ? t.ACCENT_SOFT : t.TEXT_FAINT }}>
+                {active ? <CheckCircle2 size={19} /> : <Circle size={19} />}
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: active ? t.ACCENT_SOFT : t.TEXT, marginBottom: 3 }}>
+                  {p.title}
+                </span>
+                <span style={{ display: 'block', fontSize: 12, color: t.TEXT_FAINT, lineHeight: 1.4 }}>
+                  {p.description}
+                </span>
+                {active && lastDay > 0 && (
+                  <span style={{ display: 'block', fontSize: 11.5, color: t.TEXT_DIM, marginTop: 5, fontFamily: t.FONT_MONO }}>
+                    последний сделанный день: {lastDay} из {p.days.length}
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {pending && (
+        <div style={{
+          marginTop: 10, padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.ACCENT}`, borderRadius: 12,
+        }}>
+          <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 10 }}>
+            Переключить с «{currentPlan.title}» на «{getPlan(pending).title}»? Следующая тренировка начнётся
+            с дня 1. История и рекорды не меняются — прошлые тренировки остаются в своём плане.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={confirm}
+              disabled={saving}
+              style={{
+                flex: 1, padding: '11px', borderRadius: 10, border: 'none',
+                background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
+                cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
+              }}
+            >
+              {saving ? 'Переключаю…' : 'Переключить'}
+            </button>
+            <button
+              onClick={() => setPending(null)}
+              disabled={saving}
+              style={{
+                flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${t.BORDER}`,
+                background: 'transparent', color: t.TEXT_DIM, fontSize: 14, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function LevelCard({ levelInfo, totalXp }) {
   const t = useTheme();
@@ -333,6 +439,10 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
           ))}
         </div>
       )}
+
+      <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
+
+      <PlanPicker profile={profile} saveProfile={saveProfile} />
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 

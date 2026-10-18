@@ -13,10 +13,13 @@
 // api/telegram-auth.js — chat_id берём из проверенных данных, не из тела запроса.
 
 import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const QSTASH_TOKEN = process.env.QSTASH_TOKEN;
 const ALERT_SECRET = process.env.REST_ALERT_SECRET;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Виды уведомлений. Клиент передаёт только `kind`, текст выбирается здесь —
 // так эндпоинт не превращается в способ отправить боту произвольное сообщение,
@@ -70,7 +73,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { initData, duration, kind } = req.body || {};
+  const { initData, duration, kind, sessionId, date } = req.body || {};
   if (!initData || typeof initData !== 'string') {
     res.status(400).json({ error: 'Не передан initData' });
     return;
@@ -80,6 +83,23 @@ export default async function handler(req, res) {
   if (!tgUser) { res.status(401).json({ error: 'Подпись initData не подтверждена' }); return; }
 
   const alert = ALERTS[kind] || ALERTS.rest;
+
+  // Для напоминания после тренировки кладём в задание, ЧТО именно проверить перед
+  // отправкой: чья тренировка, за какое число и какая. Сверка делается в момент
+  // отправки (api/rest-fire.js) — так напоминание не придёт по удалённой
+  // тренировке, даже если удалили с другого устройства.
+  let check = null;
+  if (kind === 'protein' && sessionId && date) {
+    try {
+      const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data: user } = await admin.from('users').select('id').eq('telegram_id', tgUser.id).maybeSingle();
+      if (user) check = { user_id: user.id, session_id: String(sessionId), date: String(date) };
+    } catch (e) {
+      // Не нашли пользователя или база недоступна — напоминание всё равно ставим,
+      // просто без сверки. Потерять напоминание хуже, чем прислать лишнее.
+      console.error('rest-schedule: не удалось собрать данные для сверки', e);
+    }
+  }
 
   const chatId = tgUser.id;
   // Потолок задержки свой у каждого вида: таймеру отдыха больше пятнадцати минут
@@ -103,6 +123,7 @@ export default async function handler(req, res) {
         chat_id: chatId,
         text: alert.text,
         secret: ALERT_SECRET,
+        ...(check ? { check } : {}),
       }),
     });
     if (!r.ok) {

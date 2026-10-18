@@ -3,6 +3,7 @@ import { X, Flame, Copy, Dumbbell, Activity, Waves } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO, shiftDate, fmtDateFull } from '../dateUtils.js';
 import { MAX_INCLINE } from '../climbs.js';
+import { planWeekOf } from '../plans.js';
 
 export function Field({ label, children }) {
   const t = useTheme();
@@ -273,12 +274,13 @@ export function categorizeExercise(name) {
   const notLegs = !/ног/.test(n);
   if (notLegs && /узк|трицепс|французск/.test(n)) return MUSCLE_GROUPS.arms;
   if (notLegs && /жим.*лёж|разводка.*лёж/.test(n)) return MUSCLE_GROUPS.chest;
-  if (notLegs && /отжиман/.test(n)) return MUSCLE_GROUPS.chest;
-  if (/тяга.*наклон|тяга.*блок|подтягиван|гиперэкстенз/.test(n)) return MUSCLE_GROUPS.back;
+  if (notLegs && /отжиман|бабочк/.test(n)) return MUSCLE_GROUPS.chest;
+  if (/тяга.*наклон|тяга.*блок|тяга.*пах|подтягиван|гиперэкстенз/.test(n)) return MUSCLE_GROUPS.back;
   if (/жим.*сидя|жим.*стоя.*голов|разводк.*сторон/.test(n) && /сид|голов|сторон/.test(n)) return MUSCLE_GROUPS.shoulders;
-  if (/присед|румынск|жим.*ног|разгибан.*ног|сгибан.*ног|носк|выпад/.test(n)) return MUSCLE_GROUPS.legs;
+  if (/присед|румынск|жим.*ног|разгибан.*ног|сгибан.*ног|разведен.*ног|сведен.*ног|носк|выпад/.test(n)) return MUSCLE_GROUPS.legs;
   if (/бицепс|молот|скотт|разгибан.*рук|подъ[её]м.*рук/.test(n)) return MUSCLE_GROUPS.arms;
-  if (/планка|скручиван|твист|подъ[её]м ног в висе|пресс|кор\b/.test(n)) return MUSCLE_GROUPS.core;
+  // «Подъём ног» — и в висе, и лёжа (план 2): это пресс, а не ноги.
+  if (/планка|скручиван|твист|подъ[её]м ног|пресс|кор\b/.test(n)) return MUSCLE_GROUPS.core;
   return null;
 }
 
@@ -403,6 +405,9 @@ export const STARTER_EXERCISES = [
   'Французский жим', 'Отжимания на брусьях', 'Подъём штанги на бицепс стоя', 'Подъём на бицепс на скамье Скотта',
   'Подъём гантелей на бицепс «молотом»', 'Подъём штанги на бицепс обратным хватом', 'Разгибание рук на верхнем блоке',
   'Подъём ног в висе (или лёжа)', 'Скручивания на наклонной скамье', 'Русский твист', 'Планка',
+  // План 2 (1.1.0)
+  'Бабочка', 'Тяга к паху сидя', 'Подъём на носки в смите', 'Подъём ног лёжа',
+  'Разведение ног сидя', 'Сведение ног сидя',
 ];
 
 export const STARTER_CARDIO = [
@@ -410,8 +415,15 @@ export const STARTER_CARDIO = [
 ];
 
 // Подсказки по разминке для силовых дней — текст взят из месячного плана тренировок.
-// Привязаны по названию дня, так как разминка повторяется для одного типа дня каждую неделю.
+// Ключ — название дня плана 1 (разминка повторяется для одного типа дня каждую
+// неделю) либо явный day.warmup: в плане 2 названия дней другие, и он ссылается
+// на те же тексты, плюс «Спина: тяга» — для дня, который начинается с тяги, а не с жима.
 export const WARMUP_TIPS = {
+  'Спина: тяга': [
+    'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
+    'Суставная разминка 3 мин — вращения плечами, руками, лёгкие наклоны корпуса.',
+    'Разминочные подходы 2 мин — 1–2 подхода тяги в наклоне с пустой штангой перед первым рабочим подходом.',
+  ],
   'Грудь, спина, плечи': [
     'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
     'Суставная разминка 3 мин — вращения плечами, руками, лёгкие наклоны корпуса.',
@@ -429,9 +441,9 @@ export const WARMUP_TIPS = {
   ],
 };
 
-export function WarmupTip({ title }) {
+export function WarmupTip({ day }) {
   const t = useTheme();
-  const items = WARMUP_TIPS[title];
+  const items = day ? (WARMUP_TIPS[day.warmup] || WARMUP_TIPS[day.title]) : null;
   if (!items) return null;
   return (
     <div style={{
@@ -460,7 +472,47 @@ export function WarmupTip({ title }) {
   );
 }
 
-export const PROGRAM_DAYS = [{"day":1,"type":"strength","title":"Грудь, спина, плечи","exercises":[{"name":"Жим штанги лёжа","sets":4,"reps":"6-8"},{"name":"Тяга штанги в наклоне","sets":4,"reps":"8-10"},{"name":"Жим гантелей сидя над головой","sets":3,"reps":"10-12"},{"name":"Тяга верхнего блока (широкий хват)","sets":3,"reps":"10-12"},{"name":"Разводка гантелей в стороны","sets":3,"reps":"12-15"},{"name":"Французский жим","sets":3,"reps":"10-12"},{"name":"Подъём штанги на бицепс стоя","sets":3,"reps":"10-12"},{"name":"Планка","sets":3,"reps":"40-60"}]},{"day":2,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"3","incline":"20"}},{"day":3,"type":"strength","title":"Ноги","exercises":[{"name":"Приседания со штангой на плечах","sets":4,"reps":"6-8"},{"name":"Румынская тяга со штангой","sets":4,"reps":"8-10"},{"name":"Разгибание ног в тренажёре","sets":3,"reps":"12-15"},{"name":"Сгибание ног сидя в тренажёре","sets":3,"reps":"12-15"},{"name":"Подъём на носки стоя","sets":4,"reps":"15-20"},{"name":"Гиперэкстензия","sets":3,"reps":"12-15"},{"name":"Скручивания на наклонной скамье","sets":3,"reps":"15-20"}]},{"day":4,"type":"pool","title":"Бассейн","cardio":{"name":"Бассейн","duration":"60"}},{"day":5,"type":"strength","title":"Руки, кор, добивка","exercises":[{"name":"Жим штанги узким хватом","sets":4,"reps":"8-10"},{"name":"Подтягивания","sets":4,"reps":"8-10"},{"name":"Подъём гантелей на бицепс «молотом»","sets":3,"reps":"10-12"},{"name":"Разгибание рук на верхнем блоке","sets":3,"reps":"12-15"},{"name":"Подъём штанги на бицепс обратным хватом","sets":3,"reps":"10-12"},{"name":"Подъём ног в висе (или лёжа)","sets":3,"reps":"12-15"}]},{"day":6,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"","incline":""}},{"day":7,"type":"strength","title":"Грудь, спина, плечи","exercises":[{"name":"Жим штанги лёжа","sets":4,"reps":"6-8"},{"name":"Тяга штанги в наклоне","sets":4,"reps":"8-10"},{"name":"Жим штанги сидя","sets":3,"reps":"8-10"},{"name":"Тяга верхнего блока (широкий хват)","sets":3,"reps":"10-12"},{"name":"Разводка гантелей в стороны","sets":4,"reps":"12-15"},{"name":"Отжимания на брусьях","sets":3,"reps":"8-10"},{"name":"Подъём штанги на бицепс стоя","sets":3,"reps":"8-10"},{"name":"Планка","sets":3,"reps":"40-60"}]},{"day":8,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"3","incline":"20"}},{"day":9,"type":"strength","title":"Ноги","exercises":[{"name":"Приседания со штангой на плечах","sets":4,"reps":"6-8"},{"name":"Румынская тяга со штангой","sets":4,"reps":"8-10"},{"name":"Разгибание ног в тренажёре","sets":3,"reps":"12-15"},{"name":"Сгибание ног сидя в тренажёре","sets":3,"reps":"12-15"},{"name":"Подъём на носки стоя","sets":4,"reps":"15-20"},{"name":"Гиперэкстензия","sets":3,"reps":"12-15"},{"name":"Скручивания на наклонной скамье","sets":3,"reps":"15-20"}]},{"day":10,"type":"pool","title":"Бассейн","cardio":{"name":"Бассейн","duration":"60"}},{"day":11,"type":"strength","title":"Руки, кор, добивка","exercises":[{"name":"Жим штанги узким хватом","sets":4,"reps":"8-10"},{"name":"Подтягивания","sets":4,"reps":"8-10"},{"name":"Подъём на бицепс на скамье Скотта","sets":3,"reps":"10-12"},{"name":"Разгибание рук на верхнем блоке","sets":3,"reps":"12-15"},{"name":"Подъём штанги на бицепс обратным хватом","sets":3,"reps":"10-12"},{"name":"Подъём ног в висе (или лёжа)","sets":3,"reps":"12-15"}]},{"day":12,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"","incline":""}},{"day":13,"type":"strength","title":"Грудь, спина, плечи","exercises":[{"name":"Жим штанги лёжа","sets":5,"reps":"4-6"},{"name":"Тяга штанги в наклоне","sets":5,"reps":"5-6"},{"name":"Жим штанги сидя","sets":3,"reps":"8-10"},{"name":"Тяга верхнего блока (широкий хват)","sets":3,"reps":"10-12"},{"name":"Разводка гантелей в стороны","sets":3,"reps":"12-15"},{"name":"Планка","sets":3,"reps":"40-60"}]},{"day":14,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"3","incline":"20"}},{"day":15,"type":"strength","title":"Ноги","exercises":[{"name":"Приседания со штангой на плечах","sets":5,"reps":"4-6"},{"name":"Румынская тяга со штангой","sets":5,"reps":"5-6"},{"name":"Сгибание ног сидя в тренажёре","sets":3,"reps":"12-15"},{"name":"Разгибание ног в тренажёре","sets":3,"reps":"12-15"},{"name":"Подъём на носки стоя","sets":4,"reps":"15-20"},{"name":"Гиперэкстензия","sets":3,"reps":"12-15"},{"name":"Скручивания на наклонной скамье","sets":3,"reps":"15-20"}]},{"day":16,"type":"pool","title":"Бассейн","cardio":{"name":"Бассейн","duration":"60"}},{"day":17,"type":"strength","title":"Руки, кор, добивка","exercises":[{"name":"Жим штанги узким хватом","sets":5,"reps":"5-6"},{"name":"Подтягивания","sets":5,"reps":"5-6"},{"name":"Подъём на бицепс на скамье Скотта","sets":3,"reps":"10-12"},{"name":"Разгибание рук на верхнем блоке","sets":3,"reps":"12-15"},{"name":"Подъём ног в висе (или лёжа)","sets":3,"reps":"12-15"}]},{"day":18,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"","incline":""}},{"day":19,"type":"strength","title":"Грудь, спина, плечи","exercises":[{"name":"Жим штанги лёжа","sets":3,"reps":"8-10"},{"name":"Тяга штанги в наклоне","sets":3,"reps":"10-12"},{"name":"Жим гантелей сидя над головой","sets":2,"reps":"10-12"},{"name":"Тяга верхнего блока (широкий хват)","sets":2,"reps":"12-15"},{"name":"Разводка гантелей в стороны","sets":2,"reps":"15"},{"name":"Планка","sets":2,"reps":"40-60"}]},{"day":20,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"3","incline":"20"}},{"day":21,"type":"strength","title":"Ноги","exercises":[{"name":"Приседания со штангой на плечах","sets":3,"reps":"8-10"},{"name":"Румынская тяга со штангой","sets":3,"reps":"10-12"},{"name":"Разгибание ног в тренажёре","sets":2,"reps":"15"},{"name":"Сгибание ног сидя в тренажёре","sets":2,"reps":"15"},{"name":"Подъём на носки стоя","sets":3,"reps":"15-20"},{"name":"Скручивания на наклонной скамье","sets":2,"reps":"15-20"}]},{"day":22,"type":"pool","title":"Бассейн","cardio":{"name":"Бассейн","duration":"60"}},{"day":23,"type":"strength","title":"Руки, кор, добивка","exercises":[{"name":"Жим штанги узким хватом","sets":3,"reps":"10-12"},{"name":"Подтягивания","sets":3,"reps":"8-10"},{"name":"Подъём на бицепс на скамье Скотта","sets":2,"reps":"12-15"},{"name":"Разгибание рук на верхнем блоке","sets":2,"reps":"15"},{"name":"Подъём ног в висе (или лёжа)","sets":2,"reps":"12-15"}]},{"day":24,"type":"cardio","title":"Кардио на дорожке","cardio":{"name":"Беговая дорожка","distance":"","incline":""}}];
+// Поле заметки, которое растёт вместе с текстом. До 1.1.0 у «Самочувствие ·
+// заметка» была фиксированная высота в две строки и ручной уголок resize —
+// на телефоне за него не ухватиться, и длинная заметка писалась вслепую в окне
+// на две строки. Теперь высота подгоняется под содержимое на каждом вводе;
+// minHeight из style остаётся нижней границей.
+export function AutoGrowTextarea({ value, style, ...rest }) {
+  const ref = React.useRef(null);
+  const fit = React.useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    // scrollHeight не включает рамку, а у полей box-sizing: border-box — без
+    // добавки рамки последняя строка уезжала бы под край на пару пикселей.
+    const cs = window.getComputedStyle(el);
+    const border = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+    el.style.height = `${el.scrollHeight + border}px`;
+  }, []);
+  React.useLayoutEffect(() => { fit(); }, [value, fit]);
+  // Ширина поля меняется при повороте экрана — переносы строк тоже.
+  React.useEffect(() => {
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [fit]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      style={{ ...style, resize: 'none', overflow: 'hidden' }}
+      {...rest}
+    />
+  );
+}
+
+// Цель по повторам для подписи: «8-10» → «8-10 повт», «40-60» у планки → «40-60 сек»,
+// «до отказа» (план 2) — как есть, без «повт» в хвосте.
+export function fmtTargetReps(reps, timed) {
+  if (reps == null || reps === '') return timed ? 'на время' : '—';
+  const s = String(reps);
+  return /\d/.test(s) ? `${s} ${timed ? 'сек' : 'повт'}` : s;
+}
 
 export function CardioRow({ c, onChange, onRemove, removable, knownNames, animDelay }) {
   const t = useTheme();
@@ -650,10 +702,13 @@ export function RepeatWorkoutPicker({ sessions, onPick }) {
 
 export const DAY_TYPE_ICON = { strength: Dumbbell, cardio: Activity, pool: Waves };
 
-export function ProgramDayPicker({ value, onChange }) {
+// Выбор дня программы. План приходит пропом: до 1.1.0 здесь был зашит
+// единственный PROGRAM_DAYS и делитель недели 6 прямо в разметке.
+export function ProgramDayPicker({ plan, value, onChange }) {
   const t = useTheme();
   const [open, setOpen] = useState(false);
-  const selected = PROGRAM_DAYS.find((d) => d.day === value);
+  const days = (plan && plan.days) || [];
+  const selected = days.find((d) => d.day === value);
 
   return (
     <div style={{ position: 'relative', width: '100%', minWidth: 0, marginBottom: 14 }}>
@@ -670,7 +725,7 @@ export function ProgramDayPicker({ value, onChange }) {
           <span style={{
             flexShrink: 0, fontSize: 11, fontWeight: 700, color: t.ON_ACCENT, fontFamily: t.FONT_MONO,
             background: t.ACCENT_GRAD, padding: '4px 8px', borderRadius: 8,
-          }}>День {value}/{PROGRAM_DAYS.length}</span>
+          }}>День {value}/{days.length}</span>
           {selected && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
               {DAY_TYPE_ICON[selected.type] && React.createElement(DAY_TYPE_ICON[selected.type], { size: 15, color: t.ACCENT_SOFT, style: { flexShrink: 0 } })}
@@ -688,9 +743,10 @@ export function ProgramDayPicker({ value, onChange }) {
             background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10,
             maxHeight: 280, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           }}>
-            {PROGRAM_DAYS.map((d, idx) => {
-              const weekNumber = Math.floor((d.day - 1) / 6) + 1;
-              const isFirstOfWeek = idx === 0 || PROGRAM_DAYS[idx - 1] && Math.floor((PROGRAM_DAYS[idx - 1].day - 1) / 6) + 1 !== weekNumber;
+            {days.map((d, idx) => {
+              const weekNumber = planWeekOf(plan, d.day);
+              const isFirstOfWeek = idx === 0 || planWeekOf(plan, days[idx - 1].day) !== weekNumber;
+              const weekLabel = plan && plan.weekLabels && plan.weekLabels[weekNumber];
               return (
                 <React.Fragment key={d.day}>
                   {isFirstOfWeek && (
@@ -700,7 +756,7 @@ export function ProgramDayPicker({ value, onChange }) {
                       background: t.BG_RAISED, borderBottom: `1px solid ${t.BORDER}`,
                       position: 'sticky', top: 0,
                     }}>
-                      Неделя {weekNumber}
+                      Неделя {weekNumber}{weekLabel ? ` · ${weekLabel}` : ''}
                     </div>
                   )}
                   <button

@@ -120,7 +120,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'get_profile',
-      description: 'Параметры тела: рост, талия, бёдра, грудь, плечи, процент жира.',
+      description: 'Параметры тела (рост, талия, бёдра, грудь, плечи, процент жира), текущий план тренировок (plan_id) и последний сделанный день этого плана.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -136,14 +136,21 @@ const SYSTEM_PROMPT = `Ты — помощник в личном приложе�
 - Даты пиши по-человечески: «17 августа», а не «2026-08-17».
 - Веса в килограммах, дистанции в километрах, время в минутах.
 
-Программа тренировок — цикл из 24 дней, четыре недели по шесть дней: понедельник силовая (грудь, спина, плечи), вторник кардио на дорожке, среда силовая (ноги), четверг бассейн, пятница силовая (руки, кор), суббота кардио. Поле program_day в тренировке — номер дня этого цикла.`;
+Планы тренировок. Каждый — цикл из 24 дней: четыре недели по шесть дней (ПН–СБ, воскресенье — отдых). Поле plan_id в тренировке — к какому плану она относится, program_day — номер дня в цикле ЭТОГО плана (в разных планах один и тот же номер — разные тренировки). В профиле plan_id — план, который ведётся сейчас.
+- plan1 «Сила, кардио, бассейн» (все тренировки до 18 октября 2026): понедельник силовая (грудь, спина, плечи), вторник кардио на дорожке, среда силовая (ноги), четверг бассейн, пятница силовая (руки, кор), суббота кардио. Недели: 1 база, 2 объём, 3 интенсив, 4 разгрузка.
+- plan2 «Сплит 6 дней» (с 19 октября 2026): все шесть дней силовые, после каждой — кардио-финишер на дорожке. ПН грудь + руки (тяжёлый), ВТ плечи + спина (тяжёлый), СР ноги (тяжёлый), ЧТ грудь + руки (объёмный), ПТ плечи + спина (объёмный), СБ ноги + ягодицы (объёмный). Недели: 1 база, 2 объём (+1 подход на основном упражнении), 3 тяжёлая (основное движение ПН–СР на 2–4 повтора), 4 разгрузка (подходов примерно на треть меньше, веса на 10–15% легче).
+
+У упражнения могут быть пометки: replaced_from — каким упражнением плана его заменили по ходу тренировки; added — добавлено сверх плана; minutes_on_exercise — время по секундомеру упражнения.`;
 
 // ---------- Реализация инструментов ----------
 // В КАЖДОМ запросе обязателен .eq('user_id', userId).
 
 function compactSession(row) {
   const out = { date: row.date };
-  if (row.program_day) out.program_day = row.program_day;
+  if (row.program_day) {
+    out.program_day = row.program_day;
+    out.plan_id = row.plan_id || 'plan1';
+  }
   const ex = (row.exercises || [])
     .filter((e) => e && e.name)
     .map((e) => {
@@ -153,6 +160,9 @@ function compactSession(row) {
       if (Number(e.sets) > 0) o.sets = Number(e.sets);
       if (e.timed) o.seconds = Number(e.reps) || 0;
       if (e.note) o.note = e.note;
+      if (e.replacedFrom) o.replaced_from = e.replacedFrom;
+      if (e.added) o.added = true;
+      if (Number(e.durationSec) > 0) o.minutes_on_exercise = Math.round(Number(e.durationSec) / 6) / 10;
       return o;
     });
   if (ex.length) out.exercises = ex;
@@ -247,6 +257,8 @@ async function toolGetProfile(reader, userId) {
       height_cm: data.height, waist_cm: data.waist, hips_cm: data.hips,
       chest_cm: data.chest, shoulders_cm: data.shoulders, body_fat_pct: data.body_fat,
       updated: data.updated_at,
+      plan_id: data.plan_id || 'plan1',
+      last_program_day: data.last_program_day ?? null,
     },
   };
 }

@@ -10,6 +10,7 @@ import { MeasurementsTab } from './tabs/MeasurementsTab.jsx';
 import { ProgressTab } from './tabs/ProgressTab.jsx';
 import { ProfileTab } from './tabs/ProfileTab.jsx';
 import { AssistantTab } from './tabs/AssistantTab.jsx';
+import { DEFAULT_PLAN_ID } from './plans.js';
 
 // ------- Преобразование между форматом БД (snake_case) и форматом приложения (camelCase) -------
 
@@ -26,6 +27,9 @@ function sessionFromRow(row) {
     routeName: row.route_name ?? null,
     feeling: row.feeling || '',
     programDay: row.program_day,
+    // К какому плану относится programDay (1.1.0). У записей до 1.1.0 колонка
+    // заполнена значением по умолчанию 'plan1'.
+    planId: row.plan_id || DEFAULT_PLAN_ID,
   };
 }
 
@@ -43,6 +47,7 @@ function sessionToRow(s, userId) {
     route_name: s.routeName ?? null,
     feeling: s.feeling || '',
     program_day: s.programDay,
+    plan_id: s.planId || DEFAULT_PLAN_ID,
   };
 }
 
@@ -61,6 +66,8 @@ function profileFromRow(row) {
   if (!row) return {};
   return {
     lastProgramDay: row.last_program_day,
+    // Какой план сейчас ведётся (1.1.0). Выбирается в «Профиле».
+    planId: row.plan_id || DEFAULT_PLAN_ID,
     height: row.height,
     waist: row.waist,
     hips: row.hips,
@@ -75,6 +82,7 @@ function profileToRow(p, userId) {
   return {
     user_id: userId,
     last_program_day: p.lastProgramDay ?? null,
+    plan_id: p.planId || DEFAULT_PLAN_ID,
     height: p.height ?? null,
     waist: p.waist ?? null,
     hips: p.hips ?? null,

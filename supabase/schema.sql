@@ -31,6 +31,7 @@ create index users_telegram_id_idx on users (telegram_id);
 -- difficulty — субъективная тяжесть тренировки 1–5 (1.0.1).
 -- route_name — название выбранного маршрута для кардио-дня по секторам (1.0.3).
 -- Все три поля опциональны.
+-- plan_id — к какому плану тренировок относится program_day (1.1.0, src/plans.js).
 create table sessions (
   id text primary key,
   user_id uuid not null references users(id) on delete cascade,
@@ -44,6 +45,7 @@ create table sessions (
   route_name text,
   feeling text,
   program_day integer,
+  plan_id text not null default 'plan1',
   created_at timestamptz default now()
 );
 
@@ -61,9 +63,11 @@ create table measurements (
 
 create index measurements_user_date_idx on measurements (user_id, date);
 
--- Профиль (один ряд на пользователя): последний день программы + параметры тела
+-- Профиль (один ряд на пользователя): текущий план, последний день программы
+-- (0 — план только что выбран, следующей будет день 1) + параметры тела.
 create table profile (
   user_id uuid primary key references users(id) on delete cascade,
+  plan_id text not null default 'plan1',
   last_program_day integer,
   height numeric,
   waist numeric,
@@ -107,6 +111,7 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 --   1.0.0 — время записи веса.
 --   1.0.1 — длительность и тяжесть тренировки.
 --   1.0.3 — название маршрута кардио-дня.
+--   1.1.0 — план тренировок у тренировки и профиля (migration-add-plan-id.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
@@ -114,6 +119,8 @@ alter table sessions
   add column if not exists duration_sec integer,
   add column if not exists difficulty integer,
   add column if not exists route_name text;
+alter table sessions add column if not exists plan_id text not null default 'plan1';
+alter table profile add column if not exists plan_id text not null default 'plan1';
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.

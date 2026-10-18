@@ -217,6 +217,9 @@ export const COOLDOWN_SETS = {
   upper: [SPINE_HANG, CHEST_DOOR, CAT_COW].map(withAlts),
   legs: [CHILD_POSE, HIP_FLEXOR, HAMSTRING].map(withAlts),
   arms: [SPINE_HANG, FOREARM, TRICEPS].map(withAlts),
+  // План 2: грудь и руки в один день — раскрыть грудь после жимов и снять
+  // трицепс с предплечьями после разгибаний и подъёмов на бицепс.
+  chestArms: [CHEST_DOOR, TRICEPS, FOREARM].map(withAlts),
   cardio: [CALF, HIP_FLEXOR, BREATHING].map(withAlts),
   general: [SPINE_HANG, CHILD_POSE, HIP_FLEXOR].map(withAlts),
 };
@@ -227,6 +230,9 @@ export function cooldownFor(day) {
   if (!day) return null;
   if (day.type === 'pool') return null;
   if (day.type === 'cardio') return COOLDOWN_SETS.cardio;
+  // Явный ключ дня (план 2) важнее догадки по названию: «Грудь + руки» по
+  // правилам ниже ушло бы в верх тела без трицепса и предплечий.
+  if (day.cooldown && COOLDOWN_SETS[day.cooldown]) return COOLDOWN_SETS[day.cooldown];
   const title = String(day.title || '');
   if (title.includes('Ноги')) return COOLDOWN_SETS.legs;
   if (title.includes('Руки')) return COOLDOWN_SETS.arms;

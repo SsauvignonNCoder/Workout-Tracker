@@ -1,17 +1,23 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
   Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
-  ChevronDown, ChevronUp, HelpCircle, TrendingUp,
+  ChevronDown, ChevronUp, HelpCircle, TrendingUp, Minus, Pause, Trash2,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
-import { cooldownFor, variantsOf } from '../cooldown.js';
+import { variantsOf } from '../cooldown.js';
 import {
-  Field, getInputStyle, getLabelInputStyle, MuscleBadge,
+  Field, getInputStyle, getLabelInputStyle, MuscleBadge, ExerciseNameInput, AutoGrowTextarea,
   isWeightlessExercise, isTimeBasedExercise, repGoalLow, secToClock, parseClock, formatClockInput,
-  clampIncline, MAX_INCLINE,
+  clampIncline, MAX_INCLINE, fmtTargetReps,
 } from './workoutTabHelpers.jsx';
+import {
+  buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
+  insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData,
+  clampSets, MAX_SETS, swElapsed, swIsRunning, swToggle, pauseAllTimers, sectorCodes,
+  buildGuidedSession, draftMatches,
+} from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
 import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
@@ -82,9 +88,14 @@ function fmtElapsed(sec) {
 // изменения кладём черновик в localStorage устройства, а при следующем открытии того же
 // дня предлагаем продолжить. Черновик живёт сутки и стирается после успешного сохранения.
 // Ключ черновика привязан к пользователю: до 1.0.6 он был один на всё устройство,
-// и на общем телефоне черновик одного аккаунта предлагался другому. Старый ключ
-// v1 просто перестаёт читаться — терять там нечего, черновик живёт сутки.
-const DRAFT_KEY_BASE = 'wt:guided-draft:v2';
+// и на общем телефоне черновик одного аккаунта предлагался другому.
+//
+// v3 (1.1.0): в черновике лежит сам список шагов — по ходу тренировки его можно
+// менять (добавить, заменить упражнение), и восстановить его из плана уже нельзя.
+// Записи хранятся по id шага, а не по номеру. Черновик v2 (ключи-номера, без
+// списка шагов и без plan_id) не читается: живёт он сутки, а сопоставить его
+// номера с шагами другого плана надёжно нельзя.
+const DRAFT_KEY_BASE = 'wt:guided-draft:v3';
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function draftKey(userId) {
@@ -96,7 +107,7 @@ function readDraft(userId) {
     const raw = window.localStorage.getItem(draftKey(userId));
     if (!raw) return null;
     const d = JSON.parse(raw);
-    if (!d || d.v !== 2 || !d.savedAt) return null;
+    if (!d || d.v !== 3 || !d.savedAt) return null;
     if (Date.now() - d.savedAt > DRAFT_TTL_MS) return null;
     return d;
   } catch (e) { return null; }
@@ -104,7 +115,7 @@ function readDraft(userId) {
 
 function writeDraft(userId, payload) {
   try {
-    window.localStorage.setItem(draftKey(userId), JSON.stringify({ ...payload, v: 2, savedAt: Date.now() }));
+    window.localStorage.setItem(draftKey(userId), JSON.stringify({ ...payload, v: 3, savedAt: Date.now() }));
     return true;
   } catch (e) { return false; }
 }
@@ -113,92 +124,11 @@ function clearDraft(userId) {
   try { window.localStorage.removeItem(draftKey(userId)); } catch (e) { /* no-op */ }
 }
 
-// Черновик мог быть записан для другой версии плана (упражнение добавили/убрали).
-// Берём из него только те шаги, тип которых совпал с текущим планом.
-function pickByKind(saved, steps, kind) {
-  const out = {};
-  if (!saved || typeof saved !== 'object') return out;
-  Object.keys(saved).forEach((k) => {
-    const i = parseInt(k, 10);
-    if (steps[i] && steps[i].kind === kind) out[i] = saved[k];
-  });
-  return out;
-}
-
 function fmtSavedAt(ts) {
   try {
     return new Date(ts).toLocaleString('ru-RU', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
   } catch (e) { return ''; }
 }
-
-// Строит упорядоченный список шагов гид-тренировки из плана дня.
-// Силовой день: разминка на дорожке → упражнения по порядку → заминка на дорожке (финишер)
-// → разгрузочная гимнастика → итог.
-// Кардио-день: секторы → разгрузочная гимнастика → итог. Бассейн: бассейн → итог.
-function buildSteps(day) {
-  if (!day) return [];
-  if (day.type === 'strength') {
-    const out = [];
-    out.push({
-      kind: 'cardio', title: 'Разминка на беговой дорожке',
-      subtitle: 'Разгони пульс перед работой, 5–10 мин',
-      name: 'Разминка (беговая дорожка)',
-      fields: { distance: true, speed: true, incline: false, duration: true },
-      target: { duration: '5-10' },
-    });
-    day.exercises.forEach((ex) => {
-      out.push({
-        kind: 'exercise', name: ex.name,
-        plannedSets: Math.max(1, parseInt(ex.sets) || 1),
-        targetReps: ex.reps,
-      });
-    });
-    out.push({
-      kind: 'cardio', title: 'Беговая дорожка · финиш',
-      subtitle: 'Уклон 15%, 15–20 минут',
-      name: 'Беговая дорожка',
-      fields: { distance: true, speed: true, incline: true, duration: true },
-      target: { incline: '15', duration: '15-20' },
-    });
-    pushCooldown(out, day);
-    out.push(SUMMARY_STEP);
-    return out;
-  }
-  if (day.type === 'cardio') {
-    // Уникальный режим кардио-дня: интервалы по секторам до общей цели.
-    const out = [{
-      kind: 'sectors', title: day.title,
-      subtitle: 'Интервалы по секторам до общей цели',
-      name: day.cardio.name,
-      planDistance: day.cardio.distance, planIncline: day.cardio.incline,
-    }];
-    pushCooldown(out, day);
-    out.push(SUMMARY_STEP);
-    return out;
-  }
-  if (day.type === 'pool') {
-    return [{
-      kind: 'pool', title: day.title, subtitle: `${day.cardio.duration || '60'} минут`,
-      name: day.cardio.name,
-      fields: { distance: false, speed: false, incline: false, duration: true },
-      target: { duration: day.cardio.duration },
-    }, SUMMARY_STEP];
-  }
-  return [];
-}
-
-// Разгрузочная гимнастика — в конце любой тренировки, кроме бассейна.
-function pushCooldown(out, day) {
-  const items = cooldownFor(day);
-  if (!items || !items.length) return;
-  out.push({
-    kind: 'cooldown', title: 'Заминка',
-    subtitle: 'Разгрузка и растяжка — 3–4 минуты',
-    items,
-  });
-}
-
-const SUMMARY_STEP = { kind: 'summary', title: 'Итог тренировки', subtitle: 'Сон, энергия и заметки' };
 
 function fmtClock(sec) {
   const m = Math.floor(sec / 60);
@@ -210,23 +140,6 @@ function emptySector() { return { distance: '', speed: '', incline: '', clock: '
 
 // Буква сектора: 0→A, 1→B … после Z — просто номер.
 function sectorLabel(i) { return i < 26 ? String.fromCharCode(65 + i) : String(i + 1); }
-
-// Коды секторов вида «1A, 1B, 2A…»: цифра — километр по нарастающей дистанции
-// (0–1 км → «1», 1–2 км → «2», …), буква — порядковый сектор внутри этого километра.
-// Километр определяется по суммарной дистанции ДО начала сектора. Если дистанции
-// нет (кардио по времени) — все попадают в «1», буквы идут подряд.
-function sectorCodes(sectors) {
-  let cum = 0;
-  const counts = {};
-  return (sectors || []).map((s) => {
-    const km = Math.floor(cum) + 1;
-    const li = counts[km] || 0;
-    counts[km] = li + 1;
-    const letter = li < 26 ? String.fromCharCode(65 + li) : String(li + 1);
-    cum += parseFloat(s.distance) || 0;
-    return `${km}${letter}`;
-  });
-}
 
 // Набор высоты в метрах: наклон — это проценты (подъём на единицу горизонтали),
 // поэтому подъём сектора = дистанция × наклон/100. Сумма по всем секторам, км → м.
@@ -271,22 +184,29 @@ function trimNum(n) { return String(+(Number(n).toFixed(2))); }
 // Метры показываем целыми (670, а не 670.4), км и минуты — с десятыми.
 function fmtGoal(n, isElev) { return isElev ? String(Math.round(n)) : trimNum(n); }
 
-export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, records, onClose, onComplete, minimized, onMinimize, onExpand }) {
+export function GuidedWorkout({
+  dayPlan: dayPlanProp, planId: planIdProp, date: dateProp, userId, records, knownNames = [],
+  onClose, onComplete, minimized, onMinimize, onExpand,
+}) {
   const t = useTheme();
 
-  // День программы и дата ФИКСИРУЮТСЯ на момент запуска и дальше не слушают пропы.
+  // День программы, план и дата ФИКСИРУЮТСЯ на момент запуска и дальше не слушают пропы.
   //
   // Причина: пока тренировка идёт в свёрнутом виде, под ней остаётся живой
-  // WorkoutTab с выбором дня и даты — и то, и другое можно переключить, ничего
-  // при этом не закрывая. Раньше новый `dayPlan` доезжал до открытого гида,
-  // `buildSteps` пересобирал шаги под другой день, а уже введённые подходы
-  // (`exLogs`, `stepIdx`) оставались от прежнего — записанный вес оказывался
+  // WorkoutTab с выбором дня и даты (а в «Профиле» — выбор плана) — и всё это
+  // можно переключить, ничего при этом не закрывая. Раньше новый `dayPlan`
+  // доезжал до открытого гида, шаги пересобирались под другой день, а уже
+  // введённые подходы оставались от прежнего — записанный вес оказывался
   // приписан к упражнению, которого ты не делал. Смена даты тем же путём
   // сохраняла тренировку задним числом. Ошибки при этом не показывалось.
   const [dayPlan] = useState(() => dayPlanProp);
+  const [planId] = useState(() => planIdProp || null);
   const [workoutDate] = useState(() => dateProp || todayISO());
 
-  const steps = useMemo(() => buildSteps(dayPlan), [dayPlan]);
+  // Шаги — состояние, а не производная от плана: по ходу тренировки их можно
+  // менять (добавить упражнение, заменить). У каждого шага постоянный id, и все
+  // записи ниже хранятся по нему (см. src/guidedSteps.js).
+  const [steps, setSteps] = useState(() => buildSteps(dayPlan));
 
   const [stepIdx, setStepIdx] = useState(0);
 
@@ -299,36 +219,22 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
   const flashTimerRef = useRef(null);
   // Модалка-подсказка «как выполнять» (пункт 6).
   const [guideFor, setGuideFor] = useState(null);
+  // Шторка добавления/замены упражнения: { mode: 'add' | 'edit', stepId? }.
+  const [sheet, setSheet] = useState(null);
+  // Короткая подсказка после добавления («Добавлено следующим»).
+  const [toast, setToast] = useState('');
+  const toastTimerRef = useRef(null);
 
-  // Логи по индексу шага: упражнения — массив {weight,reps} по подходам; кардио — объект.
-  const [exLogs, setExLogs] = useState(() => {
-    const m = {};
-    steps.forEach((s, i) => {
-      if (s.kind === 'exercise') {
-        m[i] = Array.from({ length: s.plannedSets }, () => ({ weight: '', reps: '' }));
-      }
-    });
-    return m;
-  });
-  const [cardioLogs, setCardioLogs] = useState(() => {
-    const m = {};
-    steps.forEach((s, i) => {
-      if (s.kind === 'cardio' || s.kind === 'pool') m[i] = { distance: '', speed: '', incline: '', duration: '' };
-    });
-    return m;
-  });
-  // Секторный кардио-день: метрика цели, сама цель и список секторов.
-  const [sectorLogs, setSectorLogs] = useState(() => {
-    const m = {};
-    steps.forEach((s, i) => {
-      if (s.kind === 'sectors') {
-        m[i] = { metric: 'distance', target: s.planDistance || '', sectors: [emptySector()] };
-      }
-    });
-    return m;
-  });
-  // Заметки по каждому упражнению (ключ — индекс шага).
+  // Записи по id шага: упражнения — массив {weight,reps} по подходам; кардио — объект;
+  // секторный кардио-день — метрика цели, сама цель и список секторов.
+  const [initLogs] = useState(() => initialLogs(steps));
+  const [exLogs, setExLogs] = useState(initLogs.exLogs);
+  const [cardioLogs, setCardioLogs] = useState(initLogs.cardioLogs);
+  const [sectorLogs, setSectorLogs] = useState(initLogs.sectorLogs);
+  // Заметки по каждому упражнению (ключ — id шага).
   const [exNotes, setExNotes] = useState({});
+  // Секундомер упражнения (ключ — id шага): { acc, since } — см. guidedSteps.js.
+  const [exTimers, setExTimers] = useState({});
   // Отметки «сделано» на шаге заминки (ключ — индекс упражнения заминки). В базу не пишем.
   const [cooldownDone, setCooldownDone] = useState({});
   // Выбранный вариант упражнения заминки (ключ — индекс, значение — номер варианта).
@@ -343,7 +249,8 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
   // Подтверждение досрочного завершения кардио-дня, когда цель не добрана.
   const [confirmEarly, setConfirmEarly] = useState(false);
 
-  // Живой отсчёт времени тренировки (обновляем раз в секунду).
+  // Живой отсчёт времени тренировки (обновляем раз в секунду). Этот же тик
+  // перерисовывает секундомер упражнения — своего интервала ему не нужно.
   useEffect(() => {
     const id = setInterval(() => {
       setElapsed(Math.round((Date.now() - startedAtRef.current) / 1000));
@@ -355,11 +262,15 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
   const draftRef = useRef(null);
   const [restoreOffer, setRestoreOffer] = useState(() => {
     const d = readDraft(userId);
-    // Сверяем и день программы, и дату тренировки. Раньше сверялся только день:
-    // черновик вчерашнего дня 5 предлагался как «продолжить» сегодняшний, причём
-    // вместе с вчерашней меткой старта — и в durationSec уезжала тренировка на
-    // много часов.
-    if (d && dayPlan && d.day === dayPlan.day && d.date === workoutDate) { draftRef.current = d; return true; }
+    // Сверяем план, день программы и дату тренировки. Раньше сверялся только
+    // день: черновик вчерашнего дня 5 предлагался как «продолжить» сегодняшний,
+    // причём вместе с вчерашней меткой старта — и в durationSec уезжала
+    // тренировка на много часов. План (1.1.0) — потому что «день 5» в разных
+    // планах — разные тренировки.
+    if (d && dayPlan && draftMatches(d, { planId, day: dayPlan.day, date: workoutDate })) {
+      draftRef.current = d;
+      return true;
+    }
     return false;
   });
   const [draftSavedAt, setDraftSavedAt] = useState(0);
@@ -367,14 +278,15 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
   const applyDraft = () => {
     const d = draftRef.current;
     if (d) {
-      const ex = pickByKind(d.exLogs, steps, 'exercise');
-      const notes = pickByKind(d.exNotes, steps, 'exercise');
-      const cardio = { ...pickByKind(d.cardioLogs, steps, 'cardio'), ...pickByKind(d.cardioLogs, steps, 'pool') };
-      const sectors = pickByKind(d.sectorLogs, steps, 'sectors');
-      setExLogs((prev) => ({ ...prev, ...ex }));
-      setExNotes((prev) => ({ ...prev, ...notes }));
-      setCardioLogs((prev) => ({ ...prev, ...cardio }));
-      setSectorLogs((prev) => ({ ...prev, ...sectors }));
+      setSteps(d.steps);
+      setExLogs(d.exLogs || {});
+      setExNotes(d.exNotes || {});
+      setCardioLogs(d.cardioLogs || {});
+      setSectorLogs(d.sectorLogs || {});
+      // Бегущий в момент выгрузки секундомер останавливаем на времени последней
+      // записи черновика: дальше этого момента неизвестно, шло ли упражнение
+      // или телефон просто лежал. Продолжить можно кнопкой.
+      setExTimers(pauseAllTimers(d.exTimers || {}, Math.min(d.savedAt || Date.now(), Date.now())));
       if (d.cooldownDone) setCooldownDone(d.cooldownDone);
       if (d.cooldownPick) setCooldownPick(d.cooldownPick);
       if (d.summary) setSummary((prev) => ({ ...prev, ...d.summary }));
@@ -385,7 +297,8 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
       if (d.startedAt && Date.now() - d.startedAt < MAX_RESUMABLE_MS) {
         startedAtRef.current = d.startedAt;
       }
-      setStepIdx(Math.min(steps.length - 1, Math.max(0, parseInt(d.stepIdx, 10) || 0)));
+      const idx = d.steps.findIndex((s) => s.id === d.stepId);
+      setStepIdx(idx >= 0 ? idx : 0);
     }
     setRestoreOffer(false);
   };
@@ -551,8 +464,9 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
   // когда приложение уходит в фон (в этот момент React уже может не успеть отработать).
   const snapshotRef = useRef(null);
   snapshotRef.current = {
-    day: dayPlan && dayPlan.day, title: dayPlan && dayPlan.title, date: workoutDate,
-    stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary,
+    planId, day: dayPlan && dayPlan.day, title: dayPlan && dayPlan.title, date: workoutDate,
+    steps, stepId: steps[stepIdx] ? steps[stepIdx].id : null,
+    exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary,
     startedAt: startedAtRef.current,
   };
 
@@ -562,7 +476,7 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
       if (writeDraft(userId, snapshotRef.current)) setDraftSavedAt(Date.now());
     }, 400);
     return () => clearTimeout(id);
-  }, [restoreOffer, saving, userId, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, cooldownDone, cooldownPick, summary]);
+  }, [restoreOffer, saving, userId, steps, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary]);
 
   useEffect(() => {
     const flush = () => {
@@ -578,55 +492,136 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
     };
   }, [restoreOffer, saving, userId]);
 
+  const step = steps[stepIdx];
+  const stepId = step ? step.id : null;
+  const isLast = stepIdx === steps.length - 1;
+
   // При смене шага — прокрутка наверх, плюс сброс «одноразовых» состояний футера:
   // подтверждения досрочного завершения и сообщения о неудачном сохранении.
+  // Ключ — id шага, а не номер: упражнение, добавленное с финишной дорожки,
+  // встаёт на её место, и номер шага при этом не меняется.
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setConfirmEarly(false);
     setSaveError('');
-  }, [stepIdx]);
+    // Секундомер упражнения останавливается, когда уходишь с шага: иначе
+    // забытый на одном упражнении он копил бы время всех следующих.
+    setExTimers((prev) => pauseAllTimers(prev));
+  }, [stepId]);
 
-  const step = steps[stepIdx];
-  const isLast = stepIdx === steps.length - 1;
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  const showToast = (text) => {
+    setToast(text);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => { toastTimerRef.current = null; setToast(''); }, 2600);
+  };
 
   const setExSet = (si, fieldObj) => {
     setExLogs((prev) => {
-      const arr = (prev[stepIdx] || []).map((x) => ({ ...x }));
+      const arr = (prev[stepId] || []).map((x) => ({ ...x }));
       arr[si] = { ...arr[si], ...fieldObj };
-      return { ...prev, [stepIdx]: arr };
+      return { ...prev, [stepId]: arr };
     });
   };
 
+  // Подход больше / меньше. Вместе с числом карточек меняется и план шага —
+  // по нему свечение решает, закрыто ли упражнение. Убрать можно только пустой
+  // последний подход: записанный вес так случайно не пропадёт.
+  const changeSetCount = (delta) => {
+    const arr = exLogs[stepId] || [];
+    let next = arr;
+    if (delta > 0 && arr.length < MAX_SETS) next = [...arr.map((x) => ({ ...x })), { weight: '', reps: '' }];
+    if (delta < 0 && arr.length > 1 && !hasSetData(arr.slice(-1))) next = arr.slice(0, -1);
+    if (next === arr) return;
+    setExLogs((prev) => ({ ...prev, [stepId]: next }));
+    setSteps((prev) => prev.map((s) => (s.id === stepId ? { ...s, plannedSets: next.length } : s)));
+  };
+
   const setCardioField = (fieldObj) => {
-    setCardioLogs((prev) => ({ ...prev, [stepIdx]: { ...prev[stepIdx], ...fieldObj } }));
+    setCardioLogs((prev) => ({ ...prev, [stepId]: { ...prev[stepId], ...fieldObj } }));
   };
 
   const setSectorMeta = (patch) => {
-    setSectorLogs((prev) => ({ ...prev, [stepIdx]: { ...prev[stepIdx], ...patch } }));
+    setSectorLogs((prev) => ({ ...prev, [stepId]: { ...prev[stepId], ...patch } }));
   };
   const setSectorField = (si, patch) => {
     setSectorLogs((prev) => {
-      const cur = prev[stepIdx];
+      const cur = prev[stepId];
       const sectors = cur.sectors.map((s, i) => (i === si ? { ...s, ...patch } : s));
-      return { ...prev, [stepIdx]: { ...cur, sectors } };
+      return { ...prev, [stepId]: { ...cur, sectors } };
     });
   };
   const addSector = () => {
     setSectorLogs((prev) => {
-      const cur = prev[stepIdx];
-      return { ...prev, [stepIdx]: { ...cur, sectors: [...cur.sectors, emptySector()] } };
+      const cur = prev[stepId];
+      return { ...prev, [stepId]: { ...cur, sectors: [...cur.sectors, emptySector()] } };
     });
   };
   const removeSector = (si) => {
     setSectorLogs((prev) => {
-      const cur = prev[stepIdx];
+      const cur = prev[stepId];
       if (cur.sectors.length <= 1) return prev;
-      return { ...prev, [stepIdx]: { ...cur, sectors: cur.sectors.filter((_, i) => i !== si) } };
+      return { ...prev, [stepId]: { ...cur, sectors: cur.sectors.filter((_, i) => i !== si) } };
     });
   };
 
-  const setExNote = (val) => setExNotes((prev) => ({ ...prev, [stepIdx]: val }));
+  const setExNote = (val) => setExNotes((prev) => ({ ...prev, [stepId]: val }));
   const toggleCooldown = (i) => setCooldownDone((prev) => ({ ...prev, [i]: !prev[i] }));
+
+  // Секундомер текущего упражнения.
+  const toggleExTimer = () => setExTimers((prev) => ({ ...prev, [stepId]: swToggle(prev[stepId], Date.now()) }));
+  const resetExTimer = () => setExTimers((prev) => {
+    if (!prev[stepId]) return prev;
+    const next = { ...prev };
+    delete next[stepId];
+    return next;
+  });
+
+  // ---- Добавление и замена упражнений ----
+  const applyAdd = ({ name, sets, reps }) => {
+    const added = makeAddedExerciseStep({ name, sets, reps });
+    const at = insertIndexForAdd(steps, stepIdx);
+    setSteps((prev) => insertStep(prev, at, added));
+    setExLogs((prev) => ({ ...prev, [added.id]: emptySets(added.plannedSets) }));
+    setSheet(null);
+    // С финишной дорожки новое упражнение встаёт на текущее место и сразу
+    // открывается. С упражнения — идёт следующим, текущее доделываешь.
+    if (at !== stepIdx) showToast(`Следующим: ${added.name}`);
+  };
+
+  // Замена / правка подходов и повторов. Что будет с уже записанными подходами,
+  // решает planLogAfterEdit; переспрашивает об этом сама шторка.
+  const applyEdit = (targetId, { name, sets, reps }) => {
+    const target = steps.find((s) => s.id === targetId);
+    if (!target) return;
+    const { log } = planLogAfterEdit(target, exLogs[targetId], { name, sets });
+    setSteps((prev) => prev.map((s) => (s.id === targetId ? editExerciseStep(s, { name, sets, reps }) : s)));
+    setExLogs((prev) => ({ ...prev, [targetId]: log }));
+    setSheet(null);
+  };
+
+  // Убрать добавленное по ходу упражнение (плановые не убираются — их можно
+  // заменить или просто не записывать, тогда экспорт честно покажет «пропущено»).
+  const deleteAdded = (targetId) => {
+    const idx = steps.findIndex((s) => s.id === targetId);
+    if (idx < 0 || !steps[idx].added) return;
+    const drop = (prev) => {
+      if (!(targetId in prev)) return prev;
+      const next = { ...prev };
+      delete next[targetId];
+      return next;
+    };
+    setSteps((prev) => removeStep(prev, targetId));
+    setExLogs(drop);
+    setExNotes(drop);
+    setExTimers(drop);
+    // Номер текущего шага сдвигаем, только если убрали шаг перед ним. Если убрали
+    // сам текущий — на его месте окажется следующий шаг.
+    if (idx < stepIdx) setStepIdx((i) => Math.max(0, i - 1));
+    else setStepIdx((i) => Math.min(i, steps.length - 2));
+    setSheet(null);
+  };
 
   // Перебор вариантов упражнения заминки по кругу. Отметку «сделано» сбрасываем:
   // упражнение поменялось, значит его ещё не делали.
@@ -635,106 +630,20 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
     setCooldownDone((prev) => (prev[i] ? { ...prev, [i]: false } : prev));
   };
 
-  // Название маршрута с первого секторного шага, где он был выбран. Этап
-  // дописываем, чтобы «этап 2 из 3» не потерялся в истории.
-  const pickedRouteName = () => {
-    for (let i = 0; i < steps.length; i += 1) {
-      if (steps[i].kind !== 'sectors') continue;
-      const c = sectorLogs[i] && sectorLogs[i].climb;
-      if (c && c.name) {
-        return c.stages > 1 ? `${c.name} · этап ${c.stage}/${c.stages}` : c.name;
-      }
-    }
-    return null;
-  };
-
   const finish = async () => {
-    // Упражнения → агрегат (число) + setLog + заметка. Пустые (без данных и заметки) пропускаем.
-    const outEx = [];
-    steps.forEach((s, i) => {
-      if (s.kind !== 'exercise') return;
-      const log = exLogs[i] || [];
-      const timed = isTimeBasedExercise(s.name);
-      const weightless = isWeightlessExercise(s.name) || timed;
-      const filled = log.filter((x) => (parseFloat(x.weight) || 0) > 0 || (parseInt(x.reps) || 0) > 0);
-      const note = (exNotes[i] || '').trim();
-      if (filled.length === 0 && !note) return;
-      let maxW = 0, repsAtMax = 0, maxReps = 0;
-      filled.forEach((x) => {
-        const w = parseFloat(x.weight) || 0;
-        const r = parseInt(x.reps) || 0;
-        if (w >= maxW) { maxW = w; repsAtMax = r || repsAtMax; }
-        if (r > maxReps) maxReps = r;
-      });
-      outEx.push({
-        name: s.name,
-        weight: weightless ? 0 : maxW,
-        reps: weightless ? maxReps : repsAtMax,
-        sets: Math.max(1, filled.length || s.plannedSets),
-        setLog: filled.map((x) => ({
-          weight: weightless ? 0 : (parseFloat(x.weight) || 0),
-          reps: parseInt(x.reps) || 0,
-        })),
-        ...(timed ? { timed: true } : {}),
-        ...(note ? { note } : {}),
-      });
-    });
-
-    const outCardio = [];
-    steps.forEach((s, i) => {
-      if (s.kind !== 'cardio' && s.kind !== 'pool') return;
-      const c = cardioLogs[i] || {};
-      const dist = parseFloat(c.distance) || 0, spd = parseFloat(c.speed) || 0;
-      const incl = parseFloat(c.incline) || 0, dur = parseInt(c.duration) || 0;
-      if (dist <= 0 && spd <= 0 && incl <= 0 && dur <= 0) return;
-      outCardio.push({ name: s.name, distance: dist, speed: spd, incline: incl, duration: dur });
-    });
-
-    // Секторы кардио-дня — каждый сектор отдельной записью «Сектор A/B/…».
-    // Время вводится как нарастающее показание таймера дорожки (мм:сс); длительность
-    // самого сектора (дельту) считаем как разницу с предыдущим сектором.
-    steps.forEach((s, i) => {
-      if (s.kind !== 'sectors') return;
-      const data = sectorLogs[i];
-      if (!data) return;
-      const codes = sectorCodes(data.sectors); // «1A», «1B», «2A»… по километрам (совпадает с UI)
-      let prevCum = 0;
-      (data.sectors || []).forEach((sec, si) => {
-        const cumSec = parseClock(sec.clock);
-        const dist = parseFloat(sec.distance) || 0, spd = parseFloat(sec.speed) || 0, incl = parseFloat(sec.incline) || 0;
-        if (dist <= 0 && spd <= 0 && incl <= 0 && cumSec <= 0) return;
-        const deltaSec = cumSec > 0 ? Math.max(0, cumSec - prevCum) : 0;
-        if (cumSec > 0) prevCum = cumSec;
-        outCardio.push({
-          name: `Сектор ${codes[si]}`,
-          distance: dist, speed: spd, incline: incl,
-          duration: deltaSec ? Math.round(deltaSec / 60) : 0,
-          durationSec: deltaSec || 0,
-        });
-      });
+    // Сборка записи живёт в guidedSteps.js (там же её тесты): упражнения с
+    // подходами, заметками, секундомером и пометками замены/добавления,
+    // кардио и секторы, итог дня.
+    const session = buildGuidedSession({
+      steps, exLogs, exNotes, exTimers, cardioLogs, sectorLogs, summary,
+      workoutDate, dayPlan, planId, startedAt: startedAtRef.current, now: Date.now(),
     });
 
     clearTimer();
     cancelBotAlert();
 
-    if (outEx.length === 0 && outCardio.length === 0) { clearDraft(userId); onClose(); return; }
+    if (!session) { clearDraft(userId); onClose(); return; }
 
-    const session = {
-      id: `${workoutDate}-${Date.now()}`,
-      date: workoutDate,
-      exercises: outEx,
-      cardio: outCardio,
-      sleep: summary.sleep ? Math.max(0, parseFloat(summary.sleep)) : null,
-      energy: summary.energy || 3,
-      difficulty: summary.difficulty || null,
-      durationSec: Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1000)),
-      feeling: (summary.feeling || '').trim(),
-      programDay: dayPlan.day || null,
-      // Если на кардио-дне был выбран готовый маршрут — сохраняем его название,
-      // чтобы в «Прогрессе» тренировка называлась «Озеро Зеркальное», а не
-      // безликим «Кардио по секторам».
-      routeName: pickedRouteName(),
-    };
     setSaving(true);
     setSaveError('');
     try {
@@ -760,7 +669,7 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
     if (isLast) { finish(); return; }
     // На шаге упражнения — свечение по итогу (зелёное/красное/синее), затем переход.
     if (step.kind === 'exercise') {
-      const res = evalExercise(step, exLogs[stepIdx] || [], records);
+      const res = evalExercise(step, exLogs[stepId] || [], records);
       if (res) {
         setFlash(res);
         flashTimerRef.current = setTimeout(() => {
@@ -805,9 +714,9 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
   // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
   const mountainSectors = [];
   let mountainClimb = null;
-  steps.forEach((s, i) => {
+  steps.forEach((s) => {
     if (s.kind !== 'sectors') return;
-    const data = sectorLogs[i];
+    const data = sectorLogs[s.id];
     if (data && data.climb && !mountainClimb) mountainClimb = data.climb;
     (data && data.sectors ? data.sectors : []).forEach((sec) => {
       mountainSectors.push({
@@ -816,6 +725,8 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
       });
     });
   });
+
+  const sheetStep = sheet && sheet.mode === 'edit' ? steps.find((s) => s.id === sheet.stepId) : null;
 
   // ---- Свёрнутый режим (пункт 3): узкая плашка над таб-баром, тап — развернуть ----
   if (minimized) {
@@ -987,17 +898,21 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
         flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', position: 'relative',
         padding: '20px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left))',
       }}>
-        <div key={stepIdx} className="guided-step-in" style={{ maxWidth: 480, margin: '0 auto' }}>
+        <div key={stepId} className="guided-step-in" style={{ maxWidth: 480, margin: '0 auto' }}>
           {step.kind === 'exercise' ? (
             <ExerciseStep
-              step={step} sets={exLogs[stepIdx] || []} onSet={setExSet}
-              records={records} note={exNotes[stepIdx] || ''} onNote={setExNote}
+              step={step} sets={exLogs[stepId] || []} onSet={setExSet}
+              records={records} note={exNotes[stepId] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
               nextName={nextShort} restNames={restShortNames}
+              timer={exTimers[stepId]} onTimerToggle={toggleExTimer} onTimerReset={resetExTimer}
+              onSetCount={changeSetCount}
+              onEdit={() => setSheet({ mode: 'edit', stepId })}
+              onAdd={() => setSheet({ mode: 'add' })}
             />
           ) : step.kind === 'sectors' ? (
             <SectorsStep
-              step={step} data={sectorLogs[stepIdx]}
+              step={step} data={sectorLogs[stepId]}
               onMeta={setSectorMeta} onField={setSectorField} onAdd={addSector} onRemove={removeSector}
             />
           ) : step.kind === 'cooldown' ? (
@@ -1013,7 +928,13 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
               mountainClimb={mountainClimb}
             />
           ) : (
-            <CardioStep step={step} value={cardioLogs[stepIdx] || {}} onChange={setCardioField} />
+            <>
+              <CardioStep step={step} value={cardioLogs[stepId] || {}} onChange={setCardioField} />
+              {/* С финишной дорожки тоже можно добавить упражнение: встанет перед ней. */}
+              {canAddExerciseAt(step) && (
+                <AddExerciseButton onClick={() => setSheet({ mode: 'add' })} label="Ещё упражнение перед дорожкой" />
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1078,7 +999,7 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
             // тренировку было нельзя вообще, только руками занижать цель. А у
             // субботнего дня цель пустая по замыслу плана, и кнопка не работала
             // до её ввода. Теперь недобор — это предупреждение в два тапа.
-            const secData = step.kind === 'sectors' ? sectorLogs[stepIdx] : null;
+            const secData = step.kind === 'sectors' ? sectorLogs[stepId] : null;
             const goalShort = step.kind === 'sectors' && !sectorGoalReached(secData);
             let shortLabel = null;
             if (goalShort) {
@@ -1127,10 +1048,243 @@ export function GuidedWorkout({ dayPlan: dayPlanProp, date: dateProp, userId, re
         </div>
       </div>
 
+      {/* Подсказка после добавления упражнения */}
+      {toast && (
+        <div role="status" style={{
+          position: 'absolute', left: 16, right: 16, zIndex: 70, pointerEvents: 'none',
+          bottom: 'calc(92px + env(safe-area-inset-bottom))', display: 'flex', justifyContent: 'center',
+        }}>
+          <div className="dropdown-open" style={{
+            maxWidth: 440, boxSizing: 'border-box', padding: '10px 14px', borderRadius: 12,
+            background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+            fontSize: 13, fontWeight: 700, color: t.TEXT, display: 'flex', alignItems: 'center', gap: 8,
+            overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+          }}>
+            <Check size={15} color={t.POSITIVE} style={{ flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{toast}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Шторка: добавить упражнение / заменить, поменять подходы и повторы */}
+      {sheet && (sheet.mode === 'add' || sheetStep) && (
+        <ExerciseSheet
+          mode={sheet.mode}
+          step={sheetStep}
+          log={sheetStep ? exLogs[sheetStep.id] : null}
+          knownNames={knownNames}
+          addHint={step.finisher ? 'Встанет перед финишной дорожкой' : 'Встанет следующим после текущего'}
+          onClose={() => setSheet(null)}
+          onAdd={applyAdd}
+          onSave={(vals) => applyEdit(sheetStep.id, vals)}
+          onDelete={sheetStep && sheetStep.added ? () => deleteAdded(sheetStep.id) : null}
+        />
+      )}
+
       {/* Предложение продолжить незавершённую тренировку */}
       {restoreOffer && draftRef.current && (
         <RestoreOverlay draft={draftRef.current} onRestore={applyDraft} onDrop={dropDraft} />
       )}
+    </div>
+  );
+}
+
+function AddExerciseButton({ onClick, label = 'Добавить упражнение' }) {
+  const t = useTheme();
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, width: '100%',
+        background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 12,
+        padding: '12px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 700,
+        cursor: 'pointer', fontFamily: 'inherit', marginTop: 16, boxSizing: 'border-box',
+      }}
+    >
+      <Plus size={16} /> {label}
+    </button>
+  );
+}
+
+// Шторка снизу: добавить упражнение по ходу тренировки или заменить текущее.
+// В обоих режимах задаются название, число подходов и цель по повторам — так
+// упражнение «под себя» настраивается прямо в тренировке, без правки плана.
+// Если правка сотрёт уже записанные подходы (другое упражнение или меньше
+// подходов, чем заполнено), кнопка переспрашивает вторым нажатием.
+function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, onSave, onDelete }) {
+  const t = useTheme();
+  const isAdd = mode === 'add';
+  const [name, setName] = useState(() => (isAdd ? '' : step.name));
+  const [sets, setSets] = useState(() => String(isAdd ? 3 : (step.plannedSets || (log || []).length || 3)));
+  const [reps, setReps] = useState(() => (isAdd ? '' : String(step.targetReps || '')));
+  const [armed, setArmed] = useState(false);
+  const [armedDelete, setArmedDelete] = useState(false);
+
+  const trimmed = name.trim();
+  const setsNum = clampSets(sets);
+  const effect = !isAdd ? planLogAfterEdit(step, log, { name: trimmed || step.name, sets: setsNum }) : null;
+  const losesData = !!(effect && effect.losesData);
+  const renamed = !isAdd && isRenamed(step, trimmed);
+  const canSubmit = trimmed.length > 0;
+  // Любая правка полей снимает «взведённое» подтверждение: переспрашивали про
+  // другие значения.
+  useEffect(() => { setArmed(false); }, [name, sets]);
+
+  const submit = () => {
+    if (!canSubmit) return;
+    if (losesData && !armed) { setArmed(true); return; }
+    const vals = { name: trimmed, sets: setsNum, reps: reps.trim() };
+    if (isAdd) onAdd(vals); else onSave(vals);
+  };
+
+  const stepSets = (d) => setSets(String(clampSets(setsNum + d)));
+
+  const title = isAdd ? 'Добавить упражнение' : 'Заменить или изменить';
+  const submitLabel = isAdd ? 'Добавить'
+    : armed ? (renamed ? 'Заменить и очистить подходы' : 'Убрать заполненные подходы')
+      : renamed ? 'Заменить' : 'Сохранить';
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)',
+        backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="dropdown-open"
+        style={{
+          width: '100%', maxWidth: 480, maxHeight: '86vh', overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+          background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, boxSizing: 'border-box',
+          borderTopLeftRadius: 22, borderTopRightRadius: 22,
+          padding: '18px max(18px, env(safe-area-inset-right)) calc(22px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
+          boxShadow: '0 -12px 40px rgba(0,0,0,0.5)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: t.TEXT, lineHeight: 1.2 }}>{title}</h3>
+            <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, marginTop: 4, lineHeight: 1.4 }}>
+              {isAdd ? addHint
+                : step.replacedFrom ? `По плану: ${step.replacedFrom}`
+                  : step.added ? 'Добавлено в этой тренировке' : 'Упражнение из плана'}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Закрыть"
+            style={{
+              flexShrink: 0, width: 34, height: 34, borderRadius: 10, border: `1px solid ${t.BORDER}`,
+              background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <ExerciseNameInput
+            value={name}
+            onChange={setName}
+            knownNames={knownNames}
+            label="Упражнение"
+            placeholder={isAdd ? 'Например, Бабочка' : step.name}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
+          <Field label="Подходы">
+            <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
+              <button
+                onClick={() => stepSets(-1)}
+                aria-label="Меньше подходов"
+                disabled={setsNum <= 1}
+                style={{
+                  flexShrink: 0, width: 42, borderRadius: 12, border: `1px solid ${t.BORDER}`,
+                  background: t.BG_INPUT, color: setsNum <= 1 ? t.TEXT_FAINT : t.TEXT_DIM,
+                  cursor: setsNum <= 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Minus size={16} />
+              </button>
+              <input
+                style={{ ...getInputStyle(t), textAlign: 'center', padding: '11px 4px' }}
+                type="number" inputMode="numeric" min="1" max={MAX_SETS}
+                value={sets}
+                onChange={(e) => setSets(e.target.value)}
+                onBlur={() => setSets(String(setsNum))}
+              />
+              <button
+                onClick={() => stepSets(1)}
+                aria-label="Больше подходов"
+                disabled={setsNum >= MAX_SETS}
+                style={{
+                  flexShrink: 0, width: 42, borderRadius: 12, border: `1px solid ${t.BORDER}`,
+                  background: t.BG_INPUT, color: setsNum >= MAX_SETS ? t.TEXT_FAINT : t.TEXT_DIM,
+                  cursor: setsNum >= MAX_SETS ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </Field>
+          <Field label="Повторы (цель)">
+            <input
+              style={getLabelInputStyle(t)}
+              type="text" inputMode="text"
+              value={reps}
+              onChange={(e) => setReps(e.target.value)}
+              placeholder="10-12"
+            />
+          </Field>
+        </div>
+
+        {losesData && (
+          <div style={{
+            fontSize: 12.5, fontWeight: 600, color: t.ACCENT_SOFT, lineHeight: 1.45, marginBottom: 12,
+            background: t.ACCENT_BG, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 10, padding: '9px 12px',
+          }}>
+            {renamed
+              ? 'В этом упражнении уже есть записанные подходы — к новому упражнению они не относятся и будут очищены. Заметка и секундомер останутся.'
+              : 'Последние подходы уже заполнены — при уменьшении числа подходов они пропадут.'}
+          </div>
+        )}
+
+        <button
+          onClick={submit}
+          disabled={!canSubmit}
+          style={{
+            width: '100%', padding: '14px', borderRadius: 14, border: 'none',
+            background: !canSubmit ? t.BG_INPUT : armed ? t.ACCENT_DEEP : t.ACCENT_GRAD,
+            color: !canSubmit ? t.TEXT_FAINT : t.ON_ACCENT, fontSize: 15, fontWeight: 700,
+            cursor: canSubmit ? 'pointer' : 'default', fontFamily: 'inherit',
+            boxShadow: canSubmit && !armed ? t.GLOW : 'none',
+          }}
+        >
+          {submitLabel}
+        </button>
+
+        {onDelete && (
+          <button
+            onClick={() => { if (!armedDelete && hasSetData(log)) { setArmedDelete(true); return; } onDelete(); }}
+            style={{
+              width: '100%', marginTop: 9, padding: '12px', borderRadius: 14,
+              border: `1px solid ${armedDelete ? t.ACCENT : t.BORDER}`,
+              background: armedDelete ? t.ACCENT_BG : 'transparent',
+              color: armedDelete ? t.ACCENT_SOFT : t.TEXT_DIM, fontSize: 14, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+            }}
+          >
+            <Trash2 size={15} />
+            {armedDelete ? 'Удалить вместе с подходами' : 'Убрать из тренировки'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1184,7 +1338,7 @@ function RestoreOverlay({ draft, onRestore, onDrop }) {
   );
 }
 
-function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
+function StepHeader({ icon: Icon, name, subtitle, badgeName, action }) {
   const t = useTheme();
   return (
     <div style={{ marginBottom: 18 }}>
@@ -1195,9 +1349,10 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           }}>{Icon && <Icon size={15} />}</span>
         )}
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em', lineHeight: 1.15 }}>
+        <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 20, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em', lineHeight: 1.15 }}>
           {name}
         </h2>
+        {action}
       </div>
       {subtitle && (
         <div style={{ fontSize: 13, color: t.TEXT_FAINT, paddingLeft: 36 }}>{subtitle}</div>
@@ -1206,15 +1361,24 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName }) {
   );
 }
 
-function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextName, restNames = [] }) {
+function ExerciseStep({
+  step, sets, onSet, records, note, onNote, onGuide, nextName, restNames = [],
+  timer, onTimerToggle, onTimerReset, onSetCount, onEdit, onAdd,
+}) {
   const t = useTheme();
   // Список оставшихся шагов свёрнут по умолчанию и закрывается сам при переходе
-  // к следующему упражнению (компонент пересоздаётся по key={stepIdx}).
+  // к следующему упражнению (компонент пересоздаётся по key={stepId}).
   const [restOpen, setRestOpen] = useState(false);
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
   const record = records && records[step.name];
   const hasGuide = !!getExerciseGuide(step.name);
+  // Пометки плана («скамья», «лёгкий вес на первой неделе») — только пока
+  // упражнение не заменено: к другому упражнению они не относятся.
+  const planNotes = planNotesOf(step);
+  const running = swIsRunning(timer);
+  const timerSec = swElapsed(timer);
+  const lastSetEmpty = sets.length > 1 && !hasSetData(sets.slice(-1));
 
   // Текст рекорда: вес / повторы / секунды в зависимости от типа упражнения.
   let recordText = null;
@@ -1224,15 +1388,44 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextN
     else if (record.metric === 'reps') recordText = `${record.value} повт`;
   }
 
+  const subtitle = step.replacedFrom ? `вместо «${step.replacedFrom}»`
+    : step.added ? 'добавлено в этой тренировке'
+      : (planNotes && planNotes.where) || null;
+
+  const smallBtn = (disabled) => ({
+    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    padding: '9px 10px', borderRadius: 10, border: `1px solid ${t.BORDER}`,
+    background: t.BG_INPUT, color: disabled ? t.TEXT_FAINT : t.TEXT_DIM,
+    opacity: disabled ? 0.5 : 1, cursor: disabled ? 'default' : 'pointer',
+    fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+  });
+
   return (
     <div>
-      <StepHeader name={step.name} badgeName={step.name} subtitle={null} />
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
+      <StepHeader
+        name={step.name} badgeName={step.name} subtitle={subtitle}
+        action={onEdit && (
+          <button
+            onClick={onEdit}
+            aria-label="Заменить упражнение или изменить подходы"
+            title="Заменить / изменить подходы и повторы"
+            style={{
+              flexShrink: 0, height: 34, padding: '0 11px', borderRadius: 10,
+              border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_DIM,
+              display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+              fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+            }}
+          >
+            <Shuffle size={14} /> Заменить
+          </button>
+        )}
+      />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: planNotes && planNotes.tip ? 10 : 18 }}>
         <span style={{
           fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: t.ACCENT_BG,
           padding: '5px 10px', borderRadius: 8, fontFamily: t.FONT_MONO,
         }}>
-          Цель: {step.targetReps ? `${step.targetReps} ${timed ? 'сек' : 'повт'}` : (timed ? 'на время' : '—')} · {sets.length} подх
+          Цель: {fmtTargetReps(step.targetReps, timed)} · {sets.length} подх
         </span>
         {recordText ? (
           <span style={{
@@ -1281,6 +1474,15 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextN
         )}
       </div>
 
+      {planNotes && planNotes.tip && (
+        <div style={{
+          fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45, marginBottom: 16,
+          background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10, padding: '9px 12px',
+        }}>
+          {planNotes.tip}
+        </div>
+      )}
+
       {/* Что осталось до конца тренировки. Список — весь остаток шагов, а не только
           упражнения: заминка и итог тоже часть плана, и их полезно видеть. */}
       {nextName && restOpen && restNames.length > 0 && (
@@ -1309,6 +1511,58 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextN
           ))}
         </div>
       )}
+
+      {/* Секундомер упражнения: сколько ушло на это упражнение вместе с отдыхом.
+          Запускается вручную, сам встаёт на паузу при уходе с шага. Время
+          сохраняется в тренировку (durationSec у упражнения). */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
+        background: t.BG_RAISED, border: `1px solid ${running ? t.ACCENT_BORDER : t.BORDER}`, borderRadius: 14,
+        padding: '9px 10px 9px 14px', boxShadow: t.CARD_SHADOW,
+      }}>
+        <Timer size={16} color={running ? t.ACCENT_SOFT : t.TEXT_FAINT} style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
+            letterSpacing: '0.08em', fontFamily: t.FONT_MONO,
+          }}>
+            Секундомер упражнения
+          </div>
+          <div style={{
+            fontSize: 20, fontWeight: 700, color: running ? t.TEXT : t.TEXT_DIM, fontFamily: t.FONT_MONO,
+            fontVariantNumeric: 'tabular-nums', lineHeight: 1.2,
+          }}>
+            {secToClock(timerSec)}
+          </div>
+        </div>
+        {!running && timerSec > 0 && (
+          <button
+            onClick={onTimerReset}
+            aria-label="Сбросить секундомер"
+            style={{
+              flexShrink: 0, width: 38, height: 38, borderRadius: 10, border: `1px solid ${t.BORDER}`,
+              background: t.BG_INPUT, color: t.TEXT_FAINT, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <RotateCcw size={15} />
+          </button>
+        )}
+        <button
+          onClick={onTimerToggle}
+          aria-label={running ? 'Пауза' : 'Запустить секундомер'}
+          style={{
+            flexShrink: 0, height: 38, padding: '0 14px', borderRadius: 10,
+            border: running ? `1px solid ${t.ACCENT_BORDER}` : 'none',
+            background: running ? t.ACCENT_BG : t.ACCENT_GRAD,
+            color: running ? t.ACCENT_SOFT : t.ON_ACCENT,
+            cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          {running ? <><Pause size={15} /> Пауза</> : <><Play size={15} /> {timerSec > 0 ? 'Продолжить' : 'Старт'}</>}
+        </button>
+      </div>
 
       <div>
         {sets.map((s, si) => {
@@ -1341,7 +1595,7 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextN
                     type="number" inputMode="numeric" min="0"
                     value={s.reps}
                     onChange={(e) => onSet(si, { reps: e.target.value })}
-                    placeholder={timed ? '60' : (step.targetReps || '0')}
+                    placeholder={timed ? '60' : (/\d/.test(String(step.targetReps || '')) ? step.targetReps : '0')}
                   />
                 </Field>
               </div>
@@ -1350,17 +1604,32 @@ function ExerciseStep({ step, sets, onSet, records, note, onNote, onGuide, nextN
         })}
       </div>
 
-      {/* Самочувствие / заметка по упражнению */}
+      {/* Подходов больше / меньше. Убирается только пустой последний подход —
+          записанное так не потерять. */}
+      {onSetCount && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <button onClick={() => onSetCount(-1)} disabled={!lastSetEmpty} style={smallBtn(!lastSetEmpty)}>
+            <Minus size={14} /> Подход
+          </button>
+          <button onClick={() => onSetCount(1)} disabled={sets.length >= MAX_SETS} style={smallBtn(sets.length >= MAX_SETS)}>
+            <Plus size={14} /> Подход
+          </button>
+        </div>
+      )}
+
+      {/* Самочувствие / заметка по упражнению — поле растёт вместе с текстом */}
       <div style={{ marginTop: 4 }}>
         <Field label="Самочувствие · заметка">
-          <textarea
-            style={{ ...getLabelInputStyle(t), resize: 'vertical', minHeight: 52, fontFamily: 'inherit' }}
+          <AutoGrowTextarea
+            style={{ ...getLabelInputStyle(t), minHeight: 52, fontFamily: 'inherit', lineHeight: 1.4 }}
             value={note}
             onChange={(e) => onNote(e.target.value)}
             placeholder="Как ощущения, техника, боль/дискомфорт…"
           />
         </Field>
       </div>
+
+      {onAdd && <AddExerciseButton onClick={onAdd} />}
     </div>
   );
 }
@@ -1542,8 +1811,8 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb }) {
         <Scale1to5 label="Тяжесть тренировки" value={summary.difficulty} onChange={(n) => onChange({ difficulty: n })} />
       </div>
       <Field label="Самочувствие, заметки">
-        <textarea
-          style={{ ...getLabelInputStyle(t), resize: 'vertical', minHeight: 64, fontFamily: 'inherit' }}
+        <AutoGrowTextarea
+          style={{ ...getLabelInputStyle(t), minHeight: 64, fontFamily: 'inherit', lineHeight: 1.4 }}
           value={summary.feeling} onChange={(e) => onChange({ feeling: e.target.value })}
           placeholder="Как прошло в целом, что почувствовал…"
         />
