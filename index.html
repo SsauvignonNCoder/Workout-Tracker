@@ -12,6 +12,12 @@
          Пять начертаний скачивались на мобильном впустую. -->
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Без «резинки» у страницы: на iOS оттягивание сдвигало весь документ вместе
+         с фиксированными шапкой и таб-баром. Фон html — тот же, что у body, чтобы
+         край при любом сдвиге не мелькал другим цветом. -->
+    <style>
+      html, body { overscroll-behavior: none; background: #0A0A0A; }
+    </style>
   </head>
   <!-- Фон и шрифт должны совпадать с темой 2A: пока React не отрисовался, экран
        показывает именно их. С коричневым #16100A каждый запуск начинался вспышкой

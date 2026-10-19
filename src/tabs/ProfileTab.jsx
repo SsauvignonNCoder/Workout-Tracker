@@ -1,11 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { LogOut, Award, CheckCircle2, Circle } from 'lucide-react';
 import { useTheme } from '../theme.js';
-import { todayISO, fmtDateShort } from '../dateUtils.js';
 import {
-  ACH_ICON, BODY_FIELDS, computeAchievements, computeTotalXpFromSessions, getLevelInfo,
+  ACH_ICON, computeAchievements, computeTotalXpFromSessions, getLevelInfo,
 } from '../gamification.js';
-import { Field, getInputStyle } from './workoutTabHelpers.jsx';
 import { PLANS, DEFAULT_PLAN_ID, getPlan } from '../plans.js';
 import { APP_VERSION } from '../version.js';
 
@@ -17,6 +15,8 @@ import { APP_VERSION } from '../version.js';
 function PlanPicker({ profile, saveProfile }) {
   const t = useTheme();
   const current = (profile && profile.planId) || DEFAULT_PLAN_ID;
+  // Блок свёрнут: в заголовке видно, какой план ведётся, список планов — по тапу.
+  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(null);
   const [saving, setSaving] = useState(false);
   const lastDay = profile && profile.lastProgramDay;
@@ -28,6 +28,7 @@ function PlanPicker({ profile, saveProfile }) {
     try {
       await saveProfile({ ...(profile || {}), planId: pending, lastProgramDay: 0 });
       setPending(null);
+      setOpen(false);
     } catch (e) {
       // Сообщение уже показал saveProfile; выбор остаётся прежним.
     }
@@ -35,82 +36,152 @@ function PlanPicker({ profile, saveProfile }) {
   };
 
   return (
-    <div style={{ marginBottom: 22 }}>
-      <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
-        План тренировок
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {PLANS.map((p) => {
-          const active = p.id === current;
-          const chosen = p.id === pending;
-          return (
-            <button
-              key={p.id}
-              onClick={() => setPending(active ? null : p.id)}
-              aria-pressed={active}
-              style={{
-                display: 'flex', alignItems: 'flex-start', gap: 11, width: '100%', textAlign: 'left',
-                boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
-                background: active ? t.ACCENT_BG : t.BG_RAISED,
-                border: `1px solid ${active || chosen ? t.ACCENT : t.BORDER}`,
-              }}
-            >
-              <span style={{ flexShrink: 0, marginTop: 1, color: active ? t.ACCENT_SOFT : t.TEXT_FAINT }}>
-                {active ? <CheckCircle2 size={19} /> : <Circle size={19} />}
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: active ? t.ACCENT_SOFT : t.TEXT, marginBottom: 3 }}>
-                  {p.title}
-                </span>
-                <span style={{ display: 'block', fontSize: 12, color: t.TEXT_FAINT, lineHeight: 1.4 }}>
-                  {p.description}
-                </span>
-                {active && lastDay > 0 && (
-                  <span style={{ display: 'block', fontSize: 11.5, color: t.TEXT_DIM, marginTop: 5, fontFamily: t.FONT_MONO }}>
-                    последний сделанный день: {lastDay} из {p.days.length}
+    <div style={{ marginBottom: open ? 22 : 6 }}>
+      <button
+        onClick={() => { setOpen(!open); setPending(null); }}
+        aria-expanded={open}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, width: '100%',
+          background: 'transparent', border: 'none', padding: '0 0 12px', cursor: 'pointer', fontFamily: 'inherit',
+        }}
+      >
+        <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', flexShrink: 0 }}>
+          План тренировок
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          {!open && (
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: t.ACCENT_SOFT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {currentPlan.title}
+            </span>
+          )}
+          <span style={{ color: t.TEXT_FAINT, fontSize: 11, flexShrink: 0 }}>{open ? '▼' : '▶'}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="dropdown-open">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {PLANS.map((p) => {
+              const active = p.id === current;
+              const chosen = p.id === pending;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setPending(active ? null : p.id)}
+                  aria-pressed={active}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 11, width: '100%', textAlign: 'left',
+                    boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
+                    background: active ? t.ACCENT_BG : t.BG_RAISED,
+                    border: `1px solid ${active || chosen ? t.ACCENT : t.BORDER}`,
+                  }}
+                >
+                  <span style={{ flexShrink: 0, marginTop: 1, color: active ? t.ACCENT_SOFT : t.TEXT_FAINT }}>
+                    {active ? <CheckCircle2 size={19} /> : <Circle size={19} />}
                   </span>
-                )}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: active ? t.ACCENT_SOFT : t.TEXT, marginBottom: 3 }}>
+                      {p.title}
+                    </span>
+                    <span style={{ display: 'block', fontSize: 12, color: t.TEXT_FAINT, lineHeight: 1.4 }}>
+                      {p.description}
+                    </span>
+                    {active && lastDay > 0 && (
+                      <span style={{ display: 'block', fontSize: 11.5, color: t.TEXT_DIM, marginTop: 5, fontFamily: t.FONT_MONO }}>
+                        последний сделанный день: {lastDay} из {p.days.length}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
-      {pending && (
-        <div style={{
-          marginTop: 10, padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.ACCENT}`, borderRadius: 12,
-        }}>
-          <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 10 }}>
-            Переключить с «{currentPlan.title}» на «{getPlan(pending).title}»? Следующая тренировка начнётся
-            с дня 1. История и рекорды не меняются — прошлые тренировки остаются в своём плане.
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={confirm}
-              disabled={saving}
-              style={{
-                flex: 1, padding: '11px', borderRadius: 10, border: 'none',
-                background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
-                cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
-              }}
-            >
-              {saving ? 'Переключаю…' : 'Переключить'}
-            </button>
-            <button
-              onClick={() => setPending(null)}
-              disabled={saving}
-              style={{
-                flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${t.BORDER}`,
-                background: 'transparent', color: t.TEXT_DIM, fontSize: 14, fontWeight: 600,
-                cursor: 'pointer', fontFamily: 'inherit',
-              }}
-            >
-              Отмена
-            </button>
-          </div>
+          {pending && (
+            <div style={{
+              marginTop: 10, padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.ACCENT}`, borderRadius: 12,
+            }}>
+              <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 10 }}>
+                Переключить с «{currentPlan.title}» на «{getPlan(pending).title}»? Следующая тренировка начнётся
+                с дня 1. История и рекорды не меняются — прошлые тренировки остаются в своём плане.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={confirm}
+                  disabled={saving}
+                  style={{
+                    flex: 1, padding: '11px', borderRadius: 10, border: 'none',
+                    background: t.ACCENT_GRAD, color: t.ON_ACCENT, fontSize: 14, fontWeight: 700,
+                    cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
+                  }}
+                >
+                  {saving ? 'Переключаю…' : 'Переключить'}
+                </button>
+                <button
+                  onClick={() => setPending(null)}
+                  disabled={saving}
+                  style={{
+                    flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${t.BORDER}`,
+                    background: 'transparent', color: t.TEXT_DIM, fontSize: 14, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+// Напоминание в Telegram о пропущенной тренировке (api/missed-check.js). Пояс
+// устройства сохраняем вместе с включением: сервер считает 21:30 по нему.
+function MissedAlertsToggle({ profile, saveProfile }) {
+  const t = useTheme();
+  const on = !!(profile && profile.missedAlerts);
+  const [saving, setSaving] = useState(false);
+
+  const toggle = async () => {
+    if (saving) return;
+    let tz = null;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* no-op */ }
+    setSaving(true);
+    try {
+      await saveProfile({ ...(profile || {}), missedAlerts: !on, ...(tz ? { tz } : {}) });
+    } catch (e) { /* сообщение уже показал saveProfile */ }
+    setSaving(false);
+  };
+
+  return (
+    <button
+      onClick={toggle}
+      role="switch"
+      aria-checked={on}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 12, width: '100%', boxSizing: 'border-box', textAlign: 'left',
+        padding: '12px 14px', marginBottom: 14, borderRadius: 12, cursor: saving ? 'default' : 'pointer',
+        background: t.BG_RAISED, border: `1px solid ${on ? t.ACCENT_BORDER : t.BORDER}`, fontFamily: 'inherit',
+        opacity: saving ? 0.7 : 1,
+      }}
+    >
+      {/* Без пояснения — так попросил Никита. Правила: ПН–СБ в 21:30, если по
+          плану за день ничего не записано и тренировка не идёт (api/_missed.js). */}
+      <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, color: t.TEXT }}>
+        Напоминать о пропущенной тренировке
+      </span>
+      <span aria-hidden style={{
+        flexShrink: 0, width: 44, height: 26, borderRadius: 13, position: 'relative',
+        background: on ? t.ACCENT : t.BG_INPUT, border: `1px solid ${on ? t.ACCENT : t.BORDER}`,
+        transition: 'background 0.2s ease',
+      }}>
+        <span style={{
+          position: 'absolute', top: 2, left: on ? 20 : 2, width: 20, height: 20, borderRadius: '50%',
+          background: on ? t.ON_ACCENT : t.TEXT_DIM, transition: 'left 0.2s ease',
+        }} />
+      </span>
+    </button>
   );
 }
 
@@ -351,44 +422,15 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
 
 export function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, onLogout }) {
   const t = useTheme();
-  const [draft, setDraft] = useState(() => {
-    const init = {};
-    BODY_FIELDS.forEach((f) => { init[f.key] = profile && profile[f.key] != null ? String(profile[f.key]) : ''; });
-    return init;
-  });
-  const [saving, setSaving] = useState(false);
-  const [justSaved, setJustSaved] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
+  // Выход — в два шага: кнопка открывает подтверждение под собой.
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   const achievements = useMemo(() => computeAchievements({ sessions, measurements, profile }), [sessions, measurements, profile]);
   const achievementXp = useMemo(() => achievements.filter((a) => a.unlocked).reduce((sum, a) => sum + a.xp, 0), [achievements]);
   const totalXp = useMemo(() => computeTotalXpFromSessions(sessions) + achievementXp, [sessions, achievementXp]);
   const levelInfo = useMemo(() => getLevelInfo(totalXp), [totalXp]);
   const unlockedCount = achievements.filter((a) => a.unlocked).length;
-
-  const handleChange = (key, val) => setDraft({ ...draft, [key]: val });
-
-  const handleSave = async () => {
-    const hasAny = BODY_FIELDS.some((f) => draft[f.key]);
-    if (!hasAny) {
-      setError('Заполни хотя бы одно значение');
-      return;
-    }
-    setSaving(true);
-    const next = { ...profile, updatedAt: todayISO() };
-    BODY_FIELDS.forEach((f) => {
-      next[f.key] = draft[f.key] ? Math.max(0, parseFloat(draft[f.key])) : null;
-    });
-    try {
-      await saveProfile(next);
-    } catch (e) {
-      setSaving(false);
-      return; // сообщение уже показал saveProfile — «Сохранено ✓» не рисуем
-    }
-    setSaving(false);
-    setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 2200);
-  };
 
   return (
     <div>
@@ -444,56 +486,9 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
 
       <PlanPicker profile={profile} saveProfile={saveProfile} />
 
-      <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
+      {/* Параметры тела переехали во вкладку «Вес» — там у них история замеров. */}
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-          Параметры тела
-        </div>
-        {profile && profile.updatedAt && (
-          <div style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>обновлено {fmtDateShort(profile.updatedAt)}</div>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-        {BODY_FIELDS.slice(0, 2).map((f) => (
-          <Field key={f.key} label={f.label}>
-            <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={draft[f.key]} onChange={(e) => handleChange(f.key, e.target.value)} placeholder="—" />
-          </Field>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-        {BODY_FIELDS.slice(2, 4).map((f) => (
-          <Field key={f.key} label={f.label}>
-            <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={draft[f.key]} onChange={(e) => handleChange(f.key, e.target.value)} placeholder="—" />
-          </Field>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 22, flexWrap: 'wrap' }}>
-        {BODY_FIELDS.slice(4, 6).map((f) => (
-          <Field key={f.key} label={f.label}>
-            <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={draft[f.key]} onChange={(e) => handleChange(f.key, e.target.value)} placeholder="—" />
-          </Field>
-        ))}
-      </div>
-
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className={justSaved ? 'save-bounce' : ''}
-        style={{
-          width: '100%', padding: '15px', borderRadius: 16, border: 'none',
-          background: justSaved ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT,
-          fontSize: 15.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
-          opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
-          boxShadow: justSaved ? 'none' : t.GLOW,
-          transition: 'background 0.2s ease, box-shadow 0.2s ease',
-        }}
-      >
-        {justSaved ? 'Сохранено ✓' : saving ? 'Сохраняю...' : 'Сохранить параметры'}
-      </button>
-
-      <div style={{ height: 1, background: t.BORDER, margin: '26px 0 18px' }} />
+      <div style={{ height: 1, background: t.BORDER, margin: '12px 0 18px' }} />
 
       <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
         Настройки
@@ -503,28 +498,69 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
           «Авто · ночь → Светлая → Тёмная», но не меняла ничего: приложение
           жёстко в теме 2A с 13 июля. */}
 
-      {onLogout && (
-        <button
-          onClick={onLogout}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%',
-            padding: '14px 16px', borderRadius: 12, border: `1px solid ${t.ACCENT}`,
-            background: t.ACCENT_BG, color: t.ACCENT_SOFT, fontSize: 15, fontWeight: 700,
-            cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
-          }}
-        >
-          <LogOut size={18} />
-          Выйти из аккаунта
-        </button>
-      )}
-
-      <div style={{ height: 1, background: t.BORDER, margin: '26px 0 18px' }} />
+      <MissedAlertsToggle profile={profile} saveProfile={saveProfile} />
 
       <ExportImportPanel
         sessions={sessions} measurements={measurements} profile={profile}
         saveSessions={saveSessions} saveMeasurements={saveMeasurements} saveProfile={saveProfile}
         setError={setError}
       />
+
+      {/* Выход — в самом низу, под резервной копией, заметной «опасной» кнопкой
+          и только после подтверждения: один случайный тап раньше выкидывал из
+          аккаунта посреди дня. */}
+      {onLogout && (
+        <div style={{ marginTop: 22 }}>
+          <button
+            onClick={() => setConfirmLogout((v) => !v)}
+            aria-expanded={confirmLogout}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, width: '100%',
+              padding: '15px 16px', borderRadius: 14, border: `1.5px solid ${t.DANGER_BORDER}`,
+              background: t.DANGER_BG, color: t.DANGER, fontSize: 15.5, fontWeight: 700,
+              cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
+            }}
+          >
+            <LogOut size={19} />
+            Выйти из аккаунта
+          </button>
+          {confirmLogout && (
+            <div className="dropdown-open" style={{
+              marginTop: 10, padding: '13px', background: t.BG_RAISED, border: `1px solid ${t.DANGER_BORDER}`, borderRadius: 14,
+            }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 5 }}>
+                Выйти из аккаунта?
+              </div>
+              <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 12 }}>
+                Тренировки и замеры останутся в базе. Чтобы вернуться, войди снова через Telegram
+                или по имени и PIN. Незаконченная тренировка на этом устройстве сохранится черновиком.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => { setConfirmLogout(false); onLogout(); }}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 11, border: 'none',
+                    background: t.DANGER, color: '#0A0A0A', fontSize: 14, fontWeight: 700,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  Да, выйти
+                </button>
+                <button
+                  onClick={() => setConfirmLogout(false)}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 11, border: `1px solid ${t.BORDER}`,
+                    background: 'transparent', color: t.TEXT_DIM, fontSize: 14, fontWeight: 600,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Версия приложения — самый низ профиля. Значение берётся из src/version.js,
           история изменений — в CHANGELOG.md в корне репозитория. */}

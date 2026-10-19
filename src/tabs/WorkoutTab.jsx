@@ -6,7 +6,7 @@ import { todayISO } from '../dateUtils.js';
 import { computeRecords } from '../gamification.js';
 import {
   Field, getInputStyle, getLabelInputStyle, DatePicker, ExerciseRow, CardioRow,
-  emptyExercise, emptyCardio, RepeatWorkoutPicker, ProgramDayPicker, WarmupTip, AutoGrowTextarea,
+  emptyExercise, emptyCardio, RepeatWorkoutPicker, ProgramDayPicker, WarmupTip, AutoGrowTextarea, DifficultySlider, EnergySlider,
   STARTER_EXERCISES, STARTER_CARDIO,
 } from './workoutTabHelpers.jsx';
 import { getPlan, getPlanDay, nextPlanDay, DEFAULT_PLAN_ID } from '../plans.js';
@@ -28,13 +28,16 @@ function carryExerciseExtras(e) {
   };
 }
 
-export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, userId, editSession, onEditDone }) {
+export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, userId, editSession, onEditDone, onMiniBarChange, onWorkoutActive }) {
   const t = useTheme();
   const [date, setDate] = useState(todayISO());
   const [exercises, setExercises] = useState([]);
   const [cardio, setCardio] = useState([]);
   const [sleep, setSleep] = useState('');
   const [energy, setEnergy] = useState(3);
+  // Тяжесть тренировки 1–5; null — не указана (у старых записей её нет, и
+  // правка не должна подставлять туда тройку молча).
+  const [difficulty, setDifficulty] = useState(3);
   const [feeling, setFeeling] = useState('');
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
@@ -52,6 +55,25 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const [guided, setGuided] = useState(null);
   const [guidedMin, setGuidedMin] = useState(false);
   const [guidedSaved, setGuidedSaved] = useState(false);
+
+  // Свёрнутая тренировка висит плашкой над таб-баром на любой вкладке и закрывала
+  // низ страницы — например, кнопку «Архив» в «Прогрессе». Сообщаем наверх, что
+  // плашка на экране: App добавит странице нижний отступ на её высоту.
+  const miniBarShown = !!guided && guidedMin;
+  useEffect(() => { if (onMiniBarChange) onMiniBarChange(miniBarShown); }, [miniBarShown, onMiniBarChange]);
+
+  // Метка «идёт тренировка» на сервере (напоминание о пропуске молчит, пока она
+  // свежая). Снимаем только при закрытии начатой тренировки, а не при каждом
+  // запуске приложения: открыть приложение посреди тренировки (черновик ещё не
+  // восстановлен) — не значит её закончить.
+  const guidedActive = !!guided;
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    if (!onWorkoutActive) return;
+    if (guidedActive) onWorkoutActive(true);
+    else if (wasActiveRef.current) onWorkoutActive(false);
+    wasActiveRef.current = guidedActive;
+  }, [guidedActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const profilePlanId = (profile && profile.planId) || DEFAULT_PLAN_ID;
   const planId = editingId ? (editPlanId || DEFAULT_PLAN_ID) : profilePlanId;
@@ -77,6 +99,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       setCardio(cardioList);
       setSleep(editSession.sleep != null ? String(editSession.sleep) : '');
       setEnergy(editSession.energy || 3);
+      setDifficulty(editSession.difficulty ?? null);
       setFeeling(editSession.feeling || '');
       setProgramDay(editSession.programDay || null);
     } else if (editingId) {
@@ -88,6 +111,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       setCardio([]);
       setSleep('');
       setEnergy(3);
+      setDifficulty(3);
       setFeeling('');
       setProgramDay(null);
       setProgramDetached(false);
@@ -294,7 +318,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           ? {
               ...s, date, exercises: validExercises, cardio: validCardio,
               sleep: sleep ? Math.max(0, parseFloat(sleep)) : null,
-              energy, feeling: feeling.trim(), programDay: programDay || null,
+              energy, difficulty: difficulty ?? null, feeling: feeling.trim(), programDay: programDay || null,
             }
           : s)
         .sort((a, b) => a.date.localeCompare(b.date));
@@ -323,6 +347,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       cardio: validCardio,
       sleep: sleep ? Math.max(0, parseFloat(sleep)) : null,
       energy,
+      difficulty: difficulty ?? null,
       feeling: feeling.trim(),
       programDay: programDay || null,
       planId,
@@ -347,6 +372,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     setCardio([]);
     setSleep('');
     setEnergy(3);
+    setDifficulty(3);
     setFeeling('');
     setProgramDay(null);
     setProgramDetached(false);
@@ -522,21 +548,14 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
             placeholder="7.5"
           />
         </Field>
-        <Field label="Энергия">
-          <div style={{ display: 'flex', gap: 4, paddingTop: 2 }}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                onClick={() => setEnergy(n)}
-                style={{
-                  flex: 1, height: 38, borderRadius: 8, border: `1px solid ${n <= energy ? t.ACCENT : t.BORDER}`,
-                  background: n <= energy ? t.ACCENT : 'transparent',
-                  cursor: 'pointer',
-                }}
-              />
-            ))}
-          </div>
-        </Field>
+      </div>
+
+      {/* Энергия и тяжесть — ползунками с цветом, каждая на всю ширину. */}
+      <div style={{ marginBottom: 14 }}>
+        <EnergySlider value={energy} onChange={setEnergy} />
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <DifficultySlider value={difficulty} onChange={setDifficulty} />
       </div>
 
       <div style={{ marginBottom: 22 }}>
@@ -597,6 +616,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           userId={userId}
           records={records}
           knownNames={knownNames}
+          history={sessions}
           minimized={guidedMin}
           onMinimize={() => setGuidedMin(true)}
           onExpand={() => setGuidedMin(false)}

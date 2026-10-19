@@ -11,6 +11,7 @@ import { ProgressTab } from './tabs/ProgressTab.jsx';
 import { ProfileTab } from './tabs/ProfileTab.jsx';
 import { AssistantTab } from './tabs/AssistantTab.jsx';
 import { DEFAULT_PLAN_ID } from './plans.js';
+import { normalizeBodyLog } from './bodyLog.js';
 
 // ------- Преобразование между форматом БД (snake_case) и форматом приложения (camelCase) -------
 
@@ -75,6 +76,11 @@ function profileFromRow(row) {
     shoulders: row.shoulders,
     bodyFat: row.body_fat,
     updatedAt: row.updated_at,
+    // История замеров параметров тела (src/bodyLog.js). Колонки выше — последние значения.
+    bodyLog: normalizeBodyLog(row.body_log),
+    // Напоминание о пропущенной тренировке (api/missed-check.js) и пояс устройства для него.
+    missedAlerts: !!row.missed_alerts,
+    tz: row.tz || null,
   };
 }
 
@@ -90,6 +96,11 @@ function profileToRow(p, userId) {
     shoulders: p.shoulders ?? null,
     body_fat: p.bodyFat ?? null,
     updated_at: p.updatedAt ?? null,
+    // Без истории в объекте (импорт старой копии) колонку не трогаем: upsert
+    // обновляет только переданные поля, и история в базе остаётся.
+    ...(Array.isArray(p.bodyLog) ? { body_log: normalizeBodyLog(p.bodyLog) } : {}),
+    ...(p.missedAlerts !== undefined ? { missed_alerts: !!p.missedAlerts } : {}),
+    ...(p.tz ? { tz: p.tz } : {}),
   };
 }
 
@@ -233,7 +244,20 @@ function useStorage(userId) {
     }
   };
 
-  return { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile };
+  // Метка «идёт тренировка» для напоминания о пропуске: сервер не пишет, пока
+  // тренировка начата меньше 4 часов назад и не закрыта. Заодно — пояс устройства.
+  // Это подсказка серверу, а не данные: ошибки молча игнорируем.
+  const markActiveWorkout = async (on) => {
+    let tz = null;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* no-op */ }
+    try {
+      await supabase.from('profile')
+        .update({ active_workout_at: on ? new Date().toISOString() : null, ...(tz ? { tz } : {}) })
+        .eq('user_id', userId);
+    } catch (e) { /* no-op */ }
+  };
+
+  return { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout };
 }
 
 // Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые
@@ -278,7 +302,7 @@ function Pill({ children, active, onClick, icon: Icon, main }) {
 function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   const t = useTheme();
   const { ref: brassRef } = useBrassShine();
-  const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile } = useStorage(userId);
+  const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout } = useStorage(userId);
   // Порядок в баре: «Тренировка» посередине как главная, ассистент между ней и
   // профилем. Порядок задаёт и направление свайпов.
   const TAB_ORDER = ['progress', 'measurements', 'workout', 'assistant', 'profile'];
@@ -289,6 +313,9 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   // экрана под руками.
   const [tab, setTab] = useState(() => (isWeighInTime() ? 'measurements' : 'workout'));
   const [slideDir, setSlideDir] = useState(0); // -1 left, 1 right, 0 none
+  // Свёрнутая тренировка на экране — её плашка (≈60 px) висит над таб-баром, и
+  // низ страницы нужно уметь докрутить из-под неё.
+  const [miniBar, setMiniBar] = useState(false);
   const touchRef = React.useRef({ x: 0, y: 0, active: false });
 
   const goToTab = (nextTab) => {
@@ -376,7 +403,7 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   return (
     <div ref={brassRef} className="content-fade-in" style={{
       background: t.BG, minHeight: '100vh', width: '100%',
-      padding: '24px max(18px, env(safe-area-inset-right)) calc(110px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))',
+      padding: `24px max(18px, env(safe-area-inset-right)) calc(${miniBar ? 182 : 110}px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left))`,
       fontFamily: t.FONT,
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
@@ -482,6 +509,8 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
           sessions={sessions} saveSessions={saveSessions} setError={setError}
           profile={profile} saveProfile={saveProfile} userId={userId}
           editSession={editingSession} onEditDone={handleEditDone}
+          onMiniBarChange={setMiniBar}
+          onWorkoutActive={markActiveWorkout}
         />
       </div>
 
@@ -493,7 +522,12 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
           className={slideDir === 1 ? 'slide-in-right' : slideDir === -1 ? 'slide-in-left' : ''}
           style={{ touchAction: 'pan-y' }}
         >
-          {tab === 'measurements' && <MeasurementsTab measurements={measurements} saveMeasurements={saveMeasurements} setError={setError} />}
+          {tab === 'measurements' && (
+            <MeasurementsTab
+              measurements={measurements} saveMeasurements={saveMeasurements} setError={setError}
+              profile={profile} saveProfile={saveProfile}
+            />
+          )}
           {tab === 'progress' && <ProgressTab sessions={sessions} measurements={measurements} profile={profile} onDeleteSession={handleDeleteSession} onEditSession={handleEditSession} />}
           {tab === 'assistant' && <AssistantTab />}
           {tab === 'profile' && (

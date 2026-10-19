@@ -17,6 +17,120 @@ export function Field({ label, children }) {
   );
 }
 
+// Шкалы 1–5 ползунком с цветом: тяжесть тренировки (зелёный — легко, красный —
+// на пределе) и энергия (наоборот: красный — нет сил, зелёный — полон сил).
+// Ползунок свой, а не <input type="range">: на iOS у штатного тап по полосе
+// ничего не делает — только перетаскивание кружка. Здесь тап ставит значение
+// сразу, перетаскивание — тоже, стрелки клавиатуры — на шаг.
+export const DIFFICULTY_COLORS = ['#6FBF73', '#A9C25D', '#D8B654', '#E38F55', '#E0604F'];
+export const DIFFICULTY_LABELS = ['легко', 'нормально', 'средне', 'тяжело', 'на пределе'];
+export const ENERGY_COLORS = [...DIFFICULTY_COLORS].reverse();
+export const ENERGY_LABELS = ['нет сил', 'вяло', 'нормально', 'бодро', 'полон сил'];
+
+export function difficultyColor(v) {
+  return DIFFICULTY_COLORS[Math.min(5, Math.max(1, Math.round(v))) - 1];
+}
+
+export function DifficultySlider({ label = 'Тяжесть тренировки', value, onChange }) {
+  return (
+    <ScaleSlider
+      label={label} value={value} onChange={onChange}
+      colors={DIFFICULTY_COLORS} labels={DIFFICULTY_LABELS} minLabel="легко" maxLabel="на пределе"
+    />
+  );
+}
+
+export function EnergySlider({ label = 'Энергия', value, onChange }) {
+  return (
+    <ScaleSlider
+      label={label} value={value} onChange={onChange}
+      colors={ENERGY_COLORS} labels={ENERGY_LABELS} minLabel="нет сил" maxLabel="полон сил"
+    />
+  );
+}
+
+function ScaleSlider({ label, value, onChange, colors, labels, minLabel, maxLabel }) {
+  const t = useTheme();
+  const trackRef = React.useRef(null);
+  const draggingRef = React.useRef(false);
+  const has = value != null && value >= 1;
+  const v = has ? Math.min(5, Math.max(1, Math.round(value))) : 3;
+  const color = has ? colors[v - 1] : t.TEXT_FAINT;
+  const gradient = `linear-gradient(90deg, ${colors.join(', ')})`;
+  const ratio = (v - 1) / 4;
+
+  const setFromX = (clientX) => {
+    const el = trackRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const k = Math.min(1, Math.max(0, (clientX - r.left) / (r.width || 1)));
+    const n = Math.round(k * 4) + 1;
+    if (n !== value) onChange(n);
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); onChange(Math.min(5, v + (has ? 1 : 0))); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); onChange(Math.max(1, v - (has ? 1 : 0))); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+        <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO }}>
+          {label}
+        </span>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color, fontFamily: t.FONT_MONO, whiteSpace: 'nowrap' }}>
+          {has ? `${v}/5 · ${labels[v - 1]}` : 'не указана'}
+        </span>
+      </div>
+      {/* Касания не всплывают к свайпу вкладок в App: перетаскивание ползунка
+          вбок иначе переключало бы вкладку. */}
+      <div
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={1}
+        aria-valuemax={5}
+        aria-valuenow={has ? v : undefined}
+        aria-valuetext={has ? `${v} из 5, ${labels[v - 1]}` : 'не указана'}
+        onKeyDown={onKeyDown}
+        onTouchStart={(e) => e.stopPropagation()}
+        onTouchEnd={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          draggingRef.current = true;
+          try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* no-op */ }
+          setFromX(e.clientX);
+        }}
+        onPointerMove={(e) => { if (draggingRef.current) setFromX(e.clientX); }}
+        onPointerUp={() => { draggingRef.current = false; }}
+        onPointerCancel={() => { draggingRef.current = false; }}
+        style={{ position: 'relative', height: 36, cursor: 'pointer', touchAction: 'pan-y', userSelect: 'none', outline: 'none' }}
+      >
+        <div ref={trackRef} style={{
+          position: 'absolute', left: 13, right: 13, top: 14, height: 8, borderRadius: 4,
+          background: gradient, opacity: has ? 1 : 0.35,
+        }} />
+        {[0, 1, 2, 3, 4].map((i) => (
+          <span key={i} aria-hidden style={{
+            position: 'absolute', top: 16, width: 4, height: 4, borderRadius: '50%',
+            left: `calc(13px + (100% - 26px) * ${i / 4} - 2px)`, background: 'rgba(10,10,10,0.45)',
+          }} />
+        ))}
+        <span aria-hidden style={{
+          position: 'absolute', top: 5, width: 26, height: 26, borderRadius: '50%', boxSizing: 'border-box',
+          left: `calc((100% - 26px) * ${ratio})`,
+          background: color, border: `3px solid ${t.BG}`,
+          boxShadow: `0 0 0 1px ${has ? color : t.BORDER}, 0 4px 12px rgba(0,0,0,0.5)`,
+          transition: 'left 0.15s ease, background 0.15s ease, box-shadow 0.15s ease',
+        }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: t.TEXT_FAINT, padding: '0 2px' }}>
+        <span>{minLabel}</span>
+        <span>{maxLabel}</span>
+      </div>
+    </div>
+  );
+}
+
 export const getInputStyle = (t) => ({
   background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 12,
   padding: '11px 12px', color: t.TEXT, fontSize: 15.5, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",

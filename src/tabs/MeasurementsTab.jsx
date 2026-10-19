@@ -4,6 +4,7 @@ import { useTheme } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort } from '../dateUtils.js';
 import { getMonday } from '../gamification.js';
 import { Field, getInputStyle, DatePicker } from './workoutTabHelpers.jsx';
+import { BodyParamsSection } from './BodyParamsSection.jsx';
 
 function average(nums) {
   if (!nums.length) return null;
@@ -125,8 +126,11 @@ function WeekGroupRow({ weekStart, entries, onDelete }) {
   );
 }
 
-export function MeasurementsTab({ measurements, saveMeasurements, setError }) {
+export function MeasurementsTab({ measurements, saveMeasurements, setError, profile, saveProfile }) {
   const t = useTheme();
+  // Вкладка из двух частей: вес (каждый день) и параметры тела с историей замеров
+  // (переехали сюда из «Профиля»). Открывается всегда на весе.
+  const [section, setSection] = useState('weight');
   const [date, setDate] = useState(todayISO());
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
@@ -210,8 +214,46 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError }) {
     setTimeout(() => setJustSaved(false), 2200);
   };
 
+  const switcher = (
+    <div role="tablist" style={{
+      display: 'flex', gap: 4, padding: 4, marginBottom: 20, borderRadius: 14,
+      background: t.BG_RAISED, border: `1px solid ${t.BORDER}`,
+    }}>
+      {[{ key: 'weight', label: 'Вес' }, { key: 'body', label: 'Параметры тела' }].map((o) => {
+        const on = section === o.key;
+        return (
+          <button
+            key={o.key}
+            role="tab"
+            aria-selected={on}
+            onClick={() => setSection(o.key)}
+            style={{
+              flex: 1, padding: '10px 8px', borderRadius: 10, border: 'none', cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+              background: on ? t.ACCENT_BG : 'transparent', color: on ? t.ACCENT_SOFT : t.TEXT_DIM,
+              boxShadow: on ? `inset 0 0 0 1px ${t.ACCENT_BORDER}` : 'none',
+              transition: 'background 0.2s ease, color 0.2s ease',
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (section === 'body') {
+    return (
+      <div>
+        {switcher}
+        <BodyParamsSection profile={profile} saveProfile={saveProfile} />
+      </div>
+    );
+  }
+
   return (
     <div>
+      {switcher}
       <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
         <Field label="Дата замера">
           <DatePicker value={date} onChange={setDate} />

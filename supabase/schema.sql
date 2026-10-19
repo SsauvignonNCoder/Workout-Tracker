@@ -65,6 +65,10 @@ create index measurements_user_date_idx on measurements (user_id, date);
 
 -- Профиль (один ряд на пользователя): текущий план, последний день программы
 -- (0 — план только что выбран, следующей будет день 1) + параметры тела.
+-- body_log — история замеров параметров тела (1.1.2, src/bodyLog.js); колонки
+-- height … body_fat — последнее значение каждого параметра.
+-- missed_alerts, tz, active_workout_at, last_missed_alert — напоминание о
+-- пропущенной тренировке (1.1.2, api/missed-check.js).
 create table profile (
   user_id uuid primary key references users(id) on delete cascade,
   plan_id text not null default 'plan1',
@@ -75,7 +79,12 @@ create table profile (
   chest numeric,
   shoulders numeric,
   body_fat numeric,
-  updated_at text
+  updated_at text,
+  body_log jsonb not null default '[]',
+  missed_alerts boolean not null default false,
+  tz text,
+  active_workout_at timestamptz,
+  last_missed_alert text
 );
 
 -- ============================================================
@@ -112,6 +121,8 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 --   1.0.1 — длительность и тяжесть тренировки.
 --   1.0.3 — название маршрута кардио-дня.
 --   1.1.0 — план тренировок у тренировки и профиля (migration-add-plan-id.sql).
+--   1.1.2 — история параметров тела (migration-add-body-log.sql),
+--           напоминание о пропущенной тренировке (migration-add-missed-alerts.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
@@ -121,6 +132,12 @@ alter table sessions
   add column if not exists route_name text;
 alter table sessions add column if not exists plan_id text not null default 'plan1';
 alter table profile add column if not exists plan_id text not null default 'plan1';
+alter table profile add column if not exists body_log jsonb not null default '[]';
+alter table profile
+  add column if not exists missed_alerts boolean not null default false,
+  add column if not exists tz text,
+  add column if not exists active_workout_at timestamptz,
+  add column if not exists last_missed_alert text;
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.

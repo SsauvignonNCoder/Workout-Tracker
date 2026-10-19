@@ -1,16 +1,16 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
   Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
-  ChevronDown, ChevronUp, HelpCircle, TrendingUp, Minus, Pause, Trash2,
+  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
 import { variantsOf } from '../cooldown.js';
 import {
   Field, getInputStyle, getLabelInputStyle, MuscleBadge, ExerciseNameInput, AutoGrowTextarea,
-  isWeightlessExercise, isTimeBasedExercise, repGoalLow, secToClock, parseClock, formatClockInput,
-  clampIncline, MAX_INCLINE, fmtTargetReps,
+  isWeightlessExercise, isTimeBasedExercise, secToClock, parseClock, formatClockInput,
+  clampIncline, MAX_INCLINE, fmtTargetReps, DifficultySlider, EnergySlider,
 } from './workoutTabHelpers.jsx';
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
@@ -19,58 +19,17 @@ import {
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
+import { buildWorkoutSummary } from '../workoutSummary.js';
 import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
 import { ClimbPicker } from '../ClimbPicker.jsx';
 
 const REST_SECONDS = 120;
 
-// Цвета свечения по итогу упражнения (пункт 5): зелёное — выполнено, красное —
-// не закрыт план / ничего не записано, синее — новый рекорд. Свечение без текста.
-const FLASH_GREEN = '#3FB27F';
-const FLASH_RED = '#E5484D';
-const FLASH_BLUE = '#5BA3E0';
-
-// Оценка выполнения упражнения при переходе дальше → тип свечения (цвет).
-// green — все подходы записаны и в каждом повторов ≥ нижней границы плана;
-// record — побит личный рекорд (вес / повторы / секунды) → синее;
-// wasted — не записан ни один подход → красное;
-// red — что-то записано, но план не закрыт → красное.
-function evalExercise(step, log, records) {
-  const timed = isTimeBasedExercise(step.name);
-  const weightless = isWeightlessExercise(step.name) || timed;
-  const low = repGoalLow(step.targetReps);
-  const arr = log || [];
-  const planned = Math.max(step.plannedSets || 0, arr.length || 0);
-  const recorded = arr.filter((x) => (parseInt(x.reps, 10) || 0) > 0 || (parseFloat(x.weight) || 0) > 0);
-  const withReps = arr.filter((x) => (parseInt(x.reps, 10) || 0) > 0);
-
-  if (recorded.length === 0) {
-    return { type: 'wasted', color: FLASH_RED, duration: 1150 };
-  }
-
-  const rec = records && records[step.name];
-  let isRecord = false;
-  if (weightless) {
-    const maxVal = Math.max(0, ...withReps.map((x) => parseInt(x.reps, 10) || 0));
-    const prev = rec && rec.metric ? (rec.value || 0) : 0;
-    isRecord = maxVal > 0 && maxVal > prev;
-  } else {
-    const maxW = Math.max(0, ...arr.map((x) => parseFloat(x.weight) || 0));
-    const prev = rec && rec.weight ? rec.weight : 0;
-    isRecord = maxW > 0 && maxW > prev;
-  }
-  if (isRecord) {
-    return { type: 'record', color: FLASH_BLUE, duration: 1300 };
-  }
-
-  const allRecorded = planned > 0 && withReps.length >= planned;
-  const allMeet = allRecorded && withReps.every((x) => (parseInt(x.reps, 10) || 0) >= Math.max(low, 1));
-  if (allMeet) {
-    return { type: 'green', color: FLASH_GREEN, duration: 950 };
-  }
-  return { type: 'red', color: FLASH_RED, duration: 850 };
-}
+// Перелистывание между шагами: текущий шаг уезжает и тает (STEP_LEAVE_MS), затем
+// въезжает следующий. Заменило свечение по итогу упражнения (красное / зелёное /
+// синее) — Никита попросил его убрать.
+const STEP_LEAVE_MS = 170;
 
 // Секунды → «M:SS» / «H:MM:SS» для таймера всей тренировки.
 function fmtElapsed(sec) {
@@ -185,7 +144,7 @@ function trimNum(n) { return String(+(Number(n).toFixed(2))); }
 function fmtGoal(n, isElev) { return isElev ? String(Math.round(n)) : trimNum(n); }
 
 export function GuidedWorkout({
-  dayPlan: dayPlanProp, planId: planIdProp, date: dateProp, userId, records, knownNames = [],
+  dayPlan: dayPlanProp, planId: planIdProp, date: dateProp, userId, records, knownNames = [], history = [],
   onClose, onComplete, minimized, onMinimize, onExpand,
 }) {
   const t = useTheme();
@@ -214,9 +173,13 @@ export function GuidedWorkout({
   // фон и восстановление черновика (метку кладём в черновик).
   const startedAtRef = useRef(Date.now());
   const [elapsed, setElapsed] = useState(0);
-  // Свечение по итогу упражнения (пункт 5).
-  const [flash, setFlash] = useState(null);
-  const flashTimerRef = useRef(null);
+  // Перелистывание шагов: leaving — в какую сторону уходит текущий шаг (1 — вперёд,
+  // -1 — назад, 0 — не уходит), enterDir — с какой стороны въезжает новый.
+  const [leaving, setLeaving] = useState(0);
+  const [enterDir, setEnterDir] = useState(0);
+  const turnTimerRef = useRef(null);
+  // Меню над кнопкой «^» в футере: отдых, заменить, добавить упражнение.
+  const [menuOpen, setMenuOpen] = useState(false);
   // Модалка-подсказка «как выполнять» (пункт 6).
   const [guideFor, setGuideFor] = useState(null);
   // Шторка добавления/замены упражнения: { mode: 'add' | 'edit', stepId? }.
@@ -453,7 +416,7 @@ export function GuidedWorkout({
 
   useEffect(() => () => {
     clearTimer();
-    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    if (turnTimerRef.current) clearTimeout(turnTimerRef.current);
     cancelBotAlert();
     try { audioRef.current && audioRef.current.close(); } catch (e) { /* no-op */ }
   }, [cancelBotAlert]);
@@ -503,6 +466,7 @@ export function GuidedWorkout({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setConfirmEarly(false);
     setSaveError('');
+    setMenuOpen(false);
   }, [stepId]);
 
   // Секундомер упражнения идёт, пока ты на нём: сам стартует при входе на
@@ -664,40 +628,45 @@ export function GuidedWorkout({
     }
   };
 
-  const advance = () => {
-    if (isLast) { finish(); return; }
-    setStepIdx((i) => Math.min(steps.length - 1, i + 1));
+  // Перелистнуть на соседний шаг: сначала текущий уезжает в сторону листания,
+  // потом подставляется новый и въезжает с другой стороны. Пока идёт уход,
+  // повторные нажатия игнорируются. При «уменьшении движения» — сразу.
+  const turnTo = (dir, apply) => {
+    if (turnTimerRef.current) return;
+    setMenuOpen(false);
+    let reduced = false;
+    try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* no-op */ }
+    if (reduced) { setEnterDir(0); apply(); return; }
+    setLeaving(dir);
+    turnTimerRef.current = setTimeout(() => {
+      turnTimerRef.current = null;
+      setLeaving(0);
+      setEnterDir(dir);
+      apply();
+    }, STEP_LEAVE_MS);
   };
 
   const goNext = () => {
-    if (flash) return; // идёт анимация свечения — ждём
+    if (turnTimerRef.current) return;
     if (restActiveRef.current) skipRest();
     if (isLast) { finish(); return; }
-    // На шаге упражнения — свечение по итогу (зелёное/красное/синее), затем переход.
-    if (step.kind === 'exercise') {
-      const res = evalExercise(step, exLogs[stepId] || [], records);
-      if (res) {
-        setFlash(res);
-        flashTimerRef.current = setTimeout(() => {
-          flashTimerRef.current = null;
-          setFlash(null);
-          advance();
-        }, res.duration || 1700);
-        try {
-          const tg = window.Telegram && window.Telegram.WebApp;
-          if (tg && tg.HapticFeedback) {
-            tg.HapticFeedback.notificationOccurred(res.type === 'red' || res.type === 'wasted' ? 'warning' : 'success');
-          }
-        } catch (e) { /* no-op */ }
-        return;
-      }
-    }
-    advance();
+    try {
+      const tg = window.Telegram && window.Telegram.WebApp;
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    } catch (e) { /* no-op */ }
+    turnTo(1, () => setStepIdx((i) => Math.min(steps.length - 1, i + 1)));
   };
   const goPrev = () => {
-    if (flash) return;
+    if (turnTimerRef.current || stepIdx === 0) return;
     if (restActiveRef.current) skipRest();
-    setStepIdx((i) => Math.max(0, i - 1));
+    turnTo(-1, () => setStepIdx((i) => Math.max(0, i - 1)));
+  };
+  // Переход к любому шагу из списка «Далее»: листается в ту же сторону, что и
+  // кнопки, пропущенные шаги остаются пустыми — к ним можно вернуться «Назад».
+  const jumpTo = (target) => {
+    if (turnTimerRef.current || target === stepIdx || target < 0 || target >= steps.length) return;
+    if (restActiveRef.current) skipRest();
+    turnTo(target > stepIdx ? 1 : -1, () => setStepIdx(target));
   };
 
   if (!step) {
@@ -714,7 +683,8 @@ export function GuidedWorkout({
   // не гадать, сколько ещё осталось и к чему готовиться.
   const nextShort = shortNameOf(steps[stepIdx + 1]);
   // Весь остаток тренировки — для разворачивающегося списка под чипом «Далее».
-  const restShortNames = steps.slice(stepIdx + 1).map(shortNameOf).filter(Boolean);
+  // Все шаги тренировки — для списка под плашкой «Далее» (по тапу — переход к шагу).
+  const allSteps = steps.map((st, k) => ({ idx: k, name: shortNameOf(st) }));
 
   // Секторы для «Горы» на итоговом экране: собираем со всех секторных шагов
   // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
@@ -733,6 +703,14 @@ export function GuidedWorkout({
   });
 
   const sheetStep = sheet && sheet.mode === 'edit' ? steps.find((s) => s.id === sheet.stepId) : null;
+
+  // Сводка по упражнениям для итога: только на шаге «Итог», по введённым подходам.
+  const exerciseSummary = step.kind === 'summary'
+    ? buildWorkoutSummary({
+      exercises: steps.filter((s) => s.kind === 'exercise').map((s) => ({ name: s.name, sets: exLogs[s.id] })),
+      history, records, current: { planId, day: dayPlan && dayPlan.day },
+    })
+    : null;
 
   // ---- Свёрнутый режим (пункт 3): узкая плашка над таб-баром, тап — развернуть ----
   if (minimized) {
@@ -809,25 +787,22 @@ export function GuidedWorkout({
         .guided-step-in { animation: stepIn 0.25s ease-out; }
         @keyframes stepIn { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
 
-        /* Свечение по итогу упражнения (пункт 5): поднимается снизу, из-под кнопок. Без текста. */
-        @keyframes flashRise { 0% { opacity: 0; transform: translateY(34px); } 24% { opacity: 1; transform: translateY(0); } 58% { opacity: 1; } 100% { opacity: 0; transform: translateY(0); } }
+        /* Перелистывание шагов: уходящий шаг сдвигается в сторону листания и тает,
+           новый въезжает с другой стороны с мягким торможением. */
+        @keyframes stepLeaveNext { to { opacity: 0; transform: translateX(-26%) scale(0.97); } }
+        @keyframes stepLeavePrev { to { opacity: 0; transform: translateX(26%) scale(0.97); } }
+        @keyframes stepEnterNext { from { opacity: 0; transform: translateX(34%) scale(0.98); } to { opacity: 1; transform: none; } }
+        @keyframes stepEnterPrev { from { opacity: 0; transform: translateX(-34%) scale(0.98); } to { opacity: 1; transform: none; } }
+        .step-leave-next { animation: stepLeaveNext ${STEP_LEAVE_MS}ms cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+        .step-leave-prev { animation: stepLeavePrev ${STEP_LEAVE_MS}ms cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+        .step-enter-next { animation: stepEnterNext 380ms cubic-bezier(0.22, 1, 0.36, 1); }
+        .step-enter-prev { animation: stepEnterPrev 380ms cubic-bezier(0.22, 1, 0.36, 1); }
+        @keyframes menuUp { from { opacity: 0; transform: translateY(8px) scale(0.97); } to { opacity: 1; transform: none; } }
+        .guided-menu { animation: menuUp 0.16s ease-out; transform-origin: bottom left; }
         @media (prefers-reduced-motion: reduce) {
-          .guided-step-in { animation-duration: 1ms; }
+          .guided-step-in, .step-enter-next, .step-enter-prev, .guided-menu { animation-duration: 1ms; }
         }
       `}</style>
-
-      {/* Свечение по итогу упражнения (пункт 5): только свет снизу, из-под блока кнопок, без текста */}
-      {flash && (
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 60, pointerEvents: 'none', overflow: 'hidden',
-        }}>
-          <div style={{
-            position: 'absolute', left: 0, right: 0, bottom: 0, height: '72%',
-            background: `radial-gradient(135% 100% at 50% 100%, ${flash.color}82 0%, ${flash.color}3A 28%, ${flash.color}14 48%, transparent 68%)`,
-            animation: `flashRise ${flash.duration}ms cubic-bezier(0.2,0.75,0.2,1) forwards`,
-          }} />
-        </div>
-      )}
 
       {/* Подсказка «как выполнять» (пункт 6) */}
       {guideFor && <GuideModal name={guideFor} onClose={() => setGuideFor(null)} />}
@@ -901,20 +876,23 @@ export function GuidedWorkout({
 
       {/* Тело шага */}
       <div ref={scrollRef} style={{
-        flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', position: 'relative',
+        flex: 1, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', position: 'relative',
         padding: '20px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left))',
       }}>
-        <div key={stepId} className="guided-step-in" style={{ maxWidth: 480, margin: '0 auto' }}>
+        <div
+          key={stepId}
+          className={leaving > 0 ? 'step-leave-next' : leaving < 0 ? 'step-leave-prev'
+            : enterDir > 0 ? 'step-enter-next' : enterDir < 0 ? 'step-enter-prev' : 'guided-step-in'}
+          style={{ maxWidth: 480, margin: '0 auto' }}
+        >
           {step.kind === 'exercise' ? (
             <ExerciseStep
               step={step} sets={exLogs[stepId] || []} onSet={setExSet}
               records={records} note={exNotes[stepId] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
-              nextName={nextShort} restNames={restShortNames}
+              nextName={nextShort} allSteps={allSteps} currentIdx={stepIdx} onJump={jumpTo}
               timer={exTimers[stepId]} onTimerToggle={toggleExTimer} onTimerReset={resetExTimer}
               onSetCount={changeSetCount}
-              onEdit={() => setSheet({ mode: 'edit', stepId })}
-              onAdd={() => setSheet({ mode: 'add' })}
             />
           ) : step.kind === 'sectors' ? (
             <SectorsStep
@@ -932,6 +910,7 @@ export function GuidedWorkout({
               onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))}
               mountainSectors={mountainSectors}
               mountainClimb={mountainClimb}
+              exerciseSummary={exerciseSummary}
             />
           ) : (
             <>
@@ -974,30 +953,88 @@ export function GuidedWorkout({
             <ChevronLeft size={20} />
           </button>
 
-          {/* Небольшая иконка отдыха рядом со стрелками: в покое (на шаге упражнения)
-              запускает отдых 2 мин, активная — показывает отсчёт и пропускает по тапу. */}
-          {(step.kind === 'exercise' || restActive || restDone) && (
-            <button
-              onClick={restActive || restDone ? skipRest : () => startRest()}
-              aria-label={restActive ? 'Пропустить отдых' : restDone ? 'Отдых окончен' : 'Отдых 2 минуты'}
-              title={restActive || restDone ? 'Пропустить отдых' : 'Запустить отдых 2 мин'}
-              className={restDone ? 'rest-done-flash' : ''}
-              style={{
-                ...btnBase, flex: '0 0 auto', minWidth: 66, padding: '0 11px', gap: 5,
-                border: `1px solid ${restDone ? t.POSITIVE : restActive ? t.ACCENT_BORDER : t.BORDER}`,
-                background: restDone ? t.POSITIVE_BG : restActive ? t.ACCENT_BG : t.BG_INPUT,
-                color: restDone ? t.POSITIVE : restActive ? t.ACCENT_SOFT : t.TEXT_DIM,
-                fontFamily: t.FONT_MONO, fontSize: 13.5,
-                animation: restActive ? 'restPulse 1s ease-in-out infinite' : 'none',
-              }}
-            >
-              {restDone
-                ? <CheckCircle2 size={18} />
-                : restActive
-                  ? <><Timer size={16} />{fmtClock(restRemaining)}</>
-                  : <><Timer size={16} />2:00</>}
-            </button>
-          )}
+          {/* Кнопка «^» вместо кнопки отдыха: открывает меню — отдых, заменить,
+              добавить упражнение. Пока идёт отдых, на ней отсчёт; когда отдых
+              кончился — галочка. */}
+          {(() => {
+            const items = [];
+            if (step.kind === 'exercise' || restActive) {
+              items.push(restActive
+                ? { key: 'rest', icon: Timer, label: 'Пропустить отдых', hint: `осталось ${fmtClock(restRemaining)}`, onClick: skipRest }
+                : { key: 'rest', icon: Timer, label: 'Отдых 2:00', hint: 'сигнал в конце, звук и в наушники', onClick: () => startRest() });
+            }
+            if (step.kind === 'exercise') {
+              items.push({ key: 'edit', icon: Shuffle, label: 'Заменить упражнение', hint: 'или подходы и повторы', onClick: () => setSheet({ mode: 'edit', stepId }) });
+            }
+            if (step.kind === 'exercise' || canAddExerciseAt(step)) {
+              items.push({ key: 'add', icon: Plus, label: 'Добавить упражнение', hint: step.finisher ? 'встанет перед дорожкой' : 'встанет следующим', onClick: () => setSheet({ mode: 'add' }) });
+            }
+            if (items.length === 0 && !restDone) return null;
+            const toggle = () => {
+              if (restDone) setRestDone(false);
+              if (items.length === 0) return;
+              setMenuOpen((v) => !v);
+            };
+            return (
+              <div style={{ position: 'relative', flex: '0 0 auto', display: 'flex' }}>
+                <button
+                  onClick={toggle}
+                  aria-label={restActive ? `Отдых, осталось ${fmtClock(restRemaining)}` : 'Ещё: отдых, заменить, добавить'}
+                  aria-expanded={menuOpen}
+                  className={restDone ? 'rest-done-flash' : ''}
+                  style={{
+                    ...btnBase, minWidth: 54, padding: '0 12px', gap: 5,
+                    border: `1px solid ${restDone ? t.POSITIVE : restActive || menuOpen ? t.ACCENT_BORDER : t.BORDER}`,
+                    background: restDone ? t.POSITIVE_BG : restActive || menuOpen ? t.ACCENT_BG : t.BG_INPUT,
+                    color: restDone ? t.POSITIVE : restActive || menuOpen ? t.ACCENT_SOFT : t.TEXT_DIM,
+                    fontFamily: t.FONT_MONO, fontSize: 13.5,
+                    animation: restActive && !menuOpen ? 'restPulse 1s ease-in-out infinite' : 'none',
+                  }}
+                >
+                  {restDone
+                    ? <CheckCircle2 size={18} />
+                    : restActive
+                      ? <><Timer size={16} />{fmtClock(restRemaining)}</>
+                      : <ChevronUp size={20} style={{ transition: 'transform 0.2s ease', transform: menuOpen ? 'rotate(180deg)' : 'none' }} />}
+                </button>
+                {menuOpen && (
+                  <>
+                    <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 80 }} />
+                    <div role="menu" className="guided-menu" style={{
+                      position: 'absolute', left: 0, bottom: 'calc(100% + 10px)', zIndex: 81,
+                      width: 'min(280px, calc(100vw - 32px))', boxSizing: 'border-box', padding: 6,
+                      background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 16,
+                      boxShadow: '0 18px 44px rgba(0,0,0,0.55)',
+                    }}>
+                      {items.map((it) => (
+                        <button
+                          key={it.key}
+                          role="menuitem"
+                          onClick={() => { setMenuOpen(false); it.onClick(); }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 11, width: '100%', boxSizing: 'border-box',
+                            padding: '9px 10px', borderRadius: 11, border: 'none', background: 'transparent',
+                            cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                          }}
+                        >
+                          <span style={{
+                            flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: t.ACCENT_BG, color: t.ACCENT_SOFT,
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <it.icon size={17} />
+                          </span>
+                          <span style={{ minWidth: 0 }}>
+                            <span style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>{it.label}</span>
+                            <span style={{ display: 'block', fontSize: 11.5, color: t.TEXT_FAINT, marginTop: 1 }}>{it.hint}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           {(() => {
             // Цель кардио-дня больше НЕ запирает кнопку намертво. Раньше при
@@ -1017,7 +1054,7 @@ export function GuidedWorkout({
               else shortLabel = `Осталось ${fmtGoal(Math.max(0, target - sectorAchieved(secData)), isElevGoal)} ${unit}`;
             }
             const armed = goalShort && confirmEarly;
-            const disabled = saving || !!flash;
+            const disabled = saving || leaving !== 0;
             const handleClick = () => {
               if (goalShort && !confirmEarly) {
                 setConfirmEarly(true);
@@ -1367,20 +1404,55 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName, action }) {
   );
 }
 
+// Название упражнения — всегда в одну строку. Если не влезает, шрифт плавно
+// уменьшается до min, и только потом обрезается многоточием. Подгоняем и после
+// загрузки веб-шрифта: до неё ширина строки считается по системному.
+function FitLine({ text, max = 20, min = 14, style }) {
+  const ref = useRef(null);
+  const [size, setSize] = useState(max);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    let alive = true;
+    const fit = () => {
+      if (!alive) return;
+      let s = max;
+      el.style.fontSize = `${s}px`;
+      while (s > min && el.scrollWidth > el.clientWidth + 0.5) {
+        s -= 1;
+        el.style.fontSize = `${s}px`;
+      }
+      setSize(s);
+    };
+    fit();
+    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit); } catch (e) { /* no-op */ }
+    window.addEventListener('resize', fit);
+    return () => { alive = false; window.removeEventListener('resize', fit); };
+  }, [text, max, min]);
+  return (
+    <h2 ref={ref} title={text} style={{
+      ...style, fontSize: size, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+    }}>
+      {text}
+    </h2>
+  );
+}
+
 function ExerciseStep({
-  step, sets, onSet, records, note, onNote, onGuide, nextName, restNames = [],
-  timer, onTimerToggle, onTimerReset, onSetCount, onEdit, onAdd,
+  step, sets, onSet, records, note, onNote, onGuide, nextName, allSteps = [], currentIdx = 0, onJump,
+  timer, onTimerToggle, onTimerReset, onSetCount,
 }) {
   const t = useTheme();
-  // Список оставшихся шагов свёрнут по умолчанию и закрывается сам при переходе
-  // к следующему упражнению (компонент пересоздаётся по key={stepId}).
+  // Список шагов тренировки свёрнут по умолчанию и закрывается сам при переходе
+  // к другому шагу (компонент пересоздаётся по key={stepId}).
   const [restOpen, setRestOpen] = useState(false);
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
   const record = records && records[step.name];
   const hasGuide = !!getExerciseGuide(step.name);
-  // Пометки плана («скамья», «со страховкой») — только пока
-  // упражнение не заменено: к другому упражнению они не относятся.
+  // Пометки плана («со страховкой» и т.п.) — только пока упражнение не заменено:
+  // к другому упражнению они не относятся. Подпись места («тренажёр», «скамья»)
+  // под названием Никита попросил убрать.
   const planNotes = planNotesOf(step);
   const running = swIsRunning(timer);
   const timerSec = swElapsed(timer);
@@ -1394,10 +1466,6 @@ function ExerciseStep({
     else if (record.metric === 'reps') recordText = `${record.value} повт`;
   }
 
-  const subtitle = step.replacedFrom ? `вместо «${step.replacedFrom}»`
-    : step.added ? 'добавлено в этой тренировке'
-      : (planNotes && planNotes.where) || null;
-
   const smallBtn = (disabled) => ({
     flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
     padding: '9px 10px', borderRadius: 10, border: `1px solid ${t.BORDER}`,
@@ -1406,48 +1474,47 @@ function ExerciseStep({
     fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
   });
 
+  const iconBtn = {
+    flexShrink: 0, width: 34, height: 34, borderRadius: 9, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+  };
+
+  // Плашки под названием: две строки, каждая на всю ширину. Обе плашки в строке
+  // растут вместе от своей ширины (flex 1 1 auto) — бо́льшая остаётся бо́льшей,
+  // текст по центру. Не влезает — сжимаются обе, текст режется многоточием.
+  const chip = {
+    flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    minWidth: 0, height: 34, boxSizing: 'border-box', padding: '0 11px', borderRadius: 10,
+    fontFamily: 'inherit', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
+  };
+  const ellipsis = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
+  const afterNext = Math.max(0, allSteps.length - currentIdx - 2);
+
   return (
     <div>
-      <StepHeader
-        name={step.name} badgeName={step.name} subtitle={subtitle}
-        action={onEdit && (
-          <button
-            onClick={onEdit}
-            aria-label="Заменить упражнение или изменить подходы"
-            title="Заменить / изменить подходы и повторы"
-            style={{
-              flexShrink: 0, height: 34, padding: '0 11px', borderRadius: 10,
-              border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_DIM,
-              display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
-              fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
-            }}
-          >
-            <Shuffle size={14} /> Заменить
-          </button>
-        )}
-      />
-      {/* Цель, рекорд, «Как выполнять» и «Далее» — всегда ровно две строки:
-          в первой цель и рекорд, во второй подсказка и что дальше. Строки не
-          переносятся: что не влезает по ширине, сокращается многоточием. */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: planNotes && planNotes.tip ? 10 : 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <MuscleBadge name={step.name} size={26} />
+        <FitLine
+          text={step.name}
+          style={{ margin: 0, flex: 1, minWidth: 0, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em', lineHeight: 1.25 }}
+        />
+      </div>
+
+      {/* Цель и рекорд — первая строка, «Как выполнять» и «Далее» — вторая.
+          Рекорда нет — плашка всё равно есть, с надписью «без рекорда». */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: planNotes && planNotes.tip ? 10 : 12 }}>
         <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
           <span style={{
-            fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: t.ACCENT_BG,
-            padding: '5px 10px', borderRadius: 8, fontFamily: t.FONT_MONO, border: '1px solid transparent',
-            flex: '0 0 auto', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            ...chip, color: t.ACCENT_SOFT, background: t.ACCENT_BG, border: '1px solid transparent', fontFamily: t.FONT_MONO,
           }}>
-            Цель: {fmtTargetReps(step.targetReps, timed)} · {sets.length} подх
+            <span style={ellipsis}>Цель: {fmtTargetReps(step.targetReps, timed)} · {sets.length} подх</span>
           </span>
-          {recordText ? (
-            <span style={{
-              fontSize: 12, fontWeight: 700, color: t.TEXT_DIM, background: t.BG_INPUT,
-              padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
-              flex: '0 1 auto', minWidth: 0, border: '1px solid transparent',
-            }}>
-              <Flame size={12} style={{ flexShrink: 0 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Рекорд {recordText}</span>
-            </span>
-          ) : null}
+          <span style={{
+            ...chip, color: recordText ? t.TEXT_DIM : t.TEXT_FAINT, background: t.BG_INPUT, border: '1px solid transparent',
+          }}>
+            <Flame size={12} style={{ flexShrink: 0 }} />
+            <span style={ellipsis}>{recordText ? `Рекорд ${recordText}` : 'Без рекорда'}</span>
+          </span>
         </div>
         {(hasGuide || nextName) && (
           <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
@@ -1455,13 +1522,12 @@ function ExerciseStep({
               <button
                 onClick={onGuide}
                 style={{
-                  fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, background: 'transparent',
-                  border: `1px solid ${t.ACCENT_BORDER}`, padding: '5px 10px', borderRadius: 8,
-                  display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontFamily: 'inherit',
-                  flex: '0 0 auto', whiteSpace: 'nowrap',
+                  ...chip, cursor: 'pointer',
+                  background: 'transparent', border: `1px solid ${t.ACCENT_BORDER}`, color: t.ACCENT_SOFT,
                 }}
               >
-                <HelpCircle size={13} /> Как выполнять
+                <HelpCircle size={13} style={{ flexShrink: 0 }} />
+                <span style={ellipsis}>Как выполнять</span>
               </button>
             )}
             {nextName && (
@@ -1469,23 +1535,17 @@ function ExerciseStep({
                 onClick={() => setRestOpen((v) => !v)}
                 aria-expanded={restOpen}
                 style={{
-                  fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, background: t.BG_INPUT,
-                  border: `1px solid ${t.BORDER}`,
-                  padding: '5px 10px', borderRadius: 8, display: 'inline-flex', alignItems: 'center',
-                  gap: 5, flex: '0 1 auto', minWidth: 0, cursor: restNames.length ? 'pointer' : 'default',
-                  fontFamily: 'inherit',
+                  ...chip, cursor: 'pointer', fontWeight: 600,
+                  background: t.BG_INPUT, border: `1px solid ${restOpen ? t.ACCENT_BORDER : t.BORDER}`, color: t.TEXT_FAINT,
                 }}
               >
                 {restOpen
                   ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
                   : <ChevronRight size={12} style={{ flexShrink: 0 }} />}
-                {/* Название обрезаем многоточием: длинное имя не должно ни переносить
-                    строку, ни растягивать чип. Полное имя видно в развёрнутом списке. */}
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  Далее: {nextName}
-                </span>
-                {restNames.length > 1 && (
-                  <span style={{ flexShrink: 0, opacity: 0.8, fontFamily: t.FONT_MONO }}>+{restNames.length - 1}</span>
+                {/* Название обрезаем многоточием: полное — в развёрнутом списке. */}
+                <span style={ellipsis}>Далее: {nextName}</span>
+                {afterNext > 0 && (
+                  <span style={{ flexShrink: 0, opacity: 0.8 }}>+{afterNext}</span>
                 )}
               </button>
             )}
@@ -1495,93 +1555,95 @@ function ExerciseStep({
 
       {planNotes && planNotes.tip && (
         <div style={{
-          fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45, marginBottom: 16,
+          fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45, marginBottom: 12,
           background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10, padding: '9px 12px',
         }}>
           {planNotes.tip}
         </div>
       )}
 
-      {/* Что осталось до конца тренировки. Список — весь остаток шагов, а не только
-          упражнения: заминка и итог тоже часть плана, и их полезно видеть. */}
-      {nextName && restOpen && restNames.length > 0 && (
+      {/* Вся тренировка списком: текущий шаг — латунью, как кнопка «Дальше»,
+          следующий — белым, остальные приглушены. Тап по строке — перейти к шагу. */}
+      {nextName && restOpen && allSteps.length > 0 && (
         <div className="dropdown-open" style={{
           background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 14,
-          padding: '10px 12px', marginBottom: 14,
+          padding: '10px 6px 6px', marginBottom: 12,
         }}>
           <div style={{
             fontSize: 10, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
-            letterSpacing: '0.1em', fontFamily: t.FONT_MONO, marginBottom: 8,
+            letterSpacing: '0.1em', fontFamily: t.FONT_MONO, margin: '0 6px 6px',
           }}>
-            Осталось · {restNames.length}
+            Тренировка · шаг {currentIdx + 1} из {allSteps.length}
           </div>
-          {restNames.map((nm, i) => (
-            <div key={i} style={{
-              display: 'flex', alignItems: 'center', gap: 9, padding: '5px 0',
-              fontSize: 13.5, color: i === 0 ? t.TEXT : t.TEXT_DIM,
-              fontWeight: i === 0 ? 600 : 400,
-            }}>
-              <span style={{
-                flexShrink: 0, width: 18, textAlign: 'right',
-                fontSize: 11, fontFamily: t.FONT_MONO, color: t.TEXT_FAINT,
-              }}>{i + 1}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nm}</span>
-            </div>
-          ))}
+          {allSteps.map((rs) => {
+            const isCur = rs.idx === currentIdx;
+            const isNext = rs.idx === currentIdx + 1;
+            return (
+              <button
+                key={rs.idx}
+                onClick={() => { if (!isCur && onJump) onJump(rs.idx); }}
+                aria-current={isCur ? 'step' : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 9, width: '100%', boxSizing: 'border-box',
+                  padding: '8px 8px', marginBottom: 2, borderRadius: 9, border: 'none',
+                  background: isCur ? t.ACCENT_GRAD : 'transparent',
+                  cursor: isCur ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left', fontSize: 13.5,
+                  color: isCur ? t.ON_ACCENT : isNext ? t.TEXT : t.TEXT_DIM,
+                  fontWeight: isCur || isNext ? 700 : 400,
+                }}
+              >
+                <span style={{
+                  flexShrink: 0, width: 18, textAlign: 'right', fontSize: 11, fontFamily: t.FONT_MONO,
+                  color: isCur ? t.ON_ACCENT : t.TEXT_FAINT, opacity: isCur ? 0.75 : 1,
+                }}>{rs.idx + 1}</span>
+                <span style={{ ...ellipsis, flex: 1 }}>{rs.name}</span>
+                {!isCur && <ChevronRight size={14} style={{ flexShrink: 0, color: t.TEXT_FAINT }} />}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Секундомер упражнения: сколько ушло на это упражнение вместе с отдыхом.
-          Сам стартует при входе на шаг и встаёт на паузу при уходе с него;
-          кнопкой можно остановить вручную. Время сохраняется в тренировку
-          (durationSec у упражнения). */}
+      {/* Секундомер упражнения — тонкая строка без подписи: часы слева, время
+          ровно по центру, кнопки справа. Часы и кнопки чуть отодвинуты от краёв
+          к центру (поля по 6% ширины). Сам стартует при входе на шаг и встаёт на
+          паузу при уходе с него; кнопкой можно остановить вручную. Время
+          сохраняется в тренировку (durationSec у упражнения). */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
-        background: t.BG_RAISED, border: `1px solid ${running ? t.ACCENT_BORDER : t.BORDER}`, borderRadius: 14,
-        padding: '9px 10px 9px 14px', boxShadow: t.CARD_SHADOW,
+        display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 9, marginBottom: 14,
+        background: t.BG_RAISED, border: `1px solid ${running ? t.ACCENT_BORDER : t.BORDER}`, borderRadius: 12,
+        padding: '4px 6%',
       }}>
-        <Timer size={16} color={running ? t.ACCENT_SOFT : t.TEXT_FAINT} style={{ flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 10, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
-            letterSpacing: '0.08em', fontFamily: t.FONT_MONO,
-          }}>
-            Секундомер упражнения
-          </div>
-          <div style={{
-            fontSize: 20, fontWeight: 700, color: running ? t.TEXT : t.TEXT_DIM, fontFamily: t.FONT_MONO,
-            fontVariantNumeric: 'tabular-nums', lineHeight: 1.2,
-          }}>
-            {secToClock(timerSec)}
-          </div>
-        </div>
-        {!running && timerSec > 0 && (
+        <Timer size={16} color={running ? t.ACCENT_SOFT : t.TEXT_FAINT} style={{ justifySelf: 'start' }} />
+        <span style={{
+          fontSize: 17, fontWeight: 700, color: running ? t.TEXT : t.TEXT_DIM,
+          fontFamily: t.FONT_MONO, fontVariantNumeric: 'tabular-nums', textAlign: 'center',
+        }}>
+          {secToClock(timerSec)}
+        </span>
+        <div style={{ justifySelf: 'end', display: 'flex', gap: 8 }}>
+          {!running && timerSec > 0 && (
+            <button
+              onClick={onTimerReset}
+              aria-label="Сбросить секундомер"
+              style={{ ...iconBtn, border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_FAINT }}
+            >
+              <RotateCcw size={15} />
+            </button>
+          )}
           <button
-            onClick={onTimerReset}
-            aria-label="Сбросить секундомер"
+            onClick={onTimerToggle}
+            aria-label={running ? 'Пауза секундомера' : 'Запустить секундомер'}
             style={{
-              flexShrink: 0, width: 38, height: 38, borderRadius: 10, border: `1px solid ${t.BORDER}`,
-              background: t.BG_INPUT, color: t.TEXT_FAINT, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              ...iconBtn,
+              border: running ? `1px solid ${t.ACCENT_BORDER}` : 'none',
+              background: running ? t.ACCENT_BG : t.ACCENT_GRAD,
+              color: running ? t.ACCENT_SOFT : t.ON_ACCENT,
             }}
           >
-            <RotateCcw size={15} />
+            {running ? <Pause size={16} /> : <Play size={16} />}
           </button>
-        )}
-        <button
-          onClick={onTimerToggle}
-          aria-label={running ? 'Пауза' : 'Запустить секундомер'}
-          style={{
-            flexShrink: 0, height: 38, padding: '0 14px', borderRadius: 10,
-            border: running ? `1px solid ${t.ACCENT_BORDER}` : 'none',
-            background: running ? t.ACCENT_BG : t.ACCENT_GRAD,
-            color: running ? t.ACCENT_SOFT : t.ON_ACCENT,
-            cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          {running ? <><Pause size={15} /> Пауза</> : <><Play size={15} /> {timerSec > 0 ? 'Продолжить' : 'Старт'}</>}
-        </button>
+        </div>
       </div>
 
       <div>
@@ -1648,8 +1710,6 @@ function ExerciseStep({
           />
         </Field>
       </div>
-
-      {onAdd && <AddExerciseButton onClick={onAdd} />}
     </div>
   );
 }
@@ -1765,29 +1825,7 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
   );
 }
 
-// Шкала 1–5 (энергия, тяжесть тренировки и т.п.).
-function Scale1to5({ label, value, onChange }) {
-  const t = useTheme();
-  return (
-    <Field label={label}>
-      <div style={{ display: 'flex', gap: 4, paddingTop: 2 }}>
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            onClick={() => onChange(n)}
-            style={{
-              flex: 1, height: 38, borderRadius: 8,
-              border: `1px solid ${n <= value ? t.ACCENT : t.BORDER}`,
-              background: n <= value ? t.ACCENT : 'transparent', cursor: 'pointer',
-            }}
-          />
-        ))}
-      </div>
-    </Field>
-  );
-}
-
-function SummaryStep({ summary, onChange, mountainSectors, mountainClimb }) {
+function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerciseSummary }) {
   const t = useTheme();
   // Гора-награда: только для кардио-дня по секторам, где есть дистанция и наклон.
   const gainM = Math.round(sectorElevationGain(mountainSectors));
@@ -1825,10 +1863,12 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb }) {
             placeholder="7.5"
           />
         </Field>
-        <Scale1to5 label="Энергия" value={summary.energy} onChange={(n) => onChange({ energy: n })} />
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <EnergySlider value={summary.energy} onChange={(n) => onChange({ energy: n })} />
       </div>
       <div style={{ marginBottom: 16 }}>
-        <Scale1to5 label="Тяжесть тренировки" value={summary.difficulty} onChange={(n) => onChange({ difficulty: n })} />
+        <DifficultySlider value={summary.difficulty} onChange={(n) => onChange({ difficulty: n })} />
       </div>
       <Field label="Самочувствие, заметки">
         <AutoGrowTextarea
@@ -1837,8 +1877,110 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb }) {
           placeholder="Как прошло в целом, что почувствовал…"
         />
       </Field>
+
+      {/* Сводка по упражнениям — в самом конце, после заметки. */}
+      {exerciseSummary && <ExerciseSummaryCard data={exerciseSummary} />}
     </div>
   );
+}
+
+// Сводка тренировки (src/workoutSummary.js): лучший рост, худшее — спад или
+// застой, новые рекорды, счётчики. Считается на лету по введённым подходам.
+function ExerciseSummaryCard({ data }) {
+  const t = useTheme();
+  const { best, worst, records, counts, plannedNote } = data;
+  const RED = '#E0604F';
+
+  const row = (item, kind) => {
+    const tone = kind === 'up' ? { icon: TrendingUp, color: t.POSITIVE, bg: t.POSITIVE_BG }
+      : kind === 'down' ? { icon: TrendingDown, color: RED, bg: 'rgba(224,96,79,0.13)' }
+        : { icon: Minus, color: t.ACCENT_SOFT, bg: t.ACCENT_BG };
+    const Icon = tone.icon;
+    const note = kind === 'same'
+      ? (item.stuck >= 3 ? `${item.stuck}-я тренировка подряд без роста` : 'как в прошлый раз')
+      : null;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 12px' }}>
+        <span style={{
+          flexShrink: 0, width: 32, height: 32, borderRadius: 9, background: tone.bg, color: tone.color,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Icon size={17} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: t.TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.name}
+            </span>
+            {item.isRecord && (
+              <span style={{
+                flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 6,
+                fontSize: 10.5, fontWeight: 700, color: t.ON_ACCENT, background: t.ACCENT_GRAD,
+              }}>
+                <Flame size={11} /> Рекорд
+              </span>
+            )}
+          </span>
+          <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: t.TEXT_DIM, fontFamily: t.FONT_MONO }}>
+            {item.baseText} → {item.currentText}
+            <span style={{ color: t.TEXT_FAINT, fontFamily: t.FONT }}> · прошлый раз {fmtDayMonth(item.baseDate)}</span>
+          </span>
+          {note && <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: t.TEXT_FAINT }}>{note}</span>}
+        </span>
+        <span style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 700, color: tone.color, fontFamily: t.FONT_MONO }}>
+          {item.delta}
+        </span>
+      </div>
+    );
+  };
+
+  const countParts = [
+    counts.up && `рост ${counts.up}`,
+    counts.same && `без изменений ${counts.same}`,
+    counts.down && `спад ${counts.down}`,
+    counts.planned && `по плану ${counts.planned}`,
+    counts.new && `новых ${counts.new}`,
+  ].filter(Boolean);
+
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+        <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO }}>
+          Итог по упражнениям
+        </span>
+        <span style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{counts.total} упр.</span>
+      </div>
+      {(best || worst) && (
+        <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+          {best && row(best, 'up')}
+          {best && worst && <div style={{ height: 1, background: t.BORDER, margin: '0 12px' }} />}
+          {worst && row(worst, worst.outcome === 'down' ? 'down' : 'same')}
+        </div>
+      )}
+      {records.length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.6 }}>
+          <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>Новые рекорды: </span>
+          {records.map((r) => `${r.name} ${r.currentText}`).join(' · ')}
+        </div>
+      )}
+      {plannedNote && (
+        <div style={{ marginTop: 10, fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5 }}>{plannedNote}</div>
+      )}
+      {!best && !worst && records.length === 0 && !plannedNote && (
+        <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, lineHeight: 1.5 }}>Сравнивать пока не с чем — это первый раз для всех упражнений.</div>
+      )}
+      {countParts.length > 0 && (
+        <div style={{ marginTop: 8, fontSize: 11.5, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO }}>{countParts.join(' · ')}</div>
+      )}
+    </div>
+  );
+}
+
+// «12 окт» — дата прошлого раза в сводке.
+function fmtDayMonth(iso) {
+  const M = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+  const [, m, d] = String(iso || '').split('-').map(Number);
+  return m && d ? `${d} ${M[m - 1]}` : '';
 }
 
 // Модалка-подсказка «как выполнять» (пункт 6): техника по шагам, частые ошибки, мышцы.

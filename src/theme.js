@@ -23,6 +23,8 @@ export const THEME_2A = {
   ACCENT_GRAD: 'linear-gradient(100deg,#8B6B2E,#C79A4E,#F5E3AE,#C79A4E,#8B6B2E)', ON_ACCENT: '#0A0A0A',
   ACCENT_BG: 'rgba(199,154,78,0.15)', ACCENT_BORDER: 'rgba(184,146,74,0.30)',
   POSITIVE_BG: 'rgba(147,168,106,0.16)',
+  // Опасные действия (выход из аккаунта): тёплый красный, чтобы не спорить с латунью.
+  DANGER: '#E0715F', DANGER_BG: 'rgba(224,113,95,0.13)', DANGER_BORDER: 'rgba(224,113,95,0.55)',
   GLOW: '0 0 22px rgba(184,146,74,0.40)', NAV_BG: 'rgba(23,21,18,0.10)',
   CARD_SHADOW: '0 16px 40px rgba(0,0,0,0.4)',
   FONT: "'Space Grotesk', system-ui, sans-serif",

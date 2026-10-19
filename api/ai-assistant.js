@@ -120,7 +120,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'get_profile',
-      description: 'Параметры тела (рост, талия, бёдра, грудь, плечи, процент жира), текущий план тренировок (plan_id) и последний сделанный день этого плана.',
+      description: 'Параметры тела (рост, талия, бёдра, грудь, плечи, процент жира — последние значения и body_history, история замеров по датам), текущий план тренировок (plan_id) и последний сделанный день этого плана.',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -259,6 +259,20 @@ async function toolGetProfile(reader, userId) {
       updated: data.updated_at,
       plan_id: data.plan_id || 'plan1',
       last_program_day: data.last_program_day ?? null,
+      // История замеров параметров тела (поля выше — последние значения).
+      // Только мерившиеся в тот день параметры, последние 30 замеров.
+      body_history: (Array.isArray(data.body_log) ? data.body_log : [])
+        .filter((e) => e && typeof e.date === 'string')
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-30)
+        .map((e) => {
+          const out = { date: e.date };
+          [['height', 'height_cm'], ['waist', 'waist_cm'], ['hips', 'hips_cm'], ['chest', 'chest_cm'],
+            ['shoulders', 'shoulders_cm'], ['bodyFat', 'body_fat_pct']].forEach(([k, name]) => {
+            if (e[k] != null) out[name] = e[k];
+          });
+          return out;
+        }),
     },
   };
 }

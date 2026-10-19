@@ -122,8 +122,79 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
   );
 }
 
+// Серия графика по умолчанию (см. ProgressTab): случайное упражнение, у которого
+// за 30 дней до today больше двух записей с весом; иначе — упражнение, сделанное
+// последним; иначе — первая серия в списке. random — для тестов.
+export function pickDefaultSeriesKey(exerciseSeries, options, today, random = Math.random) {
+  const keys = new Set(options.map((o) => o.key));
+  const monthAgo = shiftDate(today, -30);
+  const candidates = Object.entries(exerciseSeries || {})
+    .filter(([name, pts]) => keys.has(`ex:${name}`)
+      && pts.filter((p) => p.date >= monthAgo && p.date <= today).length > 2
+      && pts.some((p) => (parseFloat(p.weight) || 0) > 0))
+    .map(([name]) => `ex:${name}`);
+  if (candidates.length > 0) return candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))];
+  const latest = Object.entries(exerciseSeries || {})
+    .filter(([name]) => keys.has(`ex:${name}`))
+    .map(([name, pts]) => ({ key: `ex:${name}`, last: pts.length ? pts[pts.length - 1].date : '' }))
+    .sort((a, b) => b.last.localeCompare(a.last))[0];
+  return latest ? latest.key : options[0].key;
+}
+
+// Подпись точки упражнения для тапа по графику: рабочий (максимальный) вес и
+// повторы, сделанные именно с ним, — «80 кг × 8, 7». Без подходов по отдельности
+// (ручная запись) — «80 кг × 8 · 3 подх». Упражнение без веса — только повторы.
+export function exercisePointInfo(p) {
+  const top = parseFloat(p.weight) || 0;
+  const log = Array.isArray(p.setLog) ? p.setLog : [];
+  const repsAtTop = log
+    .filter((x) => (parseFloat(x.weight) || 0) === top && (parseInt(x.reps, 10) || 0) > 0)
+    .map((x) => parseInt(x.reps, 10));
+  const weightPart = top > 0 ? `${top} кг × ` : '';
+  if (repsAtTop.length > 0) return `${weightPart}${repsAtTop.join(', ')}${top > 0 ? '' : ' повт'}`;
+  const reps = parseInt(p.reps, 10) || 0;
+  if (!reps) return top > 0 ? `${top} кг` : null;
+  const sets = parseInt(p.sets, 10) || 0;
+  return `${weightPart}${reps}${top > 0 ? '' : ' повт'}${sets > 1 ? ` · ${sets} подх` : ''}`;
+}
+
+// Подсказка по тапу на точку: дата, затем по каждой серии — цвет, название и
+// значение (у упражнения — вес и повторы с этим весом).
+function ChartTooltip({ active, payload, label, seriesByKey }) {
+  const t = useTheme();
+  if (!active || !payload || payload.length === 0) return null;
+  const rows = payload.filter((p) => p.value != null && seriesByKey[p.dataKey]);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{
+      background: t.BG_INPUT, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 10,
+      padding: '8px 11px', fontSize: 12, boxShadow: '0 10px 26px rgba(0,0,0,0.45)', maxWidth: 230,
+    }}>
+      <div style={{ color: t.TEXT_FAINT, marginBottom: 5, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>{label}</div>
+      {rows.map((p) => {
+        const s = seriesByKey[p.dataKey];
+        const info = p.payload && p.payload[`${p.dataKey}__info`];
+        return (
+          <div key={p.dataKey} style={{ marginTop: 3 }}>
+            {rows.length > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: t.TEXT_DIM, fontSize: 11 }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+              </div>
+            )}
+            <div style={{ color: t.TEXT, fontWeight: 700, fontSize: 13.5, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>
+              {info || `${p.value}${s.unit}`}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MultiSeriesChart({ selectedSeries }) {
   const t = useTheme();
+  const seriesByKey = useMemo(() => Object.fromEntries(selectedSeries.map((s) => [s.key, s])), [selectedSeries]);
 
   // Собираем все уникальные даты по всем сериям, сортируем
   const allDates = useMemo(() => {
@@ -138,6 +209,7 @@ function MultiSeriesChart({ selectedSeries }) {
       selectedSeries.forEach((s) => {
         const pt = s.points.find((p) => p.date === date);
         row[s.key] = pt ? pt.value : null;
+        if (pt && pt.info) row[`${s.key}__info`] = pt.info;
       });
       return row;
     });
@@ -181,8 +253,8 @@ function MultiSeriesChart({ selectedSeries }) {
           <XAxis dataKey="date" tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
           <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
           <Tooltip
-            contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }}
-            labelStyle={{ color: t.TEXT_DIM }}
+            content={<ChartTooltip seriesByKey={seriesByKey} />}
+            cursor={{ stroke: t.ACCENT_BORDER, strokeWidth: 1 }}
           />
           {selectedSeries.map((s) => (
             averages[s.key] != null && (
@@ -586,16 +658,22 @@ function SessionCard({ s, onEdit, onDelete }) {
         })}
       </div>
       {(s.sleep || s.energy || s.difficulty || s.durationSec || s.feeling) && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.BORDER}`, fontSize: 12.5, color: t.TEXT_FAINT, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          {s.durationSec > 0 && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Timer size={12} style={{ opacity: 0.8 }} /> {secToClock(s.durationSec)}
-            </span>
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.BORDER}`, fontSize: 12.5, color: t.TEXT_FAINT }}>
+          {/* Длительность, сон, энергия, тяжесть — по центру, с равными промежутками
+              между собой и до краёв. Заметка — отдельной строкой ниже. */}
+          {(s.durationSec > 0 || s.sleep || s.energy || s.difficulty) && (
+            <div style={{ display: 'flex', justifyContent: 'space-evenly', alignItems: 'center', flexWrap: 'wrap', rowGap: 6 }}>
+              {s.durationSec > 0 && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <Timer size={12} style={{ opacity: 0.8 }} /> {secToClock(s.durationSec)}
+                </span>
+              )}
+              {s.sleep && <span>Сон {s.sleep} ч</span>}
+              {s.energy && <span>Энергия {s.energy}/5</span>}
+              {s.difficulty && <span>Тяжесть {s.difficulty}/5</span>}
+            </div>
           )}
-          {s.sleep && <span>Сон {s.sleep} ч</span>}
-          {s.energy && <span>Энергия {s.energy}/5</span>}
-          {s.difficulty && <span>Тяжесть {s.difficulty}/5</span>}
-          {s.feeling && <span style={{ flexBasis: '100%' }}>{s.feeling}</span>}
+          {s.feeling && <div style={{ marginTop: 8, lineHeight: 1.45 }}>{s.feeling}</div>}
         </div>
       )}
     </div>
@@ -734,7 +812,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     (sessions || []).forEach((s) => {
       (s.exercises || []).forEach((ex) => {
         if (!map[ex.name]) map[ex.name] = [];
-        map[ex.name].push({ date: s.date, weight: ex.weight, reps: ex.reps });
+        map[ex.name].push({ date: s.date, weight: ex.weight, reps: ex.reps, sets: ex.sets, setLog: ex.setLog });
       });
     });
     Object.keys(map).forEach((k) => map[k].sort((a, b) => a.date.localeCompare(b.date)));
@@ -789,13 +867,19 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
   // Первая серия подставляется РОВНО ОДИН РАЗ — как начальное значение, а не как
   // инвариант. Раньше этот эффект зависел от selectedKeys и возвращал серию обратно
   // сразу же, как только снимали последнюю галочку: очистить график было невозможно.
+  //
+  // Какую серию подставить: раньше — первую по алфавиту, и это всегда были
+  // «Болгарские сплит-приседы». Теперь — случайное упражнение из тех, что за
+  // последние 30 дней встречались больше двух раз (и не только с нулевым весом —
+  // у упражнений без веса график по килограммам — ровная линия по нулю). Каждое
+  // открытие «Прогресса» — новое. Подходящих нет — последнее сделанное упражнение.
   const seededRef = React.useRef(false);
   useEffect(() => {
     if (seededRef.current) return;
     if (options.length === 0) return;
     seededRef.current = true;
-    setSelectedKeys((prev) => (prev.length > 0 ? prev : [options[0].key]));
-  }, [options]);
+    setSelectedKeys((prev) => (prev.length > 0 ? prev : [pickDefaultSeriesKey(exerciseSeries, options, todayISO())]));
+  }, [options]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSeries = (key) => {
     setSelectedKeys((prev) => prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]);
@@ -811,7 +895,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       const color = SERIES_COLORS[idx % SERIES_COLORS.length];
       const [type, name] = [key.split(':')[0], key.slice(key.indexOf(':') + 1)];
       if (type === 'ex') {
-        const pts = filterByPeriod(exerciseSeries[name] || []).map((p) => ({ date: p.date, value: p.weight }));
+        const pts = filterByPeriod(exerciseSeries[name] || []).map((p) => ({ date: p.date, value: p.weight, info: exercisePointInfo(p) }));
         return { key, label: name, color, unit: ' кг', points: pts };
       }
       if (type === 'cardio') {
@@ -911,6 +995,53 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         )}
       </div>
 
+      {/* Сначала — тренировки этой недели и архив, потом графики, рекорды и
+          экспорт: так попросил Никита. Архив заодно не прячется под свёрнутой
+          тренировкой внизу экрана. */}
+      <div style={sectionLabel}>
+        Эта неделя
+      </div>
+      {currentWeekSessions.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
+          {currentWeekSessions.map((s) => (
+            <SessionCard key={s.id} s={s} onEdit={onEditSession} onDelete={onDeleteSession} />
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, marginBottom: 16, lineHeight: 1.5 }}>
+          На этой неделе тренировок пока нет.
+        </div>
+      )}
+
+      {archivedSessions.length > 0 && (
+        <>
+          <button
+            onClick={() => setShowArchive(!showArchive)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
+              ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+              padding: '11px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
+            }}
+          >
+            {showArchive ? 'Скрыть архив' : `Архив (${archivedSessions.length})`}
+          </button>
+          {showArchive && (
+            <div style={{ marginTop: 12 }}>
+              {archiveTree.length > 1
+                ? archiveTree.map((y) => (
+                    <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} />
+                  ))
+                : (archiveTree[0]?.months || []).map((m) => (
+                    <ArchiveMonthGroup key={m.month} month={m} onEdit={onEditSession} onDelete={onDeleteSession} />
+                  ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ height: 1, background: t.BORDER, margin: '22px 0 18px' }} />
+
       <div style={sectionLabel}>
         Прогрессия
       </div>
@@ -990,50 +1121,6 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
       <WeekExportPanel sessions={sessions} measurements={measurements} />
-
-      <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
-
-      <div style={sectionLabel}>
-        Эта неделя
-      </div>
-      {currentWeekSessions.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
-          {currentWeekSessions.map((s) => (
-            <SessionCard key={s.id} s={s} onEdit={onEditSession} onDelete={onDeleteSession} />
-          ))}
-        </div>
-      ) : (
-        <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, marginBottom: 16, lineHeight: 1.5 }}>
-          На этой неделе тренировок пока нет.
-        </div>
-      )}
-
-      {archivedSessions.length > 0 && (
-        <>
-          <button
-            onClick={() => setShowArchive(!showArchive)}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
-              ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
-              padding: '11px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
-            }}
-          >
-            {showArchive ? 'Скрыть архив' : `Архив (${archivedSessions.length})`}
-          </button>
-          {showArchive && (
-            <div style={{ marginTop: 12 }}>
-              {archiveTree.length > 1
-                ? archiveTree.map((y) => (
-                    <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} />
-                  ))
-                : (archiveTree[0]?.months || []).map((m) => (
-                    <ArchiveMonthGroup key={m.month} month={m} onEdit={onEditSession} onDelete={onDeleteSession} />
-                  ))}
-            </div>
-          )}
-        </>
-      )}
       </div>
     </ThemeContext.Provider>
   );
