@@ -231,6 +231,8 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   // более поздняя (у неё будет своё напоминание).
   const remindAboutProtein = (sessionId, sessionDate) => {
     if (sessionDate !== todayISO()) return;
+    // Выключено в «Профиле» — не ставим. Сервер перед отправкой проверит ещё раз.
+    if (profile && profile.proteinAlerts === false) return;
     scheduleProteinReminder(sessionId, sessionDate);
   };
 

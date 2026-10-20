@@ -15,7 +15,7 @@ import {
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
   insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData,
-  clampSets, MAX_SETS, swElapsed, swIsRunning, swToggle, runOnlyTimer, restoreTimers, sectorCodes,
+  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
@@ -169,9 +169,15 @@ export function GuidedWorkout({
 
   const [stepIdx, setStepIdx] = useState(0);
 
-  // Таймер всей тренировки (пункт 4): отсчёт по метке старта — переживает сворачивание,
-  // фон и восстановление черновика (метку кладём в черновик).
+  // Часы всей тренировки — { acc, since }, как у секундомера упражнения: идут по
+  // меткам времени, поэтому переживают сворачивание, фон и восстановление
+  // черновика (кладём в черновик). На шаге «Итог» стоят: время тренировки
+  // фиксируется в момент входа в итог, а при возврате к упражнениям часы идут
+  // дальше с того же места. В запись уходит именно оно.
   const startedAtRef = useRef(Date.now());
+  const [workoutClock, setWorkoutClock] = useState(() => ({ acc: 0, since: startedAtRef.current }));
+  const clockRef = useRef(workoutClock);
+  clockRef.current = workoutClock;
   const [elapsed, setElapsed] = useState(0);
   // Перелистывание шагов: leaving — в какую сторону уходит текущий шаг (1 — вперёд,
   // -1 — назад, 0 — не уходит), enterDir — с какой стороны въезжает новый.
@@ -216,10 +222,12 @@ export function GuidedWorkout({
   // перерисовывает секундомер упражнения — своего интервала ему не нужно.
   useEffect(() => {
     const id = setInterval(() => {
-      setElapsed(Math.round((Date.now() - startedAtRef.current) / 1000));
+      setElapsed(swElapsed(clockRef.current, Date.now()));
     }, 1000);
     return () => clearInterval(id);
   }, []);
+  // Часы встали или пошли — показать сразу, не дожидаясь тика.
+  useEffect(() => { setElapsed(swElapsed(workoutClock, Date.now())); }, [workoutClock]);
 
   // ---- Восстановление черновика ----
   const draftRef = useRef(null);
@@ -259,6 +267,12 @@ export function GuidedWorkout({
       if (d.startedAt && Date.now() - d.startedAt < MAX_RESUMABLE_MS) {
         startedAtRef.current = d.startedAt;
       }
+      // Часы тренировки — из черновика; в черновиках прошлых версий их нет, тогда
+      // считаем от старта, как раньше. Больше шести часов — тот же забытый черновик.
+      let clock = d.workoutClock && typeof d.workoutClock === 'object'
+        ? d.workoutClock : { acc: 0, since: startedAtRef.current };
+      if (swElapsed(clock, Date.now()) * 1000 > MAX_RESUMABLE_MS) clock = { acc: 0, since: Date.now() };
+      setWorkoutClock(clock);
       const idx = d.steps.findIndex((s) => s.id === d.stepId);
       setStepIdx(idx >= 0 ? idx : 0);
     }
@@ -430,6 +444,7 @@ export function GuidedWorkout({
     steps, stepId: steps[stepIdx] ? steps[stepIdx].id : null,
     exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary,
     startedAt: startedAtRef.current,
+    workoutClock,
   };
 
   useEffect(() => {
@@ -438,7 +453,7 @@ export function GuidedWorkout({
       if (writeDraft(userId, snapshotRef.current)) setDraftSavedAt(Date.now());
     }, 400);
     return () => clearTimeout(id);
-  }, [restoreOffer, saving, userId, steps, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary]);
+  }, [restoreOffer, saving, userId, steps, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary, workoutClock]);
 
   useEffect(() => {
     const flush = () => {
@@ -478,6 +493,17 @@ export function GuidedWorkout({
     if (restoreOffer) return;
     setExTimers((prev) => runOnlyTimer(prev, stepKind === 'exercise' ? stepId : null));
   }, [stepId, stepKind, restoreOffer]);
+
+  // Часы всей тренировки: на «Итоге» встают (время фиксируется), с итога назад —
+  // идут дальше с того же места.
+  useEffect(() => {
+    if (restoreOffer) return;
+    const now = Date.now();
+    setWorkoutClock((c) => {
+      if (stepKind === 'summary') return swIsRunning(c) ? swPause(c, now) : c;
+      return swIsRunning(c) ? c : { acc: (c && c.acc) || 0, since: now };
+    });
+  }, [stepKind, restoreOffer]);
 
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
@@ -607,6 +633,9 @@ export function GuidedWorkout({
     const session = buildGuidedSession({
       steps, exLogs, exNotes, exTimers, cardioLogs, sectorLogs, summary,
       workoutDate, dayPlan, planId, startedAt: startedAtRef.current, now: Date.now(),
+      // Время тренировки — по часам: на «Итоге» они стоят, поэтому заполнение
+      // итога в длительность не входит.
+      durationSec: swElapsed(clockRef.current, Date.now()),
     });
 
     clearTimer();
@@ -711,6 +740,26 @@ export function GuidedWorkout({
       history, records, current: { planId, day: dayPlan && dayPlan.day },
     })
     : null;
+
+  // Кардио для итога: разминка — километраж, финиш на дорожке — километраж и
+  // набранная высота (дистанция × наклон), бассейн — минуты. Не записано — не
+  // показываем.
+  const cardioResults = step.kind !== 'summary' ? [] : steps
+    .filter((s) => s.kind === 'cardio' || s.kind === 'pool')
+    .map((s) => {
+      const c = cardioLogs[s.id] || {};
+      const distance = parseFloat(c.distance) || 0;
+      const incline = parseFloat(c.incline) || 0;
+      const duration = parseInt(c.duration, 10) || 0;
+      if (distance <= 0 && duration <= 0) return null;
+      const title = s.title || s.name || '';
+      const label = s.finisher ? 'Кардио-финиш' : /разминк/i.test(title) ? 'Разминка' : s.kind === 'pool' ? 'Бассейн' : title;
+      return {
+        key: s.id, label, distance, duration,
+        gainM: s.finisher && distance > 0 && incline > 0 ? Math.round(distance * incline * 10) : null,
+      };
+    })
+    .filter(Boolean);
 
   // ---- Свёрнутый режим (пункт 3): узкая плашка над таб-баром, тап — развернуть ----
   if (minimized) {
@@ -911,6 +960,8 @@ export function GuidedWorkout({
               mountainSectors={mountainSectors}
               mountainClimb={mountainClimb}
               exerciseSummary={exerciseSummary}
+              totalSec={elapsed}
+              cardioResults={cardioResults}
             />
           ) : (
             <>
@@ -1407,6 +1458,36 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName, action }) {
 // Название упражнения — всегда в одну строку. Если не влезает, шрифт плавно
 // уменьшается до min, и только потом обрезается многоточием. Подгоняем и после
 // загрузки веб-шрифта: до неё ширина строки считается по системному.
+// Ряд плашек, которые нельзя сокращать: не влезают по ширине — у всего ряда
+// уменьшается шрифт (с max до min шагом 0.5 px). fitKey — пересчитать, когда
+// поменялся текст.
+function FitRow({ fitKey, max = 12, min = 10, children }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    let alive = true;
+    const fit = () => {
+      if (!alive) return;
+      let s = max;
+      el.style.fontSize = `${s}px`;
+      while (s > min && el.scrollWidth > el.clientWidth + 0.5) {
+        s -= 0.5;
+        el.style.fontSize = `${s}px`;
+      }
+    };
+    fit();
+    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit); } catch (e) { /* no-op */ }
+    window.addEventListener('resize', fit);
+    return () => { alive = false; window.removeEventListener('resize', fit); };
+  }, [fitKey, max, min]);
+  return (
+    <div ref={ref} style={{ display: 'flex', gap: 8, minWidth: 0, overflow: 'hidden', fontSize: max }}>
+      {children}
+    </div>
+  );
+}
+
 function FitLine({ text, max = 20, min = 14, style }) {
   const ref = useRef(null);
   const [size, setSize] = useState(max);
@@ -1480,13 +1561,18 @@ function ExerciseStep({
   };
 
   // Плашки под названием: две строки, каждая на всю ширину. Обе плашки в строке
-  // растут вместе от своей ширины (flex 1 1 auto) — бо́льшая остаётся бо́льшей,
-  // текст по центру. Не влезает — сжимаются обе, текст режется многоточием.
+  // растут вместе от своей ширины — бо́льшая остаётся бо́льшей, текст по центру.
+  // Цель, рекорд и «Как выполнять» не сжимаются никогда (keep): первая строка
+  // при нехватке места уменьшает шрифт (FitRow), а во второй многоточием
+  // режется только «Далее» — полное название есть в списке под ним.
   const chip = {
     flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
     minWidth: 0, height: 34, boxSizing: 'border-box', padding: '0 11px', borderRadius: 10,
-    fontFamily: 'inherit', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
+    fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
   };
+  const keep = { flex: '1 0 auto', minWidth: 'auto' };
+  const goalLine = `Цель: ${fmtTargetReps(step.targetReps, timed)} · ${sets.length} подх`;
+  const recordLine = recordText ? `Рекорд ${recordText}` : 'Без рекорда';
   const ellipsis = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
   const afterNext = Math.max(0, allSteps.length - currentIdx - 2);
 
@@ -1503,31 +1589,31 @@ function ExerciseStep({
       {/* Цель и рекорд — первая строка, «Как выполнять» и «Далее» — вторая.
           Рекорда нет — плашка всё равно есть, с надписью «без рекорда». */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: planNotes && planNotes.tip ? 10 : 12 }}>
-        <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
+        <FitRow fitKey={goalLine + recordLine}>
           <span style={{
-            ...chip, color: t.ACCENT_SOFT, background: t.ACCENT_BG, border: '1px solid transparent', fontFamily: t.FONT_MONO,
+            ...chip, ...keep, color: t.ACCENT_SOFT, background: t.ACCENT_BG, border: '1px solid transparent', fontFamily: t.FONT_MONO,
           }}>
-            <span style={ellipsis}>Цель: {fmtTargetReps(step.targetReps, timed)} · {sets.length} подх</span>
+            {goalLine}
           </span>
           <span style={{
-            ...chip, color: recordText ? t.TEXT_DIM : t.TEXT_FAINT, background: t.BG_INPUT, border: '1px solid transparent',
+            ...chip, ...keep, color: recordText ? t.TEXT_DIM : t.TEXT_FAINT, background: t.BG_INPUT, border: '1px solid transparent',
           }}>
             <Flame size={12} style={{ flexShrink: 0 }} />
-            <span style={ellipsis}>{recordText ? `Рекорд ${recordText}` : 'Без рекорда'}</span>
+            {recordLine}
           </span>
-        </div>
+        </FitRow>
         {(hasGuide || nextName) && (
-          <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
+          <div style={{ display: 'flex', gap: 8, minWidth: 0, fontSize: 12 }}>
             {hasGuide && (
               <button
                 onClick={onGuide}
                 style={{
-                  ...chip, cursor: 'pointer',
+                  ...chip, ...(nextName ? keep : {}), cursor: 'pointer',
                   background: 'transparent', border: `1px solid ${t.ACCENT_BORDER}`, color: t.ACCENT_SOFT,
                 }}
               >
                 <HelpCircle size={13} style={{ flexShrink: 0 }} />
-                <span style={ellipsis}>Как выполнять</span>
+                <span>Как выполнять</span>
               </button>
             )}
             {nextName && (
@@ -1825,7 +1911,7 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
   );
 }
 
-function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerciseSummary }) {
+function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerciseSummary, totalSec = 0, cardioResults = [] }) {
   const t = useTheme();
   // Гора-награда: только для кардио-дня по секторам, где есть дистанция и наклон.
   const gainM = Math.round(sectorElevationGain(mountainSectors));
@@ -1878,8 +1964,43 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
         />
       </Field>
 
-      {/* Сводка по упражнениям — в самом конце, после заметки. */}
-      {exerciseSummary && <ExerciseSummaryCard data={exerciseSummary} />}
+      {/* Результат — в самом конце, после заметки: время тренировки (часы стоят,
+          пока ты на итоге), кардио и сводка по упражнениям. */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO, marginBottom: 8 }}>
+          Результат тренировки
+        </div>
+        <div style={{
+          display: 'grid', gap: 8,
+          gridTemplateColumns: `repeat(${Math.min(3, 1 + cardioResults.length)}, minmax(0, 1fr))`,
+        }}>
+          {[{ key: 'time', label: 'Время', value: fmtElapsed(totalSec) }]
+            .concat(cardioResults.map((c) => ({
+              key: c.key, label: c.label,
+              value: c.distance > 0 ? `${Math.round(c.distance * 100) / 100} км` : `${c.duration} мин`,
+              sub: c.gainM ? `↑ ${c.gainM} м` : (c.distance > 0 && c.duration > 0 ? `${c.duration} мин` : null),
+            })))
+            .map((tile) => (
+              <div key={tile.key} style={{
+                background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 12, padding: '10px 10px 9px',
+                textAlign: 'center', minWidth: 0,
+              }}>
+                <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {tile.label}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: t.TEXT, fontFamily: t.FONT_MONO, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  {tile.value}
+                </div>
+                {tile.sub && (
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: tile.key === 'time' ? t.TEXT_FAINT : t.ACCENT_SOFT, fontFamily: tile.key === 'time' ? t.FONT : t.FONT_MONO, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {tile.sub}
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+        {exerciseSummary && <ExerciseSummaryCard data={exerciseSummary} />}
+      </div>
     </div>
   );
 }
@@ -1943,7 +2064,7 @@ function ExerciseSummaryCard({ data }) {
   ].filter(Boolean);
 
   return (
-    <div style={{ marginTop: 22 }}>
+    <div style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
         <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO }}>
           Итог по упражнениям

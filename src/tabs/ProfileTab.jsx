@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { LogOut, Award, CheckCircle2, Circle } from 'lucide-react';
 import { useTheme } from '../theme.js';
+import { fmtDateShort } from '../dateUtils.js';
 import {
-  ACH_ICON, computeAchievements, computeTotalXpFromSessions, getLevelInfo,
+  ACH_ICON, computeAchievements, groupAchievements, computeTotalXpFromSessions, getLevelInfo,
 } from '../gamification.js';
 import { PLANS, DEFAULT_PLAN_ID, getPlan } from '../plans.js';
 import { APP_VERSION } from '../version.js';
@@ -136,40 +137,49 @@ function PlanPicker({ profile, saveProfile }) {
   );
 }
 
-// Напоминание в Telegram о пропущенной тренировке (api/missed-check.js). Пояс
-// устройства сохраняем вместе с включением: сервер считает 21:30 по нему.
-function MissedAlertsToggle({ profile, saveProfile }) {
-  const t = useTheme();
-  const on = !!(profile && profile.missedAlerts);
+// Напоминания бота в «Настройках»: о пропущенной тренировке (api/missed-check.js)
+// и о протеине через час после тренировки (api/rest-fire.js). Пояс устройства
+// сохраняем вместе с переключением: сервер считает 21:30 по нему.
+function AlertToggles({ profile, saveProfile }) {
   const [saving, setSaving] = useState(false);
-
-  const toggle = async () => {
+  const save = async (patch) => {
     if (saving) return;
     let tz = null;
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* no-op */ }
     setSaving(true);
     try {
-      await saveProfile({ ...(profile || {}), missedAlerts: !on, ...(tz ? { tz } : {}) });
+      await saveProfile({ ...(profile || {}), ...patch, ...(tz ? { tz } : {}) });
     } catch (e) { /* сообщение уже показал saveProfile */ }
     setSaving(false);
   };
+  const missedOn = !!(profile && profile.missedAlerts);
+  // Протеин: у профилей до переключателя флага нет — значит включено, как было.
+  const proteinOn = !(profile && profile.proteinAlerts === false);
+  return (
+    <>
+      <SettingToggle label="Напоминать о пропущенной тренировке" on={missedOn} saving={saving} onToggle={() => save({ missedAlerts: !missedOn })} />
+      <SettingToggle label="Напоминать о протеине" on={proteinOn} saving={saving} onToggle={() => save({ proteinAlerts: !proteinOn })} />
+    </>
+  );
+}
 
+function SettingToggle({ label, on, saving, onToggle }) {
+  const t = useTheme();
   return (
     <button
-      onClick={toggle}
+      onClick={onToggle}
       role="switch"
       aria-checked={on}
       style={{
         display: 'flex', alignItems: 'center', gap: 12, width: '100%', boxSizing: 'border-box', textAlign: 'left',
-        padding: '12px 14px', marginBottom: 14, borderRadius: 12, cursor: saving ? 'default' : 'pointer',
+        padding: '12px 14px', marginBottom: 10, borderRadius: 12, cursor: saving ? 'default' : 'pointer',
         background: t.BG_RAISED, border: `1px solid ${on ? t.ACCENT_BORDER : t.BORDER}`, fontFamily: 'inherit',
         opacity: saving ? 0.7 : 1,
       }}
     >
-      {/* Без пояснения — так попросил Никита. Правила: ПН–СБ в 21:30, если по
-          плану за день ничего не записано и тренировка не идёт (api/_missed.js). */}
+      {/* Без пояснения — так попросил Никита. */}
       <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, color: t.TEXT }}>
-        Напоминать о пропущенной тренировке
+        {label}
       </span>
       <span aria-hidden style={{
         flexShrink: 0, width: 44, height: 26, borderRadius: 13, position: 'relative',
@@ -185,6 +195,13 @@ function MissedAlertsToggle({ profile, saveProfile }) {
   );
 }
 
+// «4.4 / 5 км», «68 / 100», «15 181 / 20 000 м». Числа — без лишних нулей,
+// от 10 000 — с разделителем тысяч.
+function fmtProgress({ cur, goal, unit }) {
+  const n = (v) => { const r = Math.round(v * 100) / 100; return r >= 10000 ? Math.round(r).toLocaleString('ru-RU') : String(r); };
+  return `${n(cur)} / ${n(goal)}${unit ? ` ${unit}` : ''}`;
+}
+
 function LevelCard({ levelInfo, totalXp }) {
   const t = useTheme();
   const pct = Math.min(100, Math.round(levelInfo.progress * 100));
@@ -193,8 +210,9 @@ function LevelCard({ levelInfo, totalXp }) {
       background: `linear-gradient(135deg, ${t.BG_RAISED}, ${t.BG_INPUT})`,
       border: `1px solid ${t.BORDER}`, borderRadius: 20, padding: '18px', marginBottom: 20, boxShadow: t.CARD_SHADOW,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Отступ от круга до «Уровень N» — 22 px: так попросил Никита (было 10). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
           <div style={{ position: 'relative', width: 60, height: 60, flexShrink: 0 }}>
             <svg width="60" height="60" viewBox="0 0 60 60">
               <circle cx="30" cy="30" r="25" fill="none" stroke={t.BORDER} strokeWidth="5" />
@@ -220,12 +238,7 @@ function LevelCard({ levelInfo, totalXp }) {
           </div>
         )}
       </div>
-      <div style={{ height: 7, borderRadius: 4, background: t.BORDER, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${pct}%`, borderRadius: 4,
-          background: t.ACCENT_GRAD, transition: 'width 0.4s ease',
-        }} />
-      </div>
+      {/* Полоску прогресса под карточкой убрали: прогресс показывает круг. */}
     </div>
   );
 }
@@ -428,7 +441,8 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
 
   const achievements = useMemo(() => computeAchievements({ sessions, measurements, profile }), [sessions, measurements, profile]);
   const achievementXp = useMemo(() => achievements.filter((a) => a.unlocked).reduce((sum, a) => sum + a.xp, 0), [achievements]);
-  const totalXp = useMemo(() => computeTotalXpFromSessions(sessions) + achievementXp, [sessions, achievementXp]);
+  const planIdNow = profile && profile.planId;
+  const totalXp = useMemo(() => computeTotalXpFromSessions(sessions, planIdNow) + achievementXp, [sessions, planIdNow, achievementXp]);
   const levelInfo = useMemo(() => getLevelInfo(totalXp), [totalXp]);
   const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
@@ -449,35 +463,63 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
         <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{showAchievements ? '▼' : '▶'}</span>
       </button>
 
+      {/* По разделам: заголовок со счётчиком «открыто из», внутри — сначала
+          открытые, по нарастающей (gamification.js → ACH_CATEGORIES). */}
       {showAchievements && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
-          {achievements.map((a) => (
-            <div key={a.id} style={{
-              display: 'flex', alignItems: 'center', gap: 11,
-              background: a.unlocked ? t.BG_RAISED : 'transparent',
-              border: `1px solid ${a.unlocked ? t.BORDER : t.BORDER}`,
-              borderRadius: 11, padding: '12px 14px',
-              opacity: a.unlocked ? 1 : 0.5,
-            }}>
+          {groupAchievements(achievements).map((g) => (
+            <React.Fragment key={g.key}>
               <div style={{
-                flexShrink: 0, width: 38, height: 38, borderRadius: 11,
-                background: a.unlocked ? t.ACCENT_BG : t.BG_INPUT,
-                border: `1px solid ${a.unlocked ? t.ACCENT_BORDER : t.BORDER}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10,
+                margin: '10px 2px 2px', fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
+                textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: t.FONT_MONO,
               }}>
-                {React.createElement(ACH_ICON[a.icon] || Award, { size: 18, color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT, strokeWidth: 1.8 })}
+                <span>{g.title}</span>
+                <span style={{ color: g.done === g.total ? t.ACCENT_SOFT : t.TEXT_FAINT }}>{g.done}/{g.total}</span>
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{a.title}</div>
-                <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.35 }}>{a.description}</div>
-              </div>
-              <div style={{
-                flexShrink: 0, fontSize: 12, fontWeight: 700,
-                color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT,
-              }}>
-                +{a.xp} XP
-              </div>
-            </div>
+              {g.items.map((a) => (
+                <div key={a.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 11,
+                  background: a.unlocked ? t.BG_RAISED : 'transparent',
+                  border: `1px solid ${a.unlocked ? t.BORDER : t.BORDER}`,
+                  borderRadius: 11, padding: '12px 14px',
+                  opacity: a.unlocked ? 1 : 0.5,
+                }}>
+                  <div style={{
+                    flexShrink: 0, width: 38, height: 38, borderRadius: 11,
+                    background: a.unlocked ? t.ACCENT_BG : t.BG_INPUT,
+                    border: `1px solid ${a.unlocked ? t.ACCENT_BORDER : t.BORDER}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {React.createElement(ACH_ICON[a.icon] || Award, { size: 18, color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT, strokeWidth: 1.8 })}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{a.title}</div>
+                    <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.35 }}>{a.description}</div>
+                    {a.unlocked && a.unlockedAt && (
+                      <div style={{ fontSize: 11, color: t.ACCENT_SOFT, marginTop: 3, fontFamily: t.FONT_MONO }}>открыто {fmtDateShort(a.unlockedAt)}</div>
+                    )}
+                    {/* Сколько осталось: тонкая полоска на всю ширину, справа — цифры. */}
+                    {!a.unlocked && a.progress && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7 }}>
+                        <div style={{ flex: 1, height: 3, borderRadius: 2, background: t.BORDER, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.round(a.progress.pct * 100)}%`, height: '100%', borderRadius: 2, background: t.ACCENT }} />
+                        </div>
+                        <span style={{ flexShrink: 0, minWidth: 64, textAlign: 'right', fontSize: 10, color: t.TEXT_DIM, fontFamily: t.FONT_MONO, whiteSpace: 'nowrap' }}>
+                          {fmtProgress(a.progress)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{
+                    flexShrink: 0, fontSize: 12, fontWeight: 700,
+                    color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT,
+                  }}>
+                    +{a.xp} XP
+                  </div>
+                </div>
+              ))}
+            </React.Fragment>
           ))}
         </div>
       )}
@@ -498,7 +540,8 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
           «Авто · ночь → Светлая → Тёмная», но не меняла ничего: приложение
           жёстко в теме 2A с 13 июля. */}
 
-      <MissedAlertsToggle profile={profile} saveProfile={saveProfile} />
+      <AlertToggles profile={profile} saveProfile={saveProfile} />
+      <div style={{ height: 4 }} />
 
       <ExportImportPanel
         sessions={sessions} measurements={measurements} profile={profile}

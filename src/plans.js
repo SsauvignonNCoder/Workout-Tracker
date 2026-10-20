@@ -153,12 +153,18 @@ function buildPlan2Days() {
 const PLAN2_DAYS = buildPlan2Days();
 
 // ---- Реестр планов ----
+// trainingWeekdays — в какие дни недели по плану тренировка (как у Date.getDay():
+// 0 — воскресенье, 1 — понедельник … 6 — суббота). По ним считаются серия дней
+// (множитель XP), недельная серия, «Первая неделя» и напоминание о пропуске: день
+// отдыха по плану без тренировки ничего не рвёт. У плана на 4 дня будет, например,
+// [1, 2, 4, 5] — и среда с субботой перестанут считаться пропусками.
 export const PLANS = [
   {
     id: 'plan1',
     title: 'Сила, кардио, бассейн',
     description: 'Три силовых, два кардио на дорожке и бассейн · 4 недели × 6 дней',
     daysPerWeek: 6,
+    trainingWeekdays: [1, 2, 3, 4, 5, 6], // ПН–СБ
     weekLabels: { 1: 'База', 2: 'Объём', 3: 'Интенсив', 4: 'Разгрузка' },
     days: PLAN1_DAYS,
   },
@@ -167,6 +173,7 @@ export const PLANS = [
     title: 'Сплит 6 дней',
     description: 'Шесть силовых ПН–СБ с кардио-финишером · 4 недели',
     daysPerWeek: 6,
+    trainingWeekdays: [1, 2, 3, 4, 5, 6], // ПН–СБ
     weekLabels: { 1: 'База', 2: 'Объём', 3: 'Тяжёлая', 4: 'Разгрузка' },
     days: PLAN2_DAYS,
   },
@@ -178,6 +185,40 @@ export const DEFAULT_PLAN_ID = 'plan1';
 
 export function getPlan(planId) {
   return PLANS.find((p) => p.id === planId) || PLANS.find((p) => p.id === DEFAULT_PLAN_ID);
+}
+
+export const DEFAULT_TRAINING_WEEKDAYS = [1, 2, 3, 4, 5, 6];
+
+export function trainingWeekdaysOf(planId) {
+  const plan = getPlan(planId);
+  return (plan && Array.isArray(plan.trainingWeekdays) && plan.trainingWeekdays.length)
+    ? plan.trainingWeekdays : DEFAULT_TRAINING_WEEKDAYS;
+}
+
+// «Тренировочный ли день по плану» с учётом смены плана. День относится к плану
+// последней тренировки в этот день или раньше (до первой тренировки — к плану
+// первой); после последней тренировки — к плану из профиля: его могли сменить
+// уже после неё. Возвращает функцию (iso) => boolean.
+export function makeTrainingDayCheck(sessions, currentPlanId) {
+  const list = (sessions || [])
+    .filter((x) => x && x.date)
+    .map((x) => ({ date: x.date, planId: x.planId || DEFAULT_PLAN_ID }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const lastDate = list.length ? list[list.length - 1].date : null;
+  const cache = new Map();
+  return (iso) => {
+    if (cache.has(iso)) return cache.get(iso);
+    let planId = currentPlanId || DEFAULT_PLAN_ID;
+    if (lastDate && iso <= lastDate) {
+      planId = list[0].planId;
+      for (const x of list) { if (x.date <= iso) planId = x.planId; else break; }
+    }
+    const [y, m, d] = iso.split('-').map(Number);
+    const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const res = trainingWeekdaysOf(planId).includes(weekday);
+    cache.set(iso, res);
+    return res;
+  };
 }
 
 export function getPlanDay(planId, dayNum) {

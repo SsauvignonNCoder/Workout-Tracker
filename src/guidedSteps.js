@@ -9,6 +9,7 @@
 // посреди тренировки, номера всех последующих шагов сдвигаются, и записанный
 // вес «переезжал» бы на соседнее упражнение. С id такого не бывает.
 
+import { bestSetOf } from './bestSet.js';
 import {
   isWeightlessExercise, isTimeBasedExercise, parseClock,
 } from './tabs/workoutTabHelpers.jsx';
@@ -330,6 +331,7 @@ export function pickedRouteName(steps, sectorLogs) {
 export function buildGuidedSession({
   steps, exLogs = {}, exNotes = {}, exTimers = {}, cardioLogs = {}, sectorLogs = {},
   summary = {}, workoutDate, dayPlan, planId, startedAt, now = Date.now(), id,
+  durationSec: totalSec = null,
 }) {
   // Упражнения → агрегат (число) + setLog + заметка. Пустые (без данных и заметки) пропускаем.
   const outEx = [];
@@ -341,13 +343,10 @@ export function buildGuidedSession({
     const filled = log.filter(setHasData);
     const note = (exNotes[s.id] || '').trim();
     if (filled.length === 0 && !note) return;
-    let maxW = 0, repsAtMax = 0, maxReps = 0;
-    filled.forEach((x) => {
-      const w = parseFloat(x.weight) || 0;
-      const r = parseInt(x.reps, 10) || 0;
-      if (w >= maxW) { maxW = w; repsAtMax = r || repsAtMax; }
-      if (r > maxReps) maxReps = r;
-    });
+    // Итоги — по лучшему подходу (src/bestSet.js): рабочий вес и максимум
+    // повторов с ним. Раньше брались повторы последнего подхода с этим весом.
+    const best = bestSetOf(weightless ? filled.map((x) => ({ weight: 0, reps: x.reps })) : filled) || { weight: 0, reps: 0 };
+    const maxW = best.weight, repsAtMax = best.reps, maxReps = best.reps;
     const durationSec = swElapsed(exTimers[s.id], now);
     outEx.push({
       name: s.name,
@@ -410,7 +409,9 @@ export function buildGuidedSession({
     sleep: summary.sleep ? Math.max(0, parseFloat(summary.sleep)) : null,
     energy: summary.energy || 3,
     difficulty: summary.difficulty || null,
-    durationSec: Math.max(0, Math.round((now - startedAt) / 1000)),
+    // Длительность — по часам тренировки (на шаге «Итог» они стоят); без них —
+    // от старта до сохранения, как раньше.
+    durationSec: Math.max(0, Math.round(totalSec != null ? totalSec : (now - startedAt) / 1000)),
     feeling: (summary.feeling || '').trim(),
     programDay: (dayPlan && dayPlan.day) || null,
     planId: planId || null,

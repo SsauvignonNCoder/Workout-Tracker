@@ -15,14 +15,16 @@
 // КОМУ. Только тем, у кого в профиле включено «Напоминать о пропущенной
 // тренировке» (profile.missed_alerts) и кто входит через Telegram.
 //
-// КОГДА МОЛЧИМ (правила — api/_missed.js, там же тесты): воскресенье; раньше
+// КОГДА МОЛЧИМ (правила — api/_missed.js, там же тесты): день отдыха по плану
+// (дни тренировок — trainingWeekdays плана из профиля, src/plans.js); раньше
 // 21:30 по поясу из профиля; сегодня уже напоминали; идёт тренировка (метку
 // active_workout_at ставит приложение при старте и снимает при закрытии); за
-// сегодня есть тренировка по плану (с номером дня). Три пропуска подряд (ПН–СБ)
-// — второй текст.
+// сегодня есть тренировка по плану (с номером дня). Три пропущенных дня
+// тренировок подряд — второй текст.
 
 import { createClient } from '@supabase/supabase-js';
 import { decideMissed, localParts, trainingDaysBack, CHECK_FROM_MINUTES, MSG_MISSED_3 } from './_missed.js';
+import { trainingWeekdaysOf } from '../src/plans.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALERT_SECRET = process.env.REST_ALERT_SECRET;
@@ -67,7 +69,7 @@ async function runCheck(now) {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   const { data: profiles, error } = await admin
     .from('profile')
-    .select('user_id, tz, last_missed_alert, active_workout_at')
+    .select('user_id, tz, last_missed_alert, active_workout_at, plan_id')
     .eq('missed_alerts', true);
   if (error) throw error;
 
@@ -76,7 +78,8 @@ async function runCheck(now) {
     // До 21:30 по местному времени в базу за тренировками не ходим вовсе —
     // так 21 из 24 ежечасных запусков обходятся одним запросом.
     const local = localParts(now, p.tz);
-    if (local.weekday === 0 || local.minutes < CHECK_FROM_MINUTES || p.last_missed_alert === local.date) {
+    const weekdays = trainingWeekdaysOf(p.plan_id);
+    if (!weekdays.includes(local.weekday) || local.minutes < CHECK_FROM_MINUTES || p.last_missed_alert === local.date) {
       results.push({ user: p.user_id.slice(0, 8), skipped: 'не время' });
       continue;
     }
@@ -84,7 +87,7 @@ async function runCheck(now) {
     const { data: user } = await admin.from('users').select('telegram_id').eq('id', p.user_id).maybeSingle();
     if (!user || !user.telegram_id) { results.push({ user: p.user_id.slice(0, 8), skipped: 'нет Telegram' }); continue; }
 
-    const from = trainingDaysBack(local.date, 4).pop();
+    const from = trainingDaysBack(local.date, 4, weekdays).pop();
     const [{ data: recent }, { data: first }] = await Promise.all([
       admin.from('sessions').select('date').eq('user_id', p.user_id).not('program_day', 'is', null).gte('date', from),
       admin.from('sessions').select('date').eq('user_id', p.user_id).not('program_day', 'is', null)
@@ -93,6 +96,7 @@ async function runCheck(now) {
     const decision = decideMissed({
       now,
       profile: p,
+      weekdays,
       planDates: new Set((recent || []).map((s) => s.date)),
       firstPlanDate: first && first[0] ? first[0].date : null,
     });

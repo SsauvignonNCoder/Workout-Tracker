@@ -68,7 +68,9 @@ create index measurements_user_date_idx on measurements (user_id, date);
 -- body_log — история замеров параметров тела (1.1.2, src/bodyLog.js); колонки
 -- height … body_fat — последнее значение каждого параметра.
 -- missed_alerts, tz, active_workout_at, last_missed_alert — напоминание о
--- пропущенной тренировке (1.1.2, api/missed-check.js).
+-- пропущенной тренировке (1.1.2, api/missed-check.js); protein_alerts —
+-- напоминание о протеине после тренировки (1.1.3, api/rest-fire.js);
+-- achievements — открытые достижения с датой (1.1.3, src/gamification.js).
 create table profile (
   user_id uuid primary key references users(id) on delete cascade,
   plan_id text not null default 'plan1',
@@ -84,7 +86,9 @@ create table profile (
   missed_alerts boolean not null default false,
   tz text,
   active_workout_at timestamptz,
-  last_missed_alert text
+  last_missed_alert text,
+  protein_alerts boolean not null default true,
+  achievements jsonb not null default '{}'
 );
 
 -- ============================================================
@@ -123,6 +127,8 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 --   1.1.0 — план тренировок у тренировки и профиля (migration-add-plan-id.sql).
 --   1.1.2 — история параметров тела (migration-add-body-log.sql),
 --           напоминание о пропущенной тренировке (migration-add-missed-alerts.sql).
+--   1.1.3 — переключатель напоминания о протеине (migration-add-protein-alerts.sql),
+--           постоянные достижения (migration-add-achievements.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
@@ -138,6 +144,8 @@ alter table profile
   add column if not exists tz text,
   add column if not exists active_workout_at timestamptz,
   add column if not exists last_missed_alert text;
+alter table profile add column if not exists protein_alerts boolean not null default true;
+alter table profile add column if not exists achievements jsonb not null default '{}';
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.

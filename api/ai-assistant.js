@@ -145,6 +145,20 @@ const SYSTEM_PROMPT = `Ты — помощник в личном приложе�
 // ---------- Реализация инструментов ----------
 // В КАЖДОМ запросе обязателен .eq('user_id', userId).
 
+// Итоги упражнения по лучшему подходу: рабочий вес и максимум повторов с ним
+// (то же правило, что src/bestSet.js в приложении). Старые записи пошаговой
+// тренировки хранили повторы последнего подхода — по ним считать нельзя.
+function bestOf(e) {
+  let best = null;
+  (Array.isArray(e.setLog) ? e.setLog : []).forEach((x) => {
+    const w = Number(x && x.weight) || 0;
+    const r = Number(x && x.reps) || 0;
+    if (w <= 0 && r <= 0) return;
+    if (!best || w > best.weight || (w === best.weight && r > best.reps)) best = { weight: w, reps: r };
+  });
+  return best || { weight: Number(e.weight) || 0, reps: Number(e.reps) || 0 };
+}
+
 function compactSession(row) {
   const out = { date: row.date };
   if (row.program_day) {
@@ -155,10 +169,11 @@ function compactSession(row) {
     .filter((e) => e && e.name)
     .map((e) => {
       const o = { name: e.name };
-      if (Number(e.weight) > 0) o.weight_kg = Number(e.weight);
-      if (Number(e.reps) > 0) o.reps = Number(e.reps);
+      const b = bestOf(e);
+      if (b.weight > 0) o.weight_kg = b.weight;
+      if (b.reps > 0) o.reps = b.reps;
       if (Number(e.sets) > 0) o.sets = Number(e.sets);
-      if (e.timed) o.seconds = Number(e.reps) || 0;
+      if (e.timed) o.seconds = b.reps || 0;
       if (e.note) o.note = e.note;
       if (e.replacedFrom) o.replaced_from = e.replacedFrom;
       if (e.added) o.added = true;
@@ -225,15 +240,16 @@ async function toolGetPrs(reader, userId) {
     (s.exercises || []).forEach((ex) => {
       if (!ex || !ex.name) return;
       const name = ex.name;
-      const w = Number(ex.weight) || 0;
+      const b = bestOf(ex);
+      const w = b.weight;
       if (w > 0) {
         const prev = records[name];
         if (!prev || !prev.weight_kg || w > prev.weight_kg) {
-          records[name] = { weight_kg: w, reps: Number(ex.reps) || null, date: s.date };
+          records[name] = { weight_kg: w, reps: b.reps || null, date: s.date };
         }
         return;
       }
-      const val = Number(ex.reps) || 0;
+      const val = b.reps;
       if (val <= 0) return;
       const n = name.toLowerCase().replace(/ё/g, 'е');
       const timed = ex.timed || TIMED_RE.test(n);

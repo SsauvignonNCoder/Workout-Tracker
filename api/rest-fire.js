@@ -17,6 +17,8 @@
 //   2. За тот же день есть тренировка, сохранённая ПОЗЖЕ нашей → молчим. У неё
 //      своё напоминание, которое придёт последним. Так при двух тренировках за
 //      день подряд приходит одно напоминание — после последней.
+//   3. В «Профиле» выключено «Напоминать о протеине» (profile.protein_alerts) →
+//      молчим: могли выключить уже после тренировки, когда задание стояло.
 // Сравниваем по created_at конкретных строк, а не по времени планирования:
 // расхождение часов между базой и функцией на это не влияет.
 //
@@ -52,6 +54,10 @@ async function reasonToSkip(check) {
   }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  // 3. Напоминание выключили в «Профиле» уже после тренировки → молчим.
+  const { data: prof } = await admin.from('profile').select('protein_alerts').eq('user_id', check.user_id).maybeSingle();
+  if (prof && prof.protein_alerts === false) return 'напоминание о протеине выключено';
+
   const { data, error } = await admin
     .from('sessions')
     .select('id, created_at')

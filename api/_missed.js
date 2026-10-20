@@ -2,6 +2,11 @@
 // их прогоняют тесты. Сам обход пользователей и отправка — api/missed-check.js.
 //
 // Файл начинается с подчёркивания — Vercel не превращает его в эндпоинт.
+//
+// Дни тренировок — из плана (src/plans.js → trainingWeekdays): день отдыха по
+// плану не пропуск, и в «три подряд» он не входит.
+
+import { trainingWeekdaysOf, DEFAULT_TRAINING_WEEKDAYS } from '../src/plans.js';
 
 export const MSG_MISSED = 'Кажется вы пропустили тренировку!';
 // Текст Никиты — для третьего пропуска подряд и дальше.
@@ -40,26 +45,28 @@ function shiftISO(iso, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// n тренировочных дней (ПН–СБ) назад, начиная с date включительно.
-export function trainingDaysBack(date, n) {
+// n тренировочных дней (по дням плана, по умолчанию ПН–СБ) назад, начиная с
+// date включительно.
+export function trainingDaysBack(date, n, weekdays = DEFAULT_TRAINING_WEEKDAYS) {
   const out = [];
   let cur = date;
-  while (out.length < n) {
-    if (new Date(`${cur}T12:00:00Z`).getUTCDay() !== 0) out.push(cur);
+  for (let guard = 0; out.length < n && guard < 400; guard += 1) {
+    if (weekdays.includes(new Date(`${cur}T12:00:00Z`).getUTCDay())) out.push(cur);
     cur = shiftISO(cur, -1);
   }
   return out;
 }
 
 // Решение по одному пользователю.
-//   profile   — { tz, last_missed_alert, active_workout_at }
+//   profile   — { tz, last_missed_alert, active_workout_at, plan_id }
 //   planDates — Set дат, в которые есть тренировка по плану (с номером дня);
 //   firstPlanDate — дата самой первой такой тренировки (до неё пропусков не бывает).
 // Возвращает { send: true, text, date } или { send: false, reason }.
-export function decideMissed({ now, profile, planDates, firstPlanDate }) {
+export function decideMissed({ now, profile, planDates, firstPlanDate, weekdays }) {
   const p = profile || {};
+  const days = weekdays || trainingWeekdaysOf(p.plan_id);
   const { date, weekday, minutes } = localParts(now, p.tz);
-  if (weekday === 0) return { send: false, reason: 'воскресенье' };
+  if (!days.includes(weekday)) return { send: false, reason: 'день отдыха по плану' };
   if (minutes < CHECK_FROM_MINUTES) return { send: false, reason: 'раньше 21:30' };
   if (p.last_missed_alert === date) return { send: false, reason: 'сегодня уже напоминали' };
   const started = p.active_workout_at ? Date.parse(p.active_workout_at) : NaN;
@@ -69,7 +76,7 @@ export function decideMissed({ now, profile, planDates, firstPlanDate }) {
   if (planDates.has(date)) return { send: false, reason: 'тренировка сегодня есть' };
   if (!firstPlanDate || firstPlanDate > date) return { send: false, reason: 'ещё не тренировался по плану' };
 
-  const lastDays = trainingDaysBack(date, HARSH_STREAK);
+  const lastDays = trainingDaysBack(date, HARSH_STREAK, days);
   const harsh = lastDays.every((d) => d >= firstPlanDate && !planDates.has(d));
   return { send: true, text: harsh ? MSG_MISSED_3 : MSG_MISSED, date };
 }

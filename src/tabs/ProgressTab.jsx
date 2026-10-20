@@ -141,21 +141,31 @@ export function pickDefaultSeriesKey(exerciseSeries, options, today, random = Ma
   return latest ? latest.key : options[0].key;
 }
 
-// Подпись точки упражнения для тапа по графику: рабочий (максимальный) вес и
-// повторы, сделанные именно с ним, — «80 кг × 8, 7». Без подходов по отдельности
-// (ручная запись) — «80 кг × 8 · 3 подх». Упражнение без веса — только повторы.
+// Подпись точки упражнения для тапа по графику — строки «вес × повторы»: подходы
+// сгруппированы по весу, тяжёлые сверху, повторы в порядке подходов — «80 кг × 8, 7»,
+// «75 кг × 10». Вес один — одна строка. Без подходов по отдельности (ручная
+// запись) — «80 кг × 8 · 3 подх». Упражнение без веса — только повторы.
+// Пусто — null.
 export function exercisePointInfo(p) {
-  const top = parseFloat(p.weight) || 0;
   const log = Array.isArray(p.setLog) ? p.setLog : [];
-  const repsAtTop = log
-    .filter((x) => (parseFloat(x.weight) || 0) === top && (parseInt(x.reps, 10) || 0) > 0)
-    .map((x) => parseInt(x.reps, 10));
-  const weightPart = top > 0 ? `${top} кг × ` : '';
-  if (repsAtTop.length > 0) return `${weightPart}${repsAtTop.join(', ')}${top > 0 ? '' : ' повт'}`;
+  const groups = new Map();
+  log.forEach((x) => {
+    const w = parseFloat(x.weight) || 0;
+    const r = parseInt(x.reps, 10) || 0;
+    if (r <= 0) return;
+    if (!groups.has(w)) groups.set(w, []);
+    groups.get(w).push(r);
+  });
+  if (groups.size > 0) {
+    return [...groups.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([w, reps]) => (w > 0 ? `${w} кг × ${reps.join(', ')}` : `${reps.join(', ')} повт`));
+  }
+  const top = parseFloat(p.weight) || 0;
   const reps = parseInt(p.reps, 10) || 0;
-  if (!reps) return top > 0 ? `${top} кг` : null;
+  if (!reps) return top > 0 ? [`${top} кг`] : null;
   const sets = parseInt(p.sets, 10) || 0;
-  return `${weightPart}${reps}${top > 0 ? '' : ' повт'}${sets > 1 ? ` · ${sets} подх` : ''}`;
+  return [`${top > 0 ? `${top} кг × ${reps}` : `${reps} повт`}${sets > 1 ? ` · ${sets} подх` : ''}`];
 }
 
 // Подсказка по тапу на точку: дата, затем по каждой серии — цвет, название и
@@ -182,9 +192,14 @@ function ChartTooltip({ active, payload, label, seriesByKey }) {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
               </div>
             )}
-            <div style={{ color: t.TEXT, fontWeight: 700, fontSize: 13.5, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>
-              {info || `${p.value}${s.unit}`}
-            </div>
+            {(Array.isArray(info) && info.length ? info : [`${p.value}${s.unit}`]).map((line, li) => (
+              <div key={li} style={{
+                color: li === 0 ? t.TEXT : t.TEXT_DIM, fontWeight: 700, fontSize: li === 0 ? 13.5 : 12.5,
+                fontFamily: "'JetBrains Mono', 'SF Mono', monospace", lineHeight: 1.45, whiteSpace: 'nowrap',
+              }}>
+                {line}
+              </div>
+            ))}
           </div>
         );
       })}
@@ -933,7 +948,9 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
   );
   const archiveTree = useMemo(() => buildArchiveTree(archivedSessions), [archivedSessions]);
 
-  const streaks = useMemo(() => computeWeekStreak(sessions), [sessions]);
+  // Дни недели в карточке — дни тренировок по плану (plans.js → trainingWeekdays).
+  const planIdNow = profile && profile.planId;
+  const streaks = useMemo(() => computeWeekStreak(sessions, planIdNow), [sessions, planIdNow]);
 
   if (!sessions || sessions.length === 0) {
     return (
@@ -945,10 +962,10 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     );
   }
 
-  // Пн–Сб. Раньше здесь было пять однобуквенных подписей: шестой день (суббота)
-  // оставался пустым квадратом, а «П» и «С» не различали понедельник с пятницей
-  // и среду с субботой. Две буквы решают и то, и другое.
-  const dayLetters = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  // Подписи — по номеру дня недели (0 — воскресенье): в карточке только дни
+  // тренировок по плану. Две буквы, чтобы «П» и «С» различали понедельник с
+  // пятницей и среду с субботой.
+  const WEEKDAY_LABELS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
   const sectionLabel = { fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO, marginBottom: 14 };
 
@@ -971,7 +988,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           {streaks.currentWeekDays.map((d, i) => (
             <div
               key={d.date}
-              title={dayLetters[i]}
+              title={WEEKDAY_LABELS[d.weekday]}
               style={{
                 width: 26, height: 22, borderRadius: 7,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -982,7 +999,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
                   : { color: t.TEXT_FAINT, border: `1.5px solid ${t.BORDER}` }),
               }}
             >
-              {dayLetters[i]}
+              {WEEKDAY_LABELS[d.weekday]}
             </div>
           ))}
         </div>

@@ -12,6 +12,8 @@ import { ProfileTab } from './tabs/ProfileTab.jsx';
 import { AssistantTab } from './tabs/AssistantTab.jsx';
 import { DEFAULT_PLAN_ID } from './plans.js';
 import { normalizeBodyLog } from './bodyLog.js';
+import { withBestSet } from './bestSet.js';
+import { achievementUnlockDates } from './gamification.js';
 
 // ------- Преобразование между форматом БД (snake_case) и форматом приложения (camelCase) -------
 
@@ -19,7 +21,9 @@ function sessionFromRow(row) {
   return {
     id: row.id,
     date: row.date,
-    exercises: row.exercises || [],
+    // Итоги упражнения — по лучшему подходу (src/bestSet.js): старые записи
+    // пошаговой тренировки хранили повторы последнего подхода.
+    exercises: (row.exercises || []).map(withBestSet),
     cardio: row.cardio || [],
     sleep: row.sleep,
     energy: row.energy,
@@ -80,6 +84,10 @@ function profileFromRow(row) {
     bodyLog: normalizeBodyLog(row.body_log),
     // Напоминание о пропущенной тренировке (api/missed-check.js) и пояс устройства для него.
     missedAlerts: !!row.missed_alerts,
+    // Напоминание о протеине после тренировки; по умолчанию включено.
+    proteinAlerts: row.protein_alerts !== false,
+    // Открытые достижения с датой: { id: 'ГГГГ-ММ-ДД' } — постоянные (gamification.js).
+    achievements: row.achievements && typeof row.achievements === 'object' && !Array.isArray(row.achievements) ? row.achievements : {},
     tz: row.tz || null,
   };
 }
@@ -100,6 +108,8 @@ function profileToRow(p, userId) {
     // обновляет только переданные поля, и история в базе остаётся.
     ...(Array.isArray(p.bodyLog) ? { body_log: normalizeBodyLog(p.bodyLog) } : {}),
     ...(p.missedAlerts !== undefined ? { missed_alerts: !!p.missedAlerts } : {}),
+    ...(p.proteinAlerts !== undefined ? { protein_alerts: !!p.proteinAlerts } : {}),
+    ...(p.achievements && typeof p.achievements === 'object' && !Array.isArray(p.achievements) ? { achievements: p.achievements } : {}),
     ...(p.tz ? { tz: p.tz } : {}),
   };
 }
@@ -345,6 +355,17 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
       goToTab(TAB_ORDER[idx - 1]);
     }
   };
+
+  // Постоянные достижения: новые открытия (и даты открытых до этой версии)
+  // дописываем в профиль — только добавляем, никогда не снимаем. Если запись
+  // профиля из другого места перетёрла их старым значением, эффект сработает
+  // снова и допишет. Ошибку сети покажет сам saveProfile.
+  useEffect(() => {
+    if (!loaded || !profile || !sessions) return;
+    const fresh = achievementUnlockDates({ sessions, measurements, profile });
+    if (Object.keys(fresh).length === 0) return;
+    saveProfile({ ...profile, achievements: { ...(profile.achievements || {}), ...fresh } }).catch(() => { /* сообщение уже показано */ });
+  }, [loaded, sessions, measurements, profile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteSession = async (id) => {
     const next = (sessions || []).filter((s) => s.id !== id);
