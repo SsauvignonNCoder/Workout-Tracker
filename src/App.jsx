@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, User, Sparkles, X } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, User, Sparkles, X, Compass } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
-import { ThemeContext, useTheme, THEME_2A, STRIPES_2A, brassFill } from './theme.js';
+import { ThemeContext, useTheme, THEME_2A, TRIS_2A, TRIS_SIZE, TRIS_MASK, brassFill, GLASS_SHEEN, GLASS_BORDER, GLASS_EDGE, glassCard } from './theme.js';
 import { useBrassShine } from './useBrassShine.js';
 import { isWeighInTime } from './dateUtils.js';
 import { AuthGate } from './auth.jsx';
@@ -14,6 +14,7 @@ import { DEFAULT_PLAN_ID } from './plans.js';
 import { normalizeBodyLog } from './bodyLog.js';
 import { withBestSet } from './bestSet.js';
 import { achievementUnlockDates } from './gamification.js';
+import { Tour, TourPrompt } from './Tour.jsx';
 
 // ------- Преобразование между форматом БД (snake_case) и форматом приложения (camelCase) -------
 
@@ -89,6 +90,8 @@ function profileFromRow(row) {
     // Открытые достижения с датой: { id: 'ГГГГ-ММ-ДД' } — постоянные (gamification.js).
     achievements: row.achievements && typeof row.achievements === 'object' && !Array.isArray(row.achievements) ? row.achievements : {},
     tz: row.tz || null,
+    // Новичку один раз предлагают обучение (src/Tour.jsx); ответил — больше не спрашиваем.
+    tourSeen: !!row.tour_seen,
   };
 }
 
@@ -111,6 +114,8 @@ function profileToRow(p, userId) {
     ...(p.proteinAlerts !== undefined ? { protein_alerts: !!p.proteinAlerts } : {}),
     ...(p.achievements && typeof p.achievements === 'object' && !Array.isArray(p.achievements) ? { achievements: p.achievements } : {}),
     ...(p.tz ? { tz: p.tz } : {}),
+    // Флаг только ставится, сбрасывать его некому — пишем лишь true.
+    ...(p.tourSeen ? { tour_seen: true } : {}),
   };
 }
 
@@ -120,6 +125,9 @@ function useStorage(userId) {
   const [profile, setProfile] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
+  // Загрузка не удалась: данные пустые не потому, что их нет. Обучение новичку
+  // в этом случае не предлагаем.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -142,6 +150,7 @@ function useStorage(userId) {
         setLoaded(true);
       } catch (e) {
         setError('Не удалось загрузить данные — проверь подключение к интернету');
+        setLoadFailed(true);
         setSessions([]);
         setMeasurements([]);
         setProfile({});
@@ -267,7 +276,7 @@ function useStorage(userId) {
     } catch (e) { /* no-op */ }
   };
 
-  return { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout };
+  return { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout };
 }
 
 // Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые
@@ -275,13 +284,14 @@ function useStorage(userId) {
 // как главная, поэтому даже неактивной она держит акцентную заливку, иконку покрупнее
 // и чуть приподнята над общей линией. Новых цветов для этого не заводилось — только
 // ACCENT_BG / ACCENT_BORDER / ACCENT_SOFT из темы 2A.
-function Pill({ children, active, onClick, icon: Icon, main }) {
+function Pill({ children, active, onClick, icon: Icon, main, tour }) {
   const ON_BRASS = '#0A0A0A';
   const DIM = '#8F897C';
   const iconColor = active ? ON_BRASS : main ? '#E4C57E' : DIM;
   return (
     <button
       onClick={onClick}
+      data-tour={tour}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
         // Высота задана явно и одинакова у всех вкладок. Иначе её определяет самая
@@ -312,7 +322,7 @@ function Pill({ children, active, onClick, icon: Icon, main }) {
 function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   const t = useTheme();
   const { ref: brassRef } = useBrassShine();
-  const { sessions, measurements, profile, loaded, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout } = useStorage(userId);
+  const { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout } = useStorage(userId);
   // Порядок в баре: «Тренировка» посередине как главная, ассистент между ней и
   // профилем. Порядок задаёт и направление свайпов.
   const TAB_ORDER = ['progress', 'measurements', 'workout', 'assistant', 'profile'];
@@ -386,6 +396,35 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
     goToTab('progress');
   };
 
+  // Обучение (src/Tour.jsx). Новичку — ни тренировок, ни замеров, вопрос ещё не
+  // задавали — один раз после загрузки предлагаем пройти. Ответ любой —
+  // ставим tour_seen; пройти снова можно кнопкой с компасом в шапке.
+  const [tourAsk, setTourAsk] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const tourCheckedRef = useRef(false);
+  useEffect(() => {
+    if (!loaded || tourCheckedRef.current) return;
+    tourCheckedRef.current = true;
+    if (loadFailed || !profile || profile.tourSeen) return;
+    if ((sessions || []).length > 0 || (measurements || []).length > 0) return;
+    setTourAsk(true);
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const answerTour = (yes) => {
+    setTourAsk(false);
+    if (!profile.tourSeen) saveProfile({ ...profile, tourSeen: true }).catch(() => { /* сообщение уже показано */ });
+    if (yes) setTourOpen(true);
+  };
+
+  const closeTour = (finished) => {
+    setTourOpen(false);
+    // Дошёл до конца — на «Тренировку», к кнопке «Начать тренировку».
+    if (finished) {
+      goToTab('workout');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   if (!loaded) {
     return (
       <div style={{
@@ -429,12 +468,19 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
       maxWidth: 480, margin: '0 auto', boxSizing: 'border-box',
       overflowX: 'hidden',
     }}>
-      {/* Полосы 2A — ФИКСИРОВАННЫЙ слой на весь экран (не привязан к высоте контента,
-          поэтому не «съезжает» при раскрытии групп). Теперь для всего приложения. */}
+      {/* Фон — ФИКСИРОВАННЫЙ слой на весь экран (не привязан к высоте контента,
+          поэтому не «съезжает» при раскрытии групп): чёрный и сетка треугольников,
+          которая ярче внизу и гаснет к верху. Маска — только на сетке, чёрный под
+          ней сплошной. */}
       <div aria-hidden style={{
-        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
-        background: `${STRIPES_2A}, ${t.BG}`,
-      }} />
+        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', background: t.BG,
+      }}>
+        <div style={{
+          position: 'absolute', inset: 0,
+          backgroundImage: TRIS_2A, backgroundSize: TRIS_SIZE, backgroundPosition: 'center bottom',
+          WebkitMaskImage: TRIS_MASK, maskImage: TRIS_MASK,
+        }} />
+      </div>
       <div style={{ position: 'relative', zIndex: 1 }}>
       <style>{`
         /* Глобального transition на «*» здесь больше нет: он остался от эпохи
@@ -504,6 +550,20 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
             {displayName ? `Привет, ${displayName}!` : 'Вес, повторы, самочувствие — и динамика по каждому упражнению'}
           </p>
         </div>
+        {/* Обучение ещё раз — то же, что предлагают новичку при первом входе. */}
+        <button
+          data-tour="tour-restart"
+          onClick={() => setTourOpen(true)}
+          aria-label="Как пользоваться трекером"
+          title="Как пользоваться трекером"
+          style={{
+            flexShrink: 0, width: 40, height: 40, marginTop: 1, borderRadius: 14, padding: 0,
+            ...glassCard({ shadow: false }),
+            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+          }}
+        >
+          <Compass size={19} color={t.ACCENT_SOFT} strokeWidth={1.9} />
+        </button>
       </div>
 
       {error && (
@@ -564,27 +624,35 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
       <div style={{
         position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 20,
         display: 'flex', justifyContent: 'center',
-        background: `linear-gradient(to top, ${t.BG} 38%, transparent)`,
-        paddingTop: 22,
+        // Без затемнения снизу: бар — стекло над содержимым. Вокруг бара тапы
+        // проходят к странице — ловит их только сам бар.
+        pointerEvents: 'none',
       }}>
         {/* Пять вкладок вместо четырёх: зазор и внутренний отступ ужаты, иначе на
             320 px неактивной иконке остаётся ровно её ширина без запаса. */}
-        <div style={{
+        <div data-tour="tabbar" style={{
           display: 'flex', gap: 5, width: '100%', maxWidth: 480, minWidth: 0, alignItems: 'center',
           padding: 8,
           margin: '0 max(14px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left))',
-          background: 'rgba(23,21,18,0.10)', backdropFilter: 'blur(22px) saturate(1.4)', WebkitBackdropFilter: 'blur(22px) saturate(1.4)',
-          border: '1px solid rgba(184,146,74,0.28)', borderRadius: 24,
-          boxShadow: '0 0 0 1px rgba(255,255,255,0.06) inset, 0 16px 40px rgba(0,0,0,0.4), 0 0 52px rgba(184,146,74,0.5)',
-          boxSizing: 'border-box',
+          // Стекло как у карточки уровня (theme.js → GLASS_*), но «дымчатое»:
+          // под баром прокручивается содержимое, и без размытия (Telegram iOS)
+          // текст под ним не должен читаться.
+          background: `${GLASS_SHEEN}, linear-gradient(135deg, rgba(38,34,28,0.62), rgba(16,14,12,0.55))`,
+          backdropFilter: 'blur(22px) saturate(1.5)', WebkitBackdropFilter: 'blur(22px) saturate(1.5)',
+          border: GLASS_BORDER, borderRadius: 24,
+          boxShadow: `${GLASS_EDGE}, 0 16px 40px rgba(0,0,0,0.45)`,
+          boxSizing: 'border-box', pointerEvents: 'auto',
         }}>
-          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon}>Прогресс</Pill>
-          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler}>Вес</Pill>
-          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell} main>Тренировка</Pill>
-          <Pill active={tab === 'assistant'} onClick={() => goToTab('assistant')} icon={Sparkles}>Ассистент</Pill>
-          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User}>Профиль</Pill>
+          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon} tour="tab-progress">Прогресс</Pill>
+          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler} tour="tab-measurements">Вес</Pill>
+          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell} main tour="tab-workout">Тренировка</Pill>
+          <Pill active={tab === 'assistant'} onClick={() => goToTab('assistant')} icon={Sparkles} tour="tab-assistant">Ассистент</Pill>
+          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User} tour="tab-profile">Профиль</Pill>
         </div>
       </div>
+
+      {tourAsk && <TourPrompt onYes={() => answerTour(true)} onNo={() => answerTour(false)} />}
+      {tourOpen && <Tour tab={tab} goToTab={goToTab} onClose={closeTour} />}
       </div>
     </div>
   );

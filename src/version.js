@@ -5,5 +5,5 @@
 //   PATCH — исправление багов и косметика.
 // При каждом изменении версии обязательно добавляй запись в CHANGELOG.md.
 
-export const APP_VERSION = '1.1.3';
-export const APP_VERSION_DATE = '2026-10-20';
+export const APP_VERSION = '1.1.4';
+export const APP_VERSION_DATE = '2026-10-24';

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { TrendingUp, TrendingDown, X } from 'lucide-react';
-import { useTheme } from '../theme.js';
+import { useTheme, glassCard } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort } from '../dateUtils.js';
 import { getMonday } from '../gamification.js';
 import { Field, getInputStyle, DatePicker } from './workoutTabHelpers.jsx';
@@ -217,7 +217,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
   const switcher = (
     <div role="tablist" style={{
       display: 'flex', gap: 4, padding: 4, marginBottom: 20, borderRadius: 14,
-      background: t.BG_RAISED, border: `1px solid ${t.BORDER}`,
+      ...glassCard({ shadow: false }),
     }}>
       {[{ key: 'weight', label: 'Вес' }, { key: 'body', label: 'Параметры тела' }].map((o) => {
         const on = section === o.key;
@@ -253,32 +253,34 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
 
   return (
     <div>
-      {switcher}
-      <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
-        <Field label="Дата замера">
-          <DatePicker value={date} onChange={setDate} />
-        </Field>
+      <div data-tour="weight">
+        {switcher}
+        <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
+          <Field label="Дата замера">
+            <DatePicker value={date} onChange={setDate} />
+          </Field>
+        </div>
+        <div style={{ marginBottom: 22 }}>
+          <Field label="Вес, кг">
+            <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder={latest ? String(latest.weight) : '—'} />
+          </Field>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={justSaved ? 'save-bounce' : ''}
+          style={{
+            width: '100%', padding: '15px', borderRadius: 16, border: 'none',
+            background: justSaved ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT,
+            fontSize: 15.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
+            opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
+            boxShadow: justSaved ? 'none' : t.GLOW,
+            transition: 'background 0.2s ease, box-shadow 0.2s ease',
+          }}
+        >
+          {justSaved ? 'Сохранено ✓' : saving ? 'Сохраняю...' : 'Сохранить вес'}
+        </button>
       </div>
-      <div style={{ marginBottom: 22 }}>
-        <Field label="Вес, кг">
-          <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder={latest ? String(latest.weight) : '—'} />
-        </Field>
-      </div>
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className={justSaved ? 'save-bounce' : ''}
-        style={{
-          width: '100%', padding: '15px', borderRadius: 16, border: 'none',
-          background: justSaved ? t.POSITIVE : t.ACCENT_GRAD, color: t.ON_ACCENT,
-          fontSize: 15.5, fontWeight: 700, cursor: saving ? 'default' : 'pointer',
-          opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
-          boxShadow: justSaved ? 'none' : t.GLOW,
-          transition: 'background 0.2s ease, box-shadow 0.2s ease',
-        }}
-      >
-        {justSaved ? 'Сохранено ✓' : saving ? 'Сохраняю...' : 'Сохранить вес'}
-      </button>
 
       {sorted.length > 0 && (
         <>
@@ -297,7 +299,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
               { label: '365 дней', value: stats.year },
             ].map((s) => (
               <div key={s.label} style={{
-                flex: 1, minWidth: 0, background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10,
+                flex: 1, minWidth: 0, ...glassCard({ shadow: false }), borderRadius: 10,
                 padding: '10px 8px', textAlign: 'center',
               }}>
                 <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap' }}>{s.label}</div>

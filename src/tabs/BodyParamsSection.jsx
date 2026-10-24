@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { X } from 'lucide-react';
-import { useTheme } from '../theme.js';
+import { useTheme, glassCard } from '../theme.js';
 import { todayISO, fmtDateShort } from '../dateUtils.js';
 import { Field, getInputStyle, DatePicker } from './workoutTabHelpers.jsx';
 import {
@@ -87,7 +87,7 @@ export function BodyParamsSection({ profile, saveProfile }) {
           const d = cur && cur.prev != null ? Math.round((cur.value - cur.prev) * 10) / 10 : null;
           return (
             <div key={p.key} style={{
-              background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 12, padding: '10px 10px 9px',
+              ...glassCard({ shadow: false }), borderRadius: 12, padding: '10px 10px 9px',
               minWidth: 0,
             }}>
               <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap' }}>

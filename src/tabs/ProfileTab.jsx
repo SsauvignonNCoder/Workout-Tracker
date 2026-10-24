@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { LogOut, Award, CheckCircle2, Circle } from 'lucide-react';
-import { useTheme } from '../theme.js';
+import { useTheme, GLASS_SHEEN, GLASS_BORDER, GLASS_EDGE, GLASS_BLUR, glassCard } from '../theme.js';
 import { fmtDateShort } from '../dateUtils.js';
 import {
   ACH_ICON, computeAchievements, groupAchievements, computeTotalXpFromSessions, getLevelInfo,
@@ -202,43 +202,66 @@ function fmtProgress({ cur, goal, unit }) {
   return `${n(cur)} / ${n(goal)}${unit ? ` ${unit}` : ''}`;
 }
 
+// Карточка уровня — стекло (theme.js → GLASS_*), такое же, как у таб-бара.
+// Латунное свечение — часть кольца: мягкий ореол ровно по его центру (размыт
+// своим filter, без backdrop-filter). Прогресс уровня показывает только кольцо.
 function LevelCard({ levelInfo, totalXp }) {
   const t = useTheme();
   const pct = Math.min(100, Math.round(levelInfo.progress * 100));
+  const R = 24;
+  const C = 2 * Math.PI * R;
   return (
-    <div style={{
-      background: `linear-gradient(135deg, ${t.BG_RAISED}, ${t.BG_INPUT})`,
-      border: `1px solid ${t.BORDER}`, borderRadius: 20, padding: '18px', marginBottom: 20, boxShadow: t.CARD_SHADOW,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <div style={{ position: 'relative', marginBottom: 20 }}>
+      <div style={{
+        position: 'relative', overflow: 'hidden', borderRadius: 22, padding: '16px 18px',
+        background: `${GLASS_SHEEN}, linear-gradient(135deg, rgba(255,255,255,0.075), rgba(255,255,255,0.018))`,
+        border: GLASS_BORDER, boxShadow: `${GLASS_EDGE}, 0 12px 32px rgba(0,0,0,0.35)`, ...GLASS_BLUR,
+      }}>
         {/* Отступ от круга до «Уровень N» — 22 px: так попросил Никита (было 10). */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
-          <div style={{ position: 'relative', width: 60, height: 60, flexShrink: 0 }}>
-            <svg width="60" height="60" viewBox="0 0 60 60">
-              <circle cx="30" cy="30" r="25" fill="none" stroke={t.BORDER} strokeWidth="5" />
-              <circle cx="30" cy="30" r="25" fill="none" stroke={t.ACCENT} strokeWidth="5" strokeLinecap="round"
-                strokeDasharray={2 * Math.PI * 25} strokeDashoffset={2 * Math.PI * 25 * (1 - pct / 100)}
-                transform="rotate(-90 30 30)" style={{ transition: 'stroke-dashoffset 0.5s ease' }} />
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 22 }}>
+          <div style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+            <div aria-hidden style={{
+              position: 'absolute', left: '50%', top: '50%', width: 92, height: 92, margin: '-46px 0 0 -46px',
+              borderRadius: '50%', pointerEvents: 'none', filter: 'blur(12px)',
+              background: 'radial-gradient(circle, rgba(199,154,78,0.45), rgba(199,154,78,0) 66%)',
+            }} />
+            <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden style={{ position: 'relative' }}>
+              <defs>
+                <linearGradient id="lvl-ring" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stopColor="#F5E3AE" />
+                  <stop offset="0.55" stopColor="#C79A4E" />
+                  <stop offset="1" stopColor="#8B6B2E" />
+                </linearGradient>
+              </defs>
+              <circle cx="28" cy="28" r={R} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="3.5" />
+              {pct > 0 && (
+                <circle cx="28" cy="28" r={R} fill="none" stroke="url(#lvl-ring)" strokeWidth="3.5" strokeLinecap="round"
+                  strokeDasharray={C} strokeDashoffset={C * (1 - pct / 100)} transform="rotate(-90 28 28)"
+                  style={{ transition: 'stroke-dashoffset 0.5s ease', filter: 'drop-shadow(0 0 4px rgba(199,154,78,0.55))' }} />
+              )}
             </svg>
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.FONT_DISPLAY, fontSize: 23, fontWeight: 700, color: t.TEXT }}>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: t.FONT_DISPLAY, fontSize: 21, fontWeight: 700, color: t.TEXT }}>
               {levelInfo.level}
             </div>
           </div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: t.TEXT }}>Уровень {levelInfo.level}</div>
-            <div style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{Math.round(totalXp)} XP всего</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em' }}>Уровень {levelInfo.level}</div>
+            <div style={{ fontSize: 11, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO, marginTop: 3 }}>{Math.round(totalXp)} XP всего</div>
+          </div>
+          <div style={{ flexShrink: 0, textAlign: 'right' }}>
+            {levelInfo.isMaxLevel ? (
+              <div style={{ fontSize: 11, color: t.ACCENT_SOFT, fontFamily: t.FONT_MONO, letterSpacing: '0.04em' }}>МАКС.</div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 600, color: t.TEXT, fontFamily: t.FONT_MONO }}>
+                  {Math.round(levelInfo.xpIntoLevel)}<span style={{ color: t.TEXT_FAINT }}>/{levelInfo.xpForLevel}</span>
+                </div>
+                <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, marginTop: 3 }}>до ур. {levelInfo.level + 1}</div>
+              </>
+            )}
           </div>
         </div>
-        {!levelInfo.isMaxLevel && (
-          <div style={{ textAlign: 'right', fontSize: 11.5, color: t.TEXT_FAINT }}>
-            до ур. {levelInfo.level + 1}<br />
-            <span style={{ color: t.TEXT_DIM, fontWeight: 600 }}>
-              {Math.round(levelInfo.xpIntoLevel)}/{levelInfo.xpForLevel} XP
-            </span>
-          </div>
-        )}
       </div>
-      {/* Полоску прогресса под карточкой убрали: прогресс показывает круг. */}
     </div>
   );
 }
@@ -448,7 +471,10 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
 
   return (
     <div>
-      <LevelCard levelInfo={levelInfo} totalXp={totalXp} />
+      {/* data-tour — цели обучения (src/Tour.jsx). */}
+      <div data-tour="level">
+        <LevelCard levelInfo={levelInfo} totalXp={totalXp} />
+      </div>
 
       <button
         onClick={() => setShowAchievements(!showAchievements)}
@@ -480,8 +506,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
               {g.items.map((a) => (
                 <div key={a.id} style={{
                   display: 'flex', alignItems: 'center', gap: 11,
-                  background: a.unlocked ? t.BG_RAISED : 'transparent',
-                  border: `1px solid ${a.unlocked ? t.BORDER : t.BORDER}`,
+                  ...(a.unlocked ? glassCard({ shadow: false }) : { background: 'transparent', border: `1px solid ${t.BORDER}` }),
                   borderRadius: 11, padding: '12px 14px',
                   opacity: a.unlocked ? 1 : 0.5,
                 }}>
@@ -526,7 +551,9 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
-      <PlanPicker profile={profile} saveProfile={saveProfile} />
+      <div data-tour="plan">
+        <PlanPicker profile={profile} saveProfile={saveProfile} />
+      </div>
 
       {/* Параметры тела переехали во вкладку «Вес» — там у них история замеров. */}
 
@@ -540,7 +567,10 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
           «Авто · ночь → Светлая → Тёмная», но не меняла ничего: приложение
           жёстко в теме 2A с 13 июля. */}
 
-      <AlertToggles profile={profile} saveProfile={saveProfile} />
+      <div data-tour="alerts">
+        <AlertToggles profile={profile} saveProfile={saveProfile} />
+      </div>
+
       <div style={{ height: 4 }} />
 
       <ExportImportPanel

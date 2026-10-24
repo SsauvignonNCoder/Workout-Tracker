@@ -70,7 +70,8 @@ create index measurements_user_date_idx on measurements (user_id, date);
 -- missed_alerts, tz, active_workout_at, last_missed_alert — напоминание о
 -- пропущенной тренировке (1.1.2, api/missed-check.js); protein_alerts —
 -- напоминание о протеине после тренировки (1.1.3, api/rest-fire.js);
--- achievements — открытые достижения с датой (1.1.3, src/gamification.js).
+-- achievements — открытые достижения с датой (1.1.3, src/gamification.js);
+-- tour_seen — новичку уже предлагали обучение (1.1.4, src/Tour.jsx).
 create table profile (
   user_id uuid primary key references users(id) on delete cascade,
   plan_id text not null default 'plan1',
@@ -88,7 +89,8 @@ create table profile (
   active_workout_at timestamptz,
   last_missed_alert text,
   protein_alerts boolean not null default true,
-  achievements jsonb not null default '{}'
+  achievements jsonb not null default '{}',
+  tour_seen boolean not null default false
 );
 
 -- ============================================================
@@ -129,6 +131,7 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 --           напоминание о пропущенной тренировке (migration-add-missed-alerts.sql).
 --   1.1.3 — переключатель напоминания о протеине (migration-add-protein-alerts.sql),
 --           постоянные достижения (migration-add-achievements.sql).
+--   1.1.4 — обучение по приложению (migration-add-tour-seen.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
@@ -146,6 +149,7 @@ alter table profile
   add column if not exists last_missed_alert text;
 alter table profile add column if not exists protein_alerts boolean not null default true;
 alter table profile add column if not exists achievements jsonb not null default '{}';
+alter table profile add column if not exists tour_seen boolean not null default false;
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.

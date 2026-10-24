@@ -139,10 +139,13 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     if (profile && programDay === null) {
       // 0 — план только что выбран: начинаем с дня 1. До 1.1.0 здесь стояло
       // `if (last)`, и ноль молча означал «ничего не подставлять».
-      const next = nextPlanDay(plan, profile.lastProgramDay);
+      // Новичок (ни одной тренировки, день плана ещё не выбирался) — сразу
+      // день 1: на экране «Начать тренировку», а не пустая ручная форма.
+      const fresh = profile.lastProgramDay == null && (!sessions || sessions.length === 0);
+      const next = nextPlanDay(plan, fresh ? 0 : profile.lastProgramDay);
       if (next) setProgramDay(next);
     }
-  }, [profile, programDay, editingId, programDetached, plan]);
+  }, [profile, programDay, editingId, programDetached, plan, sessions]);
 
   const [justAppliedProgram, setJustAppliedProgram] = useState(false);
 
@@ -413,63 +416,66 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
 
       {!planMode && <RepeatWorkoutPicker sessions={sessions} onPick={handlePickWorkout} />}
 
-      {programDay ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 14 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <ProgramDayPicker plan={plan} value={programDay} onChange={applyProgramDay} />
+      {/* День плана и «Начать тренировку» — цель обучения (src/Tour.jsx). */}
+      <div data-tour="workout-start">
+        {programDay ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 14 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <ProgramDayPicker plan={plan} value={programDay} onChange={applyProgramDay} />
+            </div>
+            <button
+              onClick={() => {
+                setProgramDay(null);
+                setProgramDetached(true);
+                setExercises([]);
+                setCardio([]);
+              }}
+              aria-label="Отвязать от программы"
+              style={{
+                flexShrink: 0, width: 44, height: 44, borderRadius: 10, border: `1px solid ${t.BORDER}`,
+                background: t.BG_INPUT, color: t.TEXT_FAINT, cursor: 'pointer', marginTop: 0,
+              }}
+            >
+              <X size={16} />
+            </button>
           </div>
+        ) : (
           <button
-            onClick={() => {
-              setProgramDay(null);
-              setProgramDetached(true);
-              setExercises([]);
-              setCardio([]);
-            }}
-            aria-label="Отвязать от программы"
+            onClick={() => setShowProgramPicker(!showProgramPicker)}
             style={{
-              flexShrink: 0, width: 44, height: 44, borderRadius: 10, border: `1px solid ${t.BORDER}`,
-              background: t.BG_INPUT, color: t.TEXT_FAINT, cursor: 'pointer', marginTop: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
+              ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
+              padding: '10px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit', marginBottom: 14, boxSizing: 'border-box',
             }}
           >
-            <X size={16} />
+            <Dumbbell size={14} /> Выбор тренировки
           </button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setShowProgramPicker(!showProgramPicker)}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
-            ...FROST, border: `1px dashed ${t.BORDER}`, borderRadius: 9,
-            padding: '10px 14px', color: t.TEXT_DIM, fontSize: 13.5, fontWeight: 600,
-            cursor: 'pointer', fontFamily: 'inherit', marginBottom: 14, boxSizing: 'border-box',
-          }}
-        >
-          <Dumbbell size={14} /> Выбор тренировки
-        </button>
-      )}
-      {showProgramPicker && !programDay && (
-        <div style={{ marginBottom: 14 }}>
-          <ProgramDayPicker plan={plan} value={1} onChange={applyProgramDay} />
-        </div>
-      )}
+        )}
+        {showProgramPicker && !programDay && (
+          <div style={{ marginBottom: 14 }}>
+            <ProgramDayPicker plan={plan} value={1} onChange={applyProgramDay} />
+          </div>
+        )}
 
-      {programDay && !editingId && (
-        <button
-          onClick={() => {
-            if (guided) { setGuidedMin(false); return; } // уже идёт — просто развернуть
-            const dayPlan = getPlanDay(planId, programDay);
-            if (dayPlan) setGuided({ dayPlan, planId, date });
-          }}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
-            background: t.ACCENT_GRAD, color: t.ON_ACCENT, border: 'none', borderRadius: 14,
-            padding: '14px', fontSize: 15.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-            marginBottom: 16, boxShadow: t.GLOW, boxSizing: 'border-box',
-          }}
-        >
-          <Play size={18} /> Начать тренировку
-        </button>
-      )}
+        {programDay && !editingId && (
+          <button
+            onClick={() => {
+              if (guided) { setGuidedMin(false); return; } // уже идёт — просто развернуть
+              const dayPlan = getPlanDay(planId, programDay);
+              if (dayPlan) setGuided({ dayPlan, planId, date });
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
+              background: t.ACCENT_GRAD, color: t.ON_ACCENT, border: 'none', borderRadius: 14,
+              padding: '14px', fontSize: 15.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+              marginBottom: 16, boxShadow: t.GLOW, boxSizing: 'border-box',
+            }}
+          >
+            <Play size={18} /> Начать тренировку
+          </button>
+        )}
+      </div>
 
       {planMode && (
         <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, textAlign: 'center', marginBottom: 16, lineHeight: 1.45 }}>

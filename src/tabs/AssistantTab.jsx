@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, ArrowUp } from 'lucide-react';
-import { useTheme } from '../theme.js';
+import { useTheme, glassCard } from '../theme.js';
 import { getInputStyle } from './workoutTabHelpers.jsx';
 
 // Вкладка «Ассистент» — чат по своим тренировочным данным.
@@ -138,9 +138,9 @@ export function AssistantTab() {
 
       {/* Пустой экран: коротко о том, что умеет, и три готовых вопроса. */}
       {messages.length === 0 && (
-        <div style={{
-          background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 20,
-          padding: '18px 20px', marginBottom: 16, boxShadow: t.CARD_SHADOW,
+        <div data-tour="assistant-intro" style={{
+          ...glassCard({ blur: true }), borderRadius: 20,
+          padding: '18px 20px', marginBottom: 16,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
             <Sparkles size={17} color={t.ACCENT_SOFT} />
@@ -158,11 +158,13 @@ export function AssistantTab() {
                 disabled={!inTelegram || busy}
                 style={{
                   textAlign: 'left', width: '100%', boxSizing: 'border-box',
-                  background: 'transparent', border: `1px dashed ${t.BORDER}`, borderRadius: 12,
-                  padding: '10px 13px', color: inTelegram ? t.TEXT_DIM : t.TEXT_FAINT,
-                  fontSize: 13, fontFamily: 'inherit',
+                  // Читаемо и вне Telegram (там кнопки неактивны): светлый текст на
+                  // лёгкой подложке, а не бледный по пунктиру.
+                  background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 12,
+                  padding: '10px 13px', color: inTelegram ? t.TEXT : t.TEXT_DIM,
+                  fontSize: 13.5, fontFamily: 'inherit',
                   cursor: inTelegram && !busy ? 'pointer' : 'default',
-                  opacity: inTelegram ? 1 : 0.6,
+                  opacity: inTelegram ? 1 : 0.85,
                 }}
               >
                 {s}
@@ -193,7 +195,7 @@ export function AssistantTab() {
 
       {/* Поле ввода живёт в обычном потоке, а не прибито к низу экрана: на iOS
           клавиатура схлопывает вьюпорт и фиксированные элементы уезжают под неё. */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+      <div data-tour="assistant-input" style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         <input
           style={{ ...getInputStyle(t), fontFamily: 'inherit', fontSize: 15 }}
           value={input}

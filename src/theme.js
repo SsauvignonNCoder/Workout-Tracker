@@ -34,11 +34,64 @@ export const THEME_2A = {
 
 export const BG_2A = '#0A0A0A';
 
-// Диагональные полосы фона под 60°. Прозрачность намеренно низкая (0.038/0.032):
-// более заметные полосы мешали читать панели поверх них (§12.2).
-export const STRIPES_2A = 'repeating-linear-gradient(60deg, rgba(242,224,166,0.038) 0px, rgba(242,224,166,0.038) 1.5px, transparent 1.5px, transparent 11px, rgba(184,146,74,0.032) 11px, rgba(184,146,74,0.032) 12.5px, transparent 12.5px, transparent 22px)';
+// Фон — сетка мелких треугольников (вместо диагональных полос 2A, §12.2):
+// треугольник ~3.4 px с шагом 18 px; ярче всего внизу, к 2/3 экрана снизу гаснет
+// совсем (TRIS_MASK). Под стеклом карточки уровня и таб-бара узор размывается — на ровном
+// чёрном стекла не было бы видно.
+// Каждый ряд снизу вверх сдвинут на 5 px вправо — узор складывается в косые
+// линии. Сдвиг возвращается к нулю только через 18 рядов (5·18 кратно 18),
+// поэтому плитка — 18 × 324 px с 18 треугольниками; отсчёт рядов — от низа
+// экрана (backgroundPosition: bottom). Фигура у края плитки дублируется на
+// соседний край, чтобы не обрезалась.
+const TRI_STEP = 18;
+const TRI_SHIFT = 5;
+const TRI_HALF = 1.7; // половина стороны
+function trisTile() {
+  const h = TRI_STEP * TRI_STEP;
+  const shapes = [];
+  for (let k = 0; k < TRI_STEP; k += 1) {
+    const x = (TRI_STEP / 2 + TRI_SHIFT * k) % TRI_STEP;
+    const y = h - TRI_STEP / 2 - TRI_STEP * k;
+    [x - TRI_STEP, x, x + TRI_STEP].forEach((cx) => {
+      if (cx <= -TRI_HALF - 1 || cx >= TRI_STEP + TRI_HALF + 1) return;
+      const pts = [[cx, y - 1.7], [cx - TRI_HALF, y + 1.25], [cx + TRI_HALF, y + 1.25]];
+      shapes.push(`<polygon points='${pts.map((p) => p.map((v) => +v.toFixed(2)).join(',')).join(' ')}'/>`);
+    });
+  }
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${TRI_STEP}' height='${h}' fill='rgba(242,235,221,0.10)'>${shapes.join('')}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+export const TRIS_2A = trisTile();
+export const TRIS_SIZE = `${TRI_STEP}px ${TRI_STEP * TRI_STEP}px`;
+// Затухание: внизу узор в полную силу, к 2/3 высоты экрана (снизу) его уже нет.
+export const TRIS_MASK = 'linear-gradient(to top, #000 0%, rgba(0,0,0,0.5) 30%, rgba(0,0,0,0.12) 52%, transparent 66%)';
 
-// Фрост-стекло для полупрозрачных плашек над полосатым фоном. Подложка НАМЕРЕННО
+// Стекло — карточка уровня в «Профиле» и таб-бар: светлая кромка сверху, блик
+// по диагонали, размытие фона. Размытие — бонус: в Telegram iOS backdrop-filter
+// ненадёжен (§12.2), стекло держится на кромке и блике. Заливку каждый элемент
+// задаёт сам: над неподвижным фоном — почти прозрачная (карточка уровня), над
+// прокручиваемым содержимым — плотнее, «дымчатая» (таб-бар), чтобы под ним не
+// читался текст, если размытие не сработало.
+export const GLASS_SHEEN = 'linear-gradient(115deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.015) 38%, transparent 62%)';
+export const GLASS_BORDER = '1px solid rgba(255,255,255,0.09)';
+export const GLASS_EDGE = 'inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(0,0,0,0.25)';
+export const GLASS_BLUR = { backdropFilter: 'blur(16px) saturate(1.5)', WebkitBackdropFilter: 'blur(16px) saturate(1.5)' };
+
+// Стеклянная карточка экрана: заливка, кромка и блик (+ тень). Размытие фона
+// (blur) — только у одиночных крупных карточек: у длинных списков (архив,
+// достижения) backdrop-filter на каждой плашке тормозит прокрутку в Telegram
+// iOS, а на чёрном фоне разницы почти не видно. Цветную рамку (активный
+// переключатель, текущий год архива) карточка ставит поверх своим border.
+export function glassCard({ blur = false, shadow = true } = {}) {
+  return {
+    background: `${GLASS_SHEEN}, linear-gradient(135deg, rgba(255,255,255,0.065), rgba(255,255,255,0.015))`,
+    border: GLASS_BORDER,
+    boxShadow: shadow ? `${GLASS_EDGE}, 0 10px 28px rgba(0,0,0,0.3)` : GLASS_EDGE,
+    ...(blur ? GLASS_BLUR : {}),
+  };
+}
+
+// Фрост-стекло для полупрозрачных плашек над фоном. Подложка НАМЕРЕННО
 // плотная: backdrop-filter в Telegram iOS WKWebView ненадёжен, где-то он просто
 // игнорируется — читаемость держится на заливке, блюр только бонус (§12.2).
 export const FROST = {

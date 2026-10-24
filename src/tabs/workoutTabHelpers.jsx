@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { X, Flame, Copy, Dumbbell, Activity, Waves } from 'lucide-react';
-import { useTheme } from '../theme.js';
+import { useTheme, glassCard } from '../theme.js';
 import { todayISO, shiftDate, fmtDateFull } from '../dateUtils.js';
 import { MAX_INCLINE } from '../climbs.js';
 import { planWeekOf } from '../plans.js';
@@ -593,8 +593,8 @@ export function WarmupTip({ day }) {
   if (!items) return null;
   return (
     <div style={{
-      background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 16,
-      padding: '13px 15px', marginBottom: 14, boxShadow: t.CARD_SHADOW,
+      ...glassCard({ blur: true }), borderRadius: 16,
+      padding: '13px 15px', marginBottom: 14,
     }}>
       <div style={{
         fontSize: 10.5, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',

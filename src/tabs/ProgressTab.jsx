@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown, Timer } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown, Timer, Footprints } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { useTheme, ThemeContext, THEME_2A, FROST, brassFill, brassText } from '../theme.js';
+import { useTheme, ThemeContext, THEME_2A, FROST, brassFill, brassText, glassCard, GLASS_SHEEN, GLASS_BORDER, GLASS_EDGE } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
 import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
@@ -58,7 +58,9 @@ function PeriodSelector({ value, onChange }) {
   );
 }
 
-function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
+// Выбор графиков: квадратик — добавить к графику / убрать, тап по названию —
+// показать только это (список закрывается).
+function MultiSeriesSelector({ options, selectedKeys, onToggle, onOnly }) {
   const t = useTheme();
   const [open, setOpen] = useState(false);
   const selectedLabels = options.filter((o) => selectedKeys.includes(o.key)).map((o) => o.label);
@@ -93,14 +95,17 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
             {options.map((o) => {
               const isSelected = selectedKeys.includes(o.key);
               return (
+                <div key={o.key} style={{
+                  display: 'flex', alignItems: 'stretch',
+                  background: isSelected ? t.ACCENT_BG : 'transparent', borderBottom: `1px solid ${t.BORDER}`,
+                }}>
                 <button
-                  key={o.key}
                   onClick={() => onToggle(o.key)}
+                  aria-pressed={isSelected}
+                  aria-label={`${isSelected ? 'Убрать с графика' : 'Добавить к графику'}: ${o.label}`}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left', padding: '11px 14px',
-                    background: isSelected ? t.ACCENT_BG : 'transparent', border: 'none',
-                    borderBottom: `1px solid ${t.BORDER}`, color: isSelected ? t.ACCENT_SOFT : t.TEXT,
-                    fontSize: 14.5, fontWeight: isSelected ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
+                    flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 11px 0 14px',
+                    background: 'transparent', border: 'none', cursor: 'pointer',
                   }}
                 >
                   <span style={{
@@ -110,9 +115,20 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle }) {
                   }}>
                     {isSelected ? '✓' : ''}
                   </span>
+                </button>
+                <button
+                  onClick={() => { onOnly(o.key); setOpen(false); }}
+                  style={{
+                    flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, textAlign: 'left',
+                    padding: '11px 14px 11px 0', background: 'transparent', border: 'none',
+                    color: isSelected ? t.ACCENT_SOFT : t.TEXT,
+                    fontSize: 14.5, fontWeight: isSelected ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
                   {o.type === 'cardio' ? <LineIcon size={14} style={{ flexShrink: 0, opacity: 0.6 }} /> : o.type === 'bodyweight' ? <Ruler size={14} style={{ flexShrink: 0, opacity: 0.6 }} /> : o.type === 'ratio' ? <TrendingUp size={14} style={{ flexShrink: 0, opacity: 0.6 }} /> : <Dumbbell size={14} style={{ flexShrink: 0, opacity: 0.6 }} />}
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
                 </button>
+                </div>
               );
             })}
           </div>
@@ -242,7 +258,7 @@ function MultiSeriesChart({ selectedSeries }) {
   if (selectedSeries.length === 0) return null;
 
   return (
-    <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 18, padding: '16px 16px 8px', marginBottom: 14, boxShadow: t.CARD_SHADOW }}>
+    <div style={{ ...glassCard({ blur: true }), borderRadius: 18, padding: '16px 16px 8px', marginBottom: 14 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
         {selectedSeries.map((s) => {
           const pts = s.points;
@@ -311,7 +327,10 @@ function SetChips({ setLog, weightless, timed }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 9, marginTop: 5 }}>
       {setLog.map((s, i) => (
         <span key={i} style={{
-          background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 9,
+          // Плашка подхода — тёмное «дымчатое» стекло: плотная тёмная заливка,
+          // светлая кромка и блик (так понравилось Никите).
+          background: `${GLASS_SHEEN}, linear-gradient(135deg, rgba(36,33,28,0.95), rgba(19,17,14,0.93))`,
+          border: GLASS_BORDER, boxShadow: GLASS_EDGE, borderRadius: 9,
           padding: '6px 12px', fontFamily: MONO, fontSize: 13, display: 'inline-flex', alignItems: 'center',
         }}>
           {weightless ? (
@@ -346,7 +365,9 @@ function SectorBlock({ sectors, routeName }) {
     <div style={{ padding: '9px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: t.TEXT, display: 'flex', alignItems: 'center', gap: 6 }}>
-          🏃 {routeName || 'Кардио по секторам'} · {sectors.length}
+          {/* Иконка lucide, а не эмодзи 🏃: эмодзи выбивался из стиля. */}
+          <Footprints size={14} color={t.ACCENT_SOFT} strokeWidth={2} style={{ flexShrink: 0 }} />
+          {routeName || 'Кардио по секторам'} · {sectors.length}
         </span>
         <span style={{ fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, fontFamily: MONO }}>
           {totalDist > 0 ? `${Math.round(totalDist * 100) / 100} км · ` : ''}{secToClock(totalSec)}
@@ -473,7 +494,7 @@ function TreadmillChart({ sessions }) {
     </div>
   );
 
-  const cardStyle = { background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 18, padding: '16px 16px 8px', marginBottom: 14, boxShadow: t.CARD_SHADOW };
+  const cardStyle = { ...glassCard({ blur: true }), borderRadius: 18, padding: '16px 16px 8px', marginBottom: 14 };
 
   if (points.length === 0) return null;
 
@@ -549,7 +570,8 @@ function TreadmillChart({ sessions }) {
   return (
     <div style={cardStyle}>
       <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 7 }}>
-        🏃 Беговая дорожка
+        <Footprints size={16} color={t.ACCENT_SOFT} strokeWidth={2} style={{ flexShrink: 0 }} />
+        Беговая дорожка
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
         {presentTypes.map((tp) => (
@@ -706,7 +728,7 @@ function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete }) {
         onClick={() => setExpanded(!expanded)}
         style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-          padding: '12px 14px', background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10,
+          padding: '12px 14px', ...glassCard({ shadow: false }), borderRadius: 10,
           cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
         }}
       >
@@ -768,7 +790,7 @@ function ArchiveMonthGroup({ month, onEdit, onDelete }) {
         onClick={() => setExpanded(!expanded)}
         style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-          padding: '11px 13px', ...FROST, border: `1px solid ${t.BORDER}`, borderRadius: 10,
+          padding: '11px 13px', ...glassCard({ shadow: false }), borderRadius: 10,
           cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
         }}
       >
@@ -798,7 +820,7 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
         onClick={() => setExpanded(!expanded)}
         style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-          padding: '13px 14px', ...FROST, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12,
+          padding: '13px 14px', ...glassCard({ shadow: false }), border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12,
           cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
         }}
       >
@@ -954,7 +976,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
 
   if (!sessions || sessions.length === 0) {
     return (
-      <div style={{ textAlign: 'center', padding: '48px 16px', color: t.TEXT_FAINT }}>
+      <div data-tour="progress" style={{ textAlign: 'center', padding: '48px 16px', color: t.TEXT_FAINT }}>
         <Dumbbell size={28} style={{ marginBottom: 10, opacity: 0.5 }} />
         <div style={{ fontSize: 14.5 }}>Пока нет тренировок.</div>
         <div style={{ fontSize: 13, marginTop: 4 }}>Добавь первую на вкладке «Тренировка».</div>
@@ -973,8 +995,8 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     <ThemeContext.Provider value={THEME_2A}>
       <div style={{ color: t.TEXT, fontFamily: t.FONT }}>
 
-      <div style={{
-        background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 20, boxShadow: t.CARD_SHADOW,
+      <div data-tour="progress" style={{
+        ...glassCard({ blur: true }), borderRadius: 20,
         padding: '16px 18px', marginBottom: 28,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
       }}>
@@ -1063,7 +1085,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         Прогрессия
       </div>
 
-      <MultiSeriesSelector options={options} selectedKeys={selectedKeys} onToggle={toggleSeries} />
+      <MultiSeriesSelector options={options} selectedKeys={selectedKeys} onToggle={toggleSeries} onOnly={(key) => setSelectedKeys([key])} />
       <PeriodSelector value={period} onChange={setPeriod} />
 
       {options.length === 0 ? (
