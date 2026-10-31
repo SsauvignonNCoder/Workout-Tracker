@@ -1,3 +1,4 @@
+import { getLang } from './i18n.js';
 // Отложенные уведомления от бота.
 //
 // Зачем сервер: когда экран телефона гаснет, JS в Mini App замораживается и
@@ -27,7 +28,8 @@ export async function scheduleBotAlert(kind, durationSec, extra = {}) {
     const r = await fetch('/api/rest-schedule', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initData, kind, duration: durationSec, ...extra }),
+      // Язык — для текста уведомления (api/rest-schedule.js выбирает текст сам).
+      body: JSON.stringify({ initData, kind, duration: durationSec, lang: getLang(), ...extra }),
     });
     if (!r.ok) return null;
     const data = await r.json().catch(() => null);

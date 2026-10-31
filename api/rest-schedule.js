@@ -24,14 +24,17 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // Виды уведомлений. Клиент передаёт только `kind`, текст выбирается здесь —
 // так эндпоинт не превращается в способ отправить боту произвольное сообщение,
 // а тексты лежат в одном месте.
+// en — текст для английского интерфейса (клиент передаёт lang).
 const ALERTS = {
   rest: {
     text: '⏱️ Отдых окончен — следующий подход',
+    en: '⏱️ Rest is over — next set',
     defaultDelay: 120,
     maxDelay: 900,
   },
   protein: {
     text: '🥤 Час после тренировки — время протеинового коктейля',
+    en: '🥤 An hour after your workout — time for a protein shake',
     defaultDelay: 3600,
     maxDelay: 7200,
   },
@@ -73,7 +76,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { initData, duration, kind, sessionId, date } = req.body || {};
+  const { initData, duration, kind, sessionId, date, lang } = req.body || {};
   if (!initData || typeof initData !== 'string') {
     res.status(400).json({ error: 'Не передан initData' });
     return;
@@ -121,7 +124,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         chat_id: chatId,
-        text: alert.text,
+        text: lang === 'en' && alert.en ? alert.en : alert.text,
         secret: ALERT_SECRET,
         ...(check ? { check } : {}),
       }),

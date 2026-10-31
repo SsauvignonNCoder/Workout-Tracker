@@ -12,6 +12,13 @@ import {
 import { getPlan, getPlanDay, nextPlanDay, DEFAULT_PLAN_ID } from '../plans.js';
 import { GuidedWorkout } from './GuidedWorkout.jsx';
 import { scheduleProteinReminder } from '../botAlerts.js';
+import { tr, exKey } from '../i18n.js';
+import { inputVal, store, getUnits, convertValue } from '../units.js';
+
+// Поле формы в единицах экрана из метрики; исходное значение помним, чтобы
+// нетронутое поле сохранилось как было (без накопления округлений).
+const field = (k, v) => (v ? inputVal(k, v) : '');
+const back = (k, text, orig) => (orig && orig.text === text ? orig.value : Math.max(0, store(k, text)));
 
 // Поля упражнения, которые форма ручного ввода не редактирует, но обязана
 // донести до базы нетронутыми: подходы и заметки пишутся в пошаговом режиме,
@@ -28,33 +35,80 @@ function carryExerciseExtras(e) {
   };
 }
 
-export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, userId, editSession, onEditDone, onMiniBarChange, onWorkoutActive }) {
+// Смена языка или единиц перемонтирует вкладку (App: key). Открытое на ней это
+// переживает: нужное всегда лежит здесь (новая вкладка рендерится раньше, чем
+// старая размонтируется), и новая подхватывает его для того же пользователя:
+//   guided, min — открытая пошаговая тренировка (записи гид берёт из черновика
+//     без вопроса «продолжить?»);
+//   form — ручная форма и незаконченная правка; числа в ней — в единицах
+//     form.units и при смене системы пересчитываются (carriedForm).
+// Перезагрузка страницы это обнуляет — тогда, как и раньше, вопрос о черновике.
+let carry = null;
+
+function carriedForm(form) {
+  if (!form || form.units === getUnits()) return form;
+  const to = getUnits();
+  // Нетронутое поле — заново из данных (без накопления округлений), введённое — пересчётом.
+  const cv = (k, text, orig) => (orig && orig.text === text ? field(k, orig.value) : convertValue(k, text, form.units, to));
+  const re = (k, o) => (o ? { text: field(k, o.value), value: o.value } : o);
+  return {
+    ...form,
+    exercises: form.exercises.map((e) => ({
+      ...e,
+      weight: cv('w', e.weight, e.orig && e.orig.weight),
+      ...(e.orig ? { orig: { ...e.orig, weight: re('w', e.orig.weight) } } : {}),
+    })),
+    cardio: form.cardio.map((c) => ({
+      ...c,
+      distance: cv('d', c.distance, c.orig && c.orig.distance),
+      speed: cv('s', c.speed, c.orig && c.orig.speed),
+      ...(c.orig ? { orig: { ...c.orig, distance: re('d', c.orig.distance), speed: re('s', c.orig.speed) } } : {}),
+    })),
+  };
+}
+
+export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProfile, userId, editSession, onEditDone, onMiniBarChange, onWorkoutActive, onWorkoutTouch, onWorkoutDiscard }) {
   const t = useTheme();
-  const [date, setDate] = useState(todayISO());
-  const [exercises, setExercises] = useState([]);
-  const [cardio, setCardio] = useState([]);
-  const [sleep, setSleep] = useState('');
-  const [energy, setEnergy] = useState(3);
+  const [carried] = useState(() => (carry && carry.userId === userId ? { ...carry, form: carriedForm(carry.form) } : null));
+  const cf = carried && carried.form;
+  const [date, setDate] = useState(cf ? cf.date : todayISO());
+  const [exercises, setExercises] = useState(cf ? cf.exercises : []);
+  const [cardio, setCardio] = useState(cf ? cf.cardio : []);
+  const [sleep, setSleep] = useState(cf ? cf.sleep : '');
+  const [energy, setEnergy] = useState(cf ? cf.energy : 3);
   // Тяжесть тренировки 1–5; null — не указана (у старых записей её нет, и
   // правка не должна подставлять туда тройку молча).
-  const [difficulty, setDifficulty] = useState(3);
-  const [feeling, setFeeling] = useState('');
+  const [difficulty, setDifficulty] = useState(cf ? cf.difficulty : 3);
+  const [feeling, setFeeling] = useState(cf ? cf.feeling : '');
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
-  const [programDay, setProgramDay] = useState(null);
-  const [programDetached, setProgramDetached] = useState(false);
+  const [programDay, setProgramDay] = useState(cf ? cf.programDay : null);
+  const [programDetached, setProgramDetached] = useState(cf ? cf.programDetached : false);
   const [showProgramPicker, setShowProgramPicker] = useState(false);
-  const [editingId, setEditingId] = useState(null);
+  const [editingId, setEditingId] = useState(cf ? cf.editingId : null);
   // План редактируемой тренировки: её день программы — номер внутри ЕЁ плана,
   // а не того, что сейчас выбран в профиле.
-  const [editPlanId, setEditPlanId] = useState(null);
+  const [editPlanId, setEditPlanId] = useState(cf ? cf.editPlanId : null);
   // Запущенная пошаговая тренировка: день и план фиксируются в момент старта
   // (null — гид закрыт). До 1.1.0 портал рендерился от текущего programDay, и
   // сброс дня под свёрнутой тренировкой (а теперь и смена плана в профиле)
   // закрыл бы её посреди подхода.
-  const [guided, setGuided] = useState(null);
-  const [guidedMin, setGuidedMin] = useState(false);
+  const [guided, setGuided] = useState(carried ? carried.guided : null);
+  const [guidedMin, setGuidedMin] = useState(carried ? carried.min : false);
   const [guidedSaved, setGuidedSaved] = useState(false);
+  // id новой ручной тренировки, запись которой не прошла (см. handleSave).
+  const pendingIdRef = useRef(cf ? cf.pendingId : null);
+  useEffect(() => {
+    carry = {
+      userId, guided, min: guidedMin,
+      form: {
+        date, exercises, cardio, sleep, energy, difficulty, feeling, programDay, programDetached,
+        editingId, editPlanId, pendingId: pendingIdRef.current, units: getUnits(),
+      },
+    };
+  }, [userId, guided, guidedMin, date, exercises, cardio, sleep, energy, difficulty, feeling, programDay, programDetached, editingId, editPlanId]);
+  // Правку перенесли через перемонтирование — не перечитывать её из записи.
+  const keepEditRef = useRef(!!(cf && cf.editingId && editSession && cf.editingId === editSession.id));
 
   // Свёрнутая тренировка висит плашкой над таб-баром на любой вкладке и закрывала
   // низ страницы — например, кнопку «Архив» в «Прогрессе». Сообщаем наверх, что
@@ -68,10 +122,13 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   // восстановлен) — не значит её закончить.
   const guidedActive = !!guided;
   const wasActiveRef = useRef(false);
+  // Закрыли крестиком, не сохранив (черновик на месте) — метку подходов не снимать.
+  const closedUnsavedRef = useRef(false);
   useEffect(() => {
     if (!onWorkoutActive) return;
     if (guidedActive) onWorkoutActive(true);
-    else if (wasActiveRef.current) onWorkoutActive(false);
+    else if (wasActiveRef.current) onWorkoutActive(false, closedUnsavedRef.current);
+    closedUnsavedRef.current = false;
     wasActiveRef.current = guidedActive;
   }, [guidedActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -80,6 +137,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const plan = getPlan(planId);
 
   useEffect(() => {
+    if (keepEditRef.current) { keepEditRef.current = false; return; }
     if (editSession) {
       setEditingId(editSession.id);
       setEditPlanId(editSession.planId || DEFAULT_PLAN_ID);
@@ -87,13 +145,15 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       // Подходы, заметки, секундомер и пометки замены переносим в форму как есть
       // и возвращаем обратно при сохранении (см. carryExerciseExtras).
       const exList = (editSession.exercises || []).map((e) => ({
-        name: e.name, weight: String(e.weight || ''), reps: String(e.reps || ''), sets: String(e.sets || ''),
+        name: e.name, weight: field('w', e.weight), reps: String(e.reps || ''), sets: String(e.sets || ''),
+        orig: { weight: { text: field('w', e.weight), value: e.weight || 0 } },
         ...carryExerciseExtras(e),
       }));
       setExercises(exList);
       const cardioList = (editSession.cardio || []).map((c) => ({
-        name: c.name, distance: String(c.distance || ''), speed: String(c.speed || ''),
+        name: c.name, distance: field('d', c.distance), speed: field('s', c.speed),
         incline: String(c.incline || ''), duration: String(c.duration || ''),
+        orig: { distance: { text: field('d', c.distance), value: c.distance || 0 }, speed: { text: field('s', c.speed), value: c.speed || 0 } },
         ...(c.durationSec != null ? { durationSec: c.durationSec } : {}),
       }));
       setCardio(cardioList);
@@ -185,7 +245,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   const knownNames = useMemo(() => {
     const counts = {};
     (sessions || []).forEach((s) => {
-      s.exercises.forEach((ex) => {
+      (s.exercises || []).forEach((ex) => {
         counts[ex.name] = (counts[ex.name] || 0) + 1;
       });
     });
@@ -210,11 +270,13 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
 
   const handlePickWorkout = (s) => {
     const pickedExercises = (s.exercises || []).map((e) => ({
-      name: e.name, weight: String(e.weight || ''), reps: String(e.reps || ''), sets: String(e.sets || ''),
+      name: e.name, weight: field('w', e.weight), reps: String(e.reps || ''), sets: String(e.sets || ''),
+      orig: { weight: { text: field('w', e.weight), value: e.weight || 0 } },
     }));
     const pickedCardio = (s.cardio || []).map((c) => ({
-      name: c.name, distance: String(c.distance || ''), speed: String(c.speed || ''),
+      name: c.name, distance: field('d', c.distance), speed: field('s', c.speed),
       incline: String(c.incline || ''), duration: String(c.duration || ''),
+      orig: { distance: { text: field('d', c.distance), value: c.distance || 0 }, speed: { text: field('s', c.speed), value: c.speed || 0 } },
       ...(c.durationSec != null ? { durationSec: c.durationSec } : {}),
     }));
     setExercises(pickedExercises.length > 0 ? pickedExercises : [emptyExercise()]);
@@ -248,13 +310,15 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
   // Mini App. Теперь ошибка пробрасывается обратно в гид: он остаётся открытым
   // на шаге «Итог», черновик цел, кнопку можно нажать ещё раз.
   const handleGuidedComplete = async (session) => {
-    const next = [...(sessions || []), session].sort((a, b) => a.date.localeCompare(b.date));
+    // Повтор после неудачной записи приходит с тем же id (GuidedWorkout) — заменяем,
+    // а не дописываем вторую копию.
+    const next = [...(sessions || []).filter((s) => s.id !== session.id), session].sort((a, b) => a.date.localeCompare(b.date));
     await saveSessions(next); // бросит при ошибке — гид покажет сообщение и не закроется
     // «Последний день» двигаем, только если тренировка из того плана, что сейчас
     // в профиле: план могли сменить, пока она шла, — тогда номер дня старого
     // плана сбил бы отсчёт нового.
     if (session.programDay && (session.planId || DEFAULT_PLAN_ID) === profilePlanId) {
-      try { await saveProfile({ ...(profile || {}), lastProgramDay: session.programDay }); } catch (e) { /* не критично */ }
+      try { await saveProfile({ lastProgramDay: session.programDay }); } catch (e) { /* не критично */ }
     }
     remindAboutProtein(session.id, session.date);
     setGuided(null);
@@ -295,8 +359,9 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     const validExercises = exercises
       .filter((e) => e.name.trim())
       .map((e) => ({
-        name: e.name.trim(),
-        weight: Math.max(0, parseFloat(e.weight) || 0),
+        // набранное по-английски — к русскому ключу (i18n.js → exKey)
+        name: exKey(e.name.trim()),
+        weight: back('w', e.weight, e.orig && e.orig.weight),
         reps: Math.max(0, parseInt(e.reps) || 0),
         sets: Math.max(1, parseInt(e.sets) || 1),
         ...carryExerciseExtras(e),
@@ -304,15 +369,15 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     const validCardio = cardio
       .filter((c) => c.name.trim())
       .map((c) => ({
-        name: c.name.trim(),
-        distance: Math.max(0, parseFloat(c.distance) || 0),
-        speed: Math.max(0, parseFloat(c.speed) || 0),
+        name: exKey(c.name.trim()),
+        distance: back('d', c.distance, c.orig && c.orig.distance),
+        speed: back('s', c.speed, c.orig && c.orig.speed),
         incline: Math.max(0, parseFloat(c.incline) || 0),
         duration: Math.max(0, parseInt(c.duration) || 0),
         ...(c.durationSec != null ? { durationSec: Math.max(0, parseInt(c.durationSec) || 0) } : {}),
       }));
     if (validExercises.length === 0 && validCardio.length === 0) {
-      setError('Добавь хотя бы одно упражнение или кардио');
+      setError(tr("Добавь хотя бы одно упражнение или кардио"));
       return;
     }
     setSaving(true);
@@ -345,8 +410,12 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       return;
     }
 
+    // Неудачная запись уже лежит в sessions (и помечена на повтор): повторное
+    // нажатие должно перезаписать её, а не добавить вторую копию — id тот же.
+    if (!pendingIdRef.current) pendingIdRef.current = `${date}-${Date.now()}`;
+    if (carry && carry.form) carry.form.pendingId = pendingIdRef.current;
     const entry = {
-      id: `${date}-${Date.now()}`,
+      id: pendingIdRef.current,
       date,
       exercises: validExercises,
       cardio: validCardio,
@@ -357,7 +426,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       programDay: programDay || null,
       planId,
     };
-    const next = [...(sessions || []), entry].sort((a, b) => a.date.localeCompare(b.date));
+    const next = [...(sessions || []).filter((s) => s.id !== entry.id), entry].sort((a, b) => a.date.localeCompare(b.date));
     try {
       await saveSessions(next);
     } catch (e) {
@@ -369,8 +438,9 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
     if (programDay) {
       // Отметка «последний день программы» некритична — если не доехала,
       // тренировка всё равно сохранена, а следующий день подставится вручную.
-      try { await saveProfile({ ...(profile || {}), lastProgramDay: programDay }); } catch (e) { /* не критично */ }
+      try { await saveProfile({ lastProgramDay: programDay }); } catch (e) { /* не критично */ }
     }
+    pendingIdRef.current = null;
     remindAboutProtein(entry.id, date);
     setSaving(false);
     setExercises([]);
@@ -401,7 +471,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           background: t.POSITIVE_BG, border: `1px solid ${t.POSITIVE}`, borderRadius: 12,
           padding: '11px 14px', marginBottom: 16, fontSize: 13.5, fontWeight: 700, color: t.POSITIVE,
         }}>
-          <Check size={16} /> Тренировка сохранена — смотри во вкладке «Прогресс»
+          <Check size={16} /> {tr("Тренировка сохранена — смотри во вкладке «Прогресс»")}
         </div>
       )}
 
@@ -409,7 +479,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           прятался, а пошаговый режим жёстко сохранял тренировку сегодняшним
           числом — записать плановый день задним числом было невозможно вообще. */}
       <div style={{ marginBottom: planMode ? 14 : 18, minWidth: 0, width: '100%' }}>
-        <Field label="Дата тренировки">
+        <Field label={tr("Дата тренировки")}>
           <DatePicker value={date} onChange={setDate} />
         </Field>
       </div>
@@ -430,7 +500,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
                 setExercises([]);
                 setCardio([]);
               }}
-              aria-label="Отвязать от программы"
+              aria-label={tr("Отвязать от программы")}
               style={{
                 flexShrink: 0, width: 44, height: 44, borderRadius: 10, border: `1px solid ${t.BORDER}`,
                 background: t.BG_INPUT, color: t.TEXT_FAINT, cursor: 'pointer', marginTop: 0,
@@ -449,7 +519,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
               cursor: 'pointer', fontFamily: 'inherit', marginBottom: 14, boxSizing: 'border-box',
             }}
           >
-            <Dumbbell size={14} /> Выбор тренировки
+            <Dumbbell size={14} /> {tr("Выбор тренировки")}
           </button>
         )}
         {showProgramPicker && !programDay && (
@@ -472,14 +542,14 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
               marginBottom: 16, boxShadow: t.GLOW, boxSizing: 'border-box',
             }}
           >
-            <Play size={18} /> Начать тренировку
+            <Play size={18} /> {tr("Начать тренировку")}
           </button>
         )}
       </div>
 
       {planMode && (
         <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, textAlign: 'center', marginBottom: 16, lineHeight: 1.45 }}>
-          Вес, повторы, время и заметки запишешь прямо в тренировке — по завершении она сохранится в «Прогресс».
+          {tr("Вес, повторы, время и заметки запишешь прямо в тренировке — по завершении она сохранится в «Прогресс».")}
         </div>
       )}
 
@@ -490,7 +560,7 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
 
       {!planMode && (<>
       <div style={{ marginBottom: 8, fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-        Упражнения
+        {tr("Упражнения")}
       </div>
       {exercises.map((ex, i) => (
         <ExerciseRow
@@ -513,13 +583,13 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           cursor: 'pointer', marginBottom: 22, marginTop: 4, fontFamily: 'inherit',
         }}
       >
-        <Plus size={15} /> Добавить упражнение
+        <Plus size={15} /> {tr("Добавить упражнение")}
       </button>
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
       <div style={{ marginBottom: 8, fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-        Кардио
+        {tr("Кардио")}
       </div>
       {cardio.map((c, i) => (
         <CardioRow
@@ -541,13 +611,13 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           cursor: 'pointer', marginBottom: 22, marginTop: cardio.length ? 4 : 0, fontFamily: 'inherit',
         }}
       >
-        <Plus size={15} /> Добавить кардио
+        <Plus size={15} /> {tr("Добавить кардио")}
       </button>
 
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <Field label="Сон, часы">
+        <Field label={tr("Сон, часы")}>
           <input
             style={getInputStyle(t)}
             type="number" inputMode="decimal" min="0"
@@ -567,12 +637,12 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
       </div>
 
       <div style={{ marginBottom: 22 }}>
-        <Field label="Самочувствие, заметки">
+        <Field label={tr("Самочувствие, заметки")}>
           <AutoGrowTextarea
             style={{ ...getLabelInputStyle(t), minHeight: 56, fontFamily: 'inherit', lineHeight: 1.4 }}
             value={feeling}
             onChange={(e) => setFeeling(e.target.value)}
-            placeholder="Как прошло, что почувствовал, есть жалобы..."
+            placeholder={tr("Как прошло, что почувствовал, есть жалобы...")}
           />
         </Field>
       </div>
@@ -583,12 +653,12 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           background: t.ACCENT_BG, border: `1px solid ${t.ACCENT}`, borderRadius: 9,
           padding: '9px 12px', marginBottom: 14, fontSize: 12.5, color: t.ACCENT_SOFT, fontWeight: 600,
         }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Pencil size={13} /> Редактирование тренировки</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Pencil size={13} /> {tr("Редактирование тренировки")}</span>
           <button
             onClick={handleCancelEdit}
             style={{ background: 'transparent', border: 'none', color: t.ACCENT_SOFT, cursor: 'pointer', fontSize: 12.5, fontWeight: 600, textDecoration: 'underline' }}
           >
-            Отмена
+            {tr("Отмена")}
           </button>
         </div>
       )}
@@ -607,8 +677,8 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
         }}
       >
         {justSaved
-          ? (editingId ? 'Изменения сохранены ✓' : 'Сохранено ✓')
-          : saving ? 'Сохраняю...' : (editingId ? 'Сохранить изменения' : 'Сохранить тренировку')}
+          ? (editingId ? tr("Изменения сохранены ✓") : tr("Сохранено ✓"))
+          : saving ? tr("Сохраняю...") : (editingId ? tr("Сохранить изменения") : tr("Сохранить тренировку"))}
       </button>
       </>)}
 
@@ -628,8 +698,11 @@ export function WorkoutTab({ sessions, saveSessions, setError, profile, saveProf
           minimized={guidedMin}
           onMinimize={() => setGuidedMin(true)}
           onExpand={() => setGuidedMin(false)}
-          onClose={() => { setGuided(null); setGuidedMin(false); }}
+          onClose={(opts) => { closedUnsavedRef.current = !!(opts && opts.keepDraft); setGuided(null); setGuidedMin(false); }}
+          onDiscard={onWorkoutDiscard}
           onComplete={handleGuidedComplete}
+          onActivity={onWorkoutTouch}
+          resume={!!carried && guided === carried.guided}
         />,
         document.body,
       )}

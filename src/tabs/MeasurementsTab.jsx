@@ -5,10 +5,14 @@ import { todayISO, shiftDate, fmtDateShort } from '../dateUtils.js';
 import { getMonday } from '../gamification.js';
 import { Field, getInputStyle, DatePicker } from './workoutTabHelpers.jsx';
 import { BodyParamsSection } from './BodyParamsSection.jsx';
+import { tr } from '../i18n.js';
+import { U, num, unit, store } from '../units.js';
 
+// Без округления: показ округляет num/U уже в единицах экрана (три замера по
+// 180.0 lb давали среднее 179.9 — округлялось в кг до пересчёта).
 function average(nums) {
   if (!nums.length) return null;
-  return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
 // Время с устройства в момент записи веса, в формате ЧЧ:ММ.
@@ -37,7 +41,8 @@ function TimeMark({ time, size = 11 }) {
 
 function WeightHistoryRow({ m, prevWeight, onDelete }) {
   const t = useTheme();
-  const delta = prevWeight != null && m.weight != null ? Math.round((m.weight - prevWeight) * 10) / 10 : null;
+  // Разница — в единицах экрана (src/units.js), данные в кг.
+  const delta = prevWeight != null && m.weight != null ? Number(num('w', m.weight - prevWeight, 1)) : null;
   const isDown = delta != null && delta < 0;
   const isUp = delta != null && delta > 0;
   const deltaColor = isDown ? t.POSITIVE : isUp ? t.ACCENT_SOFT : t.TEXT_FAINT;
@@ -63,7 +68,7 @@ function WeightHistoryRow({ m, prevWeight, onDelete }) {
             {delta > 0 ? '+' : ''}{delta}
           </span>
         )}
-        <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600 }}>{m.weight} кг</span>
+        <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600 }}>{U('w', m.weight)}</span>
         {onDelete && (
           <button onClick={onDelete} style={{ background: 'transparent', border: 'none', color: t.TEXT_FAINT, cursor: 'pointer', padding: 2, display: 'flex' }}>
             <X size={14} />
@@ -96,7 +101,7 @@ function WeekGroupRow({ weekStart, entries, onDelete }) {
           {rangeLabel}
         </span>
         <span style={{ color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace", fontWeight: 600, fontSize: 13.5 }}>
-          {avg != null ? `${avg} кг` : '—'} <span style={{ color: t.TEXT_FAINT, fontSize: 11.5, fontWeight: 400 }}>сред.</span>
+          {avg != null ? U('w', avg, 1) : '—'} <span style={{ color: t.TEXT_FAINT, fontSize: 11.5, fontWeight: 400 }}>{tr("сред.")}</span>
         </span>
       </button>
       {expanded && (
@@ -108,7 +113,7 @@ function WeekGroupRow({ weekStart, entries, onDelete }) {
             }}>
               <span style={{ color: t.TEXT_FAINT }}>{fmtDateShort(m.date)}<TimeMark time={m.time} size={10.5} /></span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>{m.weight} кг</span>
+                <span style={{ color: t.TEXT_DIM, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>{U('w', m.weight)}</span>
                 {onDelete && (
                   <button
                     onClick={() => onDelete(m.id)}
@@ -179,12 +184,13 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
 
   const handleSave = async () => {
     if (!weight) {
-      setError('Укажи вес');
+      setError(tr("Укажи вес"));
       return;
     }
-    const w = Math.max(0, parseFloat(weight));
+    // Введено в единицах экрана → в данные кг (src/units.js).
+    const w = Math.max(0, store('w', weight));
     if (!w) {
-      setError('Вес должен быть больше 0');
+      setError(tr("Вес должен быть больше 0"));
       return;
     }
     setSaving(true);
@@ -219,7 +225,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
       display: 'flex', gap: 4, padding: 4, marginBottom: 20, borderRadius: 14,
       ...glassCard({ shadow: false }),
     }}>
-      {[{ key: 'weight', label: 'Вес' }, { key: 'body', label: 'Параметры тела' }].map((o) => {
+      {[{ key: 'weight', label: tr("Вес") }, { key: 'body', label: tr("Параметры тела") }].map((o) => {
         const on = section === o.key;
         return (
           <button
@@ -256,13 +262,13 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
       <div data-tour="weight">
         {switcher}
         <div style={{ marginBottom: 18, minWidth: 0, width: '100%' }}>
-          <Field label="Дата замера">
+          <Field label={tr("Дата замера")}>
             <DatePicker value={date} onChange={setDate} />
           </Field>
         </div>
         <div style={{ marginBottom: 22 }}>
-          <Field label="Вес, кг">
-            <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder={latest ? String(latest.weight) : '—'} />
+          <Field label={`${tr('Вес')}, ${unit('w')}`}>
+            <input style={getInputStyle(t)} type="number" inputMode="decimal" min="0" value={weight} onChange={(e) => setWeight(e.target.value)} placeholder={latest ? num('w', latest.weight) : '—'} />
           </Field>
         </div>
         <button
@@ -278,7 +284,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
             transition: 'background 0.2s ease, box-shadow 0.2s ease',
           }}
         >
-          {justSaved ? 'Сохранено ✓' : saving ? 'Сохраняю...' : 'Сохранить вес'}
+          {justSaved ? tr("Сохранено ✓") : saving ? tr("Сохраняю...") : tr("Сохранить вес")}
         </button>
       </div>
 
@@ -286,7 +292,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
         <>
           <div style={{ height: 1, background: t.BORDER, margin: '24px 0 18px' }} />
           <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
-            Средний вес
+            {tr("Средний вес")}
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
             {/* Подписи по числу дней, а не «за неделю / за месяц»: считается
@@ -294,9 +300,9 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
                 календарным неделям с понедельника. Одинаковые слова при разной
                 арифметике давали два несовпадающих числа на одном экране. */}
             {[
-              { label: '7 дней', value: stats.week },
-              { label: '30 дней', value: stats.month },
-              { label: '365 дней', value: stats.year },
+              { label: tr("7 дней"), value: stats.week },
+              { label: tr("30 дней"), value: stats.month },
+              { label: tr("365 дней"), value: stats.year },
             ].map((s) => (
               <div key={s.label} style={{
                 flex: 1, minWidth: 0, ...glassCard({ shadow: false }), borderRadius: 10,
@@ -304,7 +310,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
               }}>
                 <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap' }}>{s.label}</div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: t.TEXT, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>
-                  {s.value != null ? `${s.value}` : '—'}
+                  {s.value != null ? num('w', s.value, 1) : '—'}
                 </div>
               </div>
             ))}
@@ -315,10 +321,10 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
       {sorted.length > 0 && (
         <div style={{ marginTop: 24 }}>
           <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 10 }}>
-            Эта неделя
+            {tr("Эта неделя")}
           </div>
           {currentWeekEntries.length === 0 ? (
-            <div style={{ fontSize: 13, color: t.TEXT_FAINT, marginBottom: 8 }}>Замеров на этой неделе пока нет.</div>
+            <div style={{ fontSize: 13, color: t.TEXT_FAINT, marginBottom: 8 }}>{tr("Замеров на этой неделе пока нет.")}</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               {[...currentWeekEntries].reverse().map((m) => {
@@ -337,7 +343,7 @@ export function MeasurementsTab({ measurements, saveMeasurements, setError, prof
           {pastWeeks.length > 0 && (
             <>
               <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: 22, marginBottom: 10 }}>
-                Прошлые недели
+                {tr("Прошлые недели")}
               </div>
               <div>
                 {pastWeeks.map((w) => (

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
   Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
-  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2,
+  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2, Sparkles,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
@@ -14,7 +14,7 @@ import {
 } from './workoutTabHelpers.jsx';
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
-  insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData,
+  insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData, workoutHasData,
   clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
@@ -23,6 +23,9 @@ import { buildWorkoutSummary } from '../workoutSummary.js';
 import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
 import { ClimbPicker } from '../ClimbPicker.jsx';
+import { tr, exName, exKey, locale } from '../i18n.js';
+// Ввод — в текущей системе единиц; в запись, сводку и гору — метрика (convertLogs).
+import { U, num, unit as unitOf, getUnits, isImperial, toDisp, fromDisp, convertLogs, convertText } from '../units.js';
 
 const REST_SECONDS = 120;
 
@@ -55,6 +58,9 @@ function fmtElapsed(sec) {
 // списка шагов и без plan_id) не читается: живёт он сутки, а сопоставить его
 // номера с шагами другого плана надёжно нельзя.
 const DRAFT_KEY_BASE = 'wt:guided-draft:v3';
+// Идущий отдых через перемонтирование (смена языка или единиц): старый гид
+// оставляет здесь момент окончания, новый продолжает отсчёт (см. resume).
+let restCarry = null;
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 function draftKey(userId) {
@@ -85,7 +91,7 @@ function clearDraft(userId) {
 
 function fmtSavedAt(ts) {
   try {
-    return new Date(ts).toLocaleString('ru-RU', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    return new Date(ts).toLocaleString(locale(), { weekday: 'short', hour: '2-digit', minute: '2-digit' });
   } catch (e) { return ''; }
 }
 
@@ -112,11 +118,14 @@ export function sectorElevationGain(sectors) {
 }
 
 // Единицы целей: дистанция — км, время — минуты, высота — метры.
+// kind — вид величины для системы единиц (src/units.js): цель вводится в ней.
 export const SECTOR_METRICS = {
-  distance:  { label: 'Дистанция', unit: 'км',  goalLabel: 'Цель по дистанции, км',   ph: '3'   },
-  time:      { label: 'Время',     unit: 'мин', goalLabel: 'Цель по времени, мин',    ph: '40'  },
-  elevation: { label: 'Высота',    unit: 'м',   goalLabel: 'Цель по набору высоты, м', ph: '700' },
+  distance:  { label: 'Дистанция', unit: 'км',  kind: 'd', goal: 'Цель по дистанции',     goalLabel: 'Цель по дистанции, км',   ph: '3'   },
+  time:      { label: 'Время',     unit: 'мин',            goal: 'Цель по времени',       goalLabel: 'Цель по времени, мин',    ph: '40'  },
+  elevation: { label: 'Высота',    unit: 'м',   kind: 'h', goal: 'Цель по набору высоты', goalLabel: 'Цель по набору высоты, м', ph: '700' },
 };
+const metricUnit = (M) => (M.kind ? unitOf(M.kind) : tr(M.unit));
+const metricPh = (M, v) => (M.kind ? num(M.kind, v) : v);
 
 // Достигнуто в единицах цели: дистанция — сумма км; время — максимум по нарастающему
 // таймеру дорожки (последнее показание), приведённое к минутам; высота — набор в метрах.
@@ -127,7 +136,9 @@ function sectorAchieved(data) {
     return maxSec / 60; // минуты
   }
   if (data.metric === 'elevation') {
-    return sectorElevationGain(data.sectors); // метры
+    // секторы введены в единицах экрана: высоту считаем из км, показываем в м/ft
+    const km = (data.sectors || []).map((s) => ({ ...s, distance: fromDisp('d', s.distance) || 0 }));
+    return toDisp('h', sectorElevationGain(km));
   }
   return (data.sectors || []).reduce((acc, s) => acc + (parseFloat(s.distance) || 0), 0); // км
 }
@@ -145,7 +156,7 @@ function fmtGoal(n, isElev) { return isElev ? String(Math.round(n)) : trimNum(n)
 
 export function GuidedWorkout({
   dayPlan: dayPlanProp, planId: planIdProp, date: dateProp, userId, records, knownNames = [], history = [],
-  onClose, onComplete, minimized, onMinimize, onExpand,
+  onClose, onComplete, minimized, onMinimize, onExpand, onActivity, onDiscard, resume,
 }) {
   const t = useTheme();
 
@@ -160,7 +171,8 @@ export function GuidedWorkout({
   // сохраняла тренировку задним числом. Ошибки при этом не показывалось.
   const [dayPlan] = useState(() => dayPlanProp);
   const [planId] = useState(() => planIdProp || null);
-  const [workoutDate] = useState(() => dateProp || todayISO());
+  // Дату меняет только восстановление вчерашнего черновика (applyDraft).
+  const [workoutDate, setWorkoutDate] = useState(() => dateProp || todayISO());
 
   // Шаги — состояние, а не производная от плана: по ходу тренировки их можно
   // менять (добавить упражнение, заменить). У каждого шага постоянный id, и все
@@ -237,8 +249,11 @@ export function GuidedWorkout({
     // день: черновик вчерашнего дня 5 предлагался как «продолжить» сегодняшний,
     // причём вместе с вчерашней меткой старта — и в durationSec уезжала
     // тренировка на много часов. План (1.1.0) — потому что «день 5» в разных
-    // планах — разные тренировки.
-    if (d && dayPlan && draftMatches(d, { planId, day: dayPlan.day, date: workoutDate })) {
+    // планах — разные тренировки. Черновик того же дня плана, но ВЧЕРАШНИЙ
+    // (тренировку не сохранили, наутро напомнил бот) тоже предлагаем: он
+    // восстанавливается со своей датой и своим временем (applyDraft), иначе
+    // автосейв через полсекунды затёр бы его пустой тренировкой.
+    if (d && dayPlan && draftMatches(d, { planId, day: dayPlan.day, date: workoutDate }, { earlier: true })) {
       draftRef.current = d;
       return true;
     }
@@ -249,11 +264,15 @@ export function GuidedWorkout({
   const applyDraft = () => {
     const d = draftRef.current;
     if (d) {
+      const earlier = !!d.date && d.date < workoutDate;
+      if (earlier) setWorkoutDate(d.date);
       setSteps(d.steps);
-      setExLogs(d.exLogs || {});
+      // Черновик мог быть записан в другой системе единиц — пересчитываем в текущую.
+      const conv = convertLogs({ exLogs: d.exLogs || {}, cardioLogs: d.cardioLogs || {}, sectorLogs: d.sectorLogs || {} }, d.units || 'metric', getUnits());
+      setExLogs(conv.exLogs);
       setExNotes(d.exNotes || {});
-      setCardioLogs(d.cardioLogs || {});
-      setSectorLogs(d.sectorLogs || {});
+      setCardioLogs(conv.cardioLogs);
+      setSectorLogs(conv.sectorLogs);
       // Секундомер текущего упражнения после короткого перерыва идёт дальше,
       // после долгого — с момента записи черновика (см. restoreTimers).
       setExTimers(restoreTimers(d.exTimers || {}, d.stepId, d.savedAt));
@@ -271,7 +290,9 @@ export function GuidedWorkout({
       // считаем от старта, как раньше. Больше шести часов — тот же забытый черновик.
       let clock = d.workoutClock && typeof d.workoutClock === 'object'
         ? d.workoutClock : { acc: 0, since: startedAtRef.current };
-      if (swElapsed(clock, Date.now()) * 1000 > MAX_RESUMABLE_MS) clock = { acc: 0, since: Date.now() };
+      // Вчерашняя — время, как было при записи черновика (дальше часы пойдут с него).
+      if (earlier) clock = { acc: swElapsed(clock, d.savedAt), since: null };
+      else if (swElapsed(clock, Date.now()) * 1000 > MAX_RESUMABLE_MS) clock = { acc: 0, since: Date.now() };
       setWorkoutClock(clock);
       const idx = d.steps.findIndex((s) => s.id === d.stepId);
       setStepIdx(idx >= 0 ? idx : 0);
@@ -283,7 +304,14 @@ export function GuidedWorkout({
     clearDraft(userId);
     draftRef.current = null;
     setRestoreOffer(false);
+    if (onDiscard) onDiscard();
   };
+
+  // Вкладку перемонтировали посреди тренировки (сменили язык или единицы) —
+  // продолжаем черновик сразу, без вопроса (WorkoutTab: carryGuided).
+  useLayoutEffect(() => {
+    if (resume && draftRef.current) applyDraft();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Таймер отдыха ----
   // Отсчёт по МЕТКЕ времени окончания (restEndRef), а не по «тиканью» setInterval:
@@ -434,23 +462,49 @@ export function GuidedWorkout({
     cancelBotAlert();
     try { audioRef.current && audioRef.current.close(); } catch (e) { /* no-op */ }
   }, [cancelBotAlert]);
+  // Идущий отдых оставляем при размонтировании: бот-уведомление старый гид
+  // отменит, новый (resume) поставит своё на оставшееся время.
+  useEffect(() => () => {
+    restCarry = restActiveRef.current ? { userId, end: restEndRef.current } : null;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const rc = restCarry;
+    restCarry = null;
+    if (!resume || !rc || rc.userId !== userId) return;
+    const left = Math.round((rc.end - Date.now()) / 1000);
+    if (left < 2) return;
+    restEndRef.current = rc.end;
+    restActiveRef.current = true;
+    setRestDone(false);
+    setRestActive(true);
+    setRestRemaining(left);
+    scheduleBotAlert(left);
+    intervalRef.current = setInterval(() => { tickRef.current(); }, 500);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- Автосейв черновика ----
   // Актуальный снимок состояния держим в ref, чтобы записать его синхронно,
   // когда приложение уходит в фон (в этот момент React уже может не успеть отработать).
   const snapshotRef = useRef(null);
+  // Записи — в системе единиц, с которой гид открыт (при смене App его перемонтирует).
+  const unitsRef = useRef(getUnits());
   snapshotRef.current = {
     planId, day: dayPlan && dayPlan.day, title: dayPlan && dayPlan.title, date: workoutDate,
     steps, stepId: steps[stepIdx] ? steps[stepIdx].id : null,
     exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary,
     startedAt: startedAtRef.current,
     workoutClock,
+    units: unitsRef.current,
   };
 
   useEffect(() => {
     if (restoreOffer || saving) return undefined; // не затираем черновик до решения пользователя
     const id = setTimeout(() => {
       if (writeDraft(userId, snapshotRef.current)) setDraftSavedAt(Date.now());
+      // Любое изменение черновика — действие (App прореживает до раза в 5 минут).
+      // Напоминание о несохранённой тренировке — только если записан хоть один
+      // подход: открыть тренировку и выйти — не повод писать.
+      if (onActivity) onActivity(workoutHasData(snapshotRef.current));
     }, 400);
     return () => clearTimeout(id);
   }, [restoreOffer, saving, userId, steps, stepIdx, exLogs, cardioLogs, sectorLogs, exNotes, exTimers, cooldownDone, cooldownPick, summary, workoutClock]);
@@ -583,7 +637,7 @@ export function GuidedWorkout({
     setSheet(null);
     // С финишной дорожки новое упражнение встаёт на текущее место и сразу
     // открывается. С упражнения — идёт следующим, текущее доделываешь.
-    if (at !== stepIdx) showToast(`Следующим: ${added.name}`);
+    if (at !== stepIdx) showToast(tr('Следующим: {0}', exName(added.name)));
   };
 
   // Замена / правка подходов и повторов. Что будет с уже записанными подходами,
@@ -630,9 +684,13 @@ export function GuidedWorkout({
     // Сборка записи живёт в guidedSteps.js (там же её тесты): упражнения с
     // подходами, заметками, секундомером и пометками замены/добавления,
     // кардио и секторы, итог дня.
+    const m = convertLogs({ exLogs, cardioLogs, sectorLogs }, getUnits()); // в запись — метрика
     const session = buildGuidedSession({
-      steps, exLogs, exNotes, exTimers, cardioLogs, sectorLogs, summary,
+      steps, exLogs: m.exLogs, exNotes, exTimers, cardioLogs: m.cardioLogs, sectorLogs: m.sectorLogs, summary,
       workoutDate, dayPlan, planId, startedAt: startedAtRef.current, now: Date.now(),
+      // id от старта тренировки: повтор после неудачной записи заменит ту же
+      // запись, а не добавит вторую (раньше id строился от момента нажатия).
+      id: `${workoutDate}-${startedAtRef.current}`,
       // Время тренировки — по часам: на «Итоге» они стоят, поэтому заполнение
       // итога в длительность не входит.
       durationSec: swElapsed(clockRef.current, Date.now()),
@@ -653,7 +711,7 @@ export function GuidedWorkout({
       clearDraft(userId);
     } catch (e) {
       setSaving(false);
-      setSaveError('Не удалось сохранить — проверь связь и нажми ещё раз. Всё введённое на месте.');
+      setSaveError(tr('Не удалось сохранить — проверь связь и нажми ещё раз. Всё введённое на месте.'));
     }
   };
 
@@ -704,9 +762,9 @@ export function GuidedWorkout({
 
   const progressPct = Math.round(((stepIdx + 1) / steps.length) * 100);
   const shortNameOf = (st) => (!st ? null
-    : st.kind === 'exercise' ? st.name
-    : st.kind === 'summary' ? 'Итог тренировки'
-    : (st.title || st.name || 'Тренировка'));
+    : st.kind === 'exercise' ? exName(st.name)
+    : st.kind === 'summary' ? tr('Итог тренировки')
+    : (st.title || st.name ? tr(st.title || st.name) : tr('Тренировка')));
   const stepShort = shortNameOf(step);
   // Что будет после текущего шага — показываем прямо на упражнении, чтобы
   // не гадать, сколько ещё осталось и к чему готовиться.
@@ -717,11 +775,13 @@ export function GuidedWorkout({
 
   // Секторы для «Горы» на итоговом экране: собираем со всех секторных шагов
   // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
+  // Для горы, сводки и кардио-итога — записи в метрике (ввод — в единицах экрана).
+  const metricLogs = convertLogs({ exLogs, cardioLogs, sectorLogs }, getUnits());
   const mountainSectors = [];
   let mountainClimb = null;
   steps.forEach((s) => {
     if (s.kind !== 'sectors') return;
-    const data = sectorLogs[s.id];
+    const data = metricLogs.sectorLogs[s.id];
     if (data && data.climb && !mountainClimb) mountainClimb = data.climb;
     (data && data.sectors ? data.sectors : []).forEach((sec) => {
       mountainSectors.push({
@@ -736,7 +796,7 @@ export function GuidedWorkout({
   // Сводка по упражнениям для итога: только на шаге «Итог», по введённым подходам.
   const exerciseSummary = step.kind === 'summary'
     ? buildWorkoutSummary({
-      exercises: steps.filter((s) => s.kind === 'exercise').map((s) => ({ name: s.name, sets: exLogs[s.id] })),
+      exercises: steps.filter((s) => s.kind === 'exercise').map((s) => ({ name: s.name, sets: metricLogs.exLogs[s.id] })),
       history, records, current: { planId, day: dayPlan && dayPlan.day },
     })
     : null;
@@ -747,13 +807,13 @@ export function GuidedWorkout({
   const cardioResults = step.kind !== 'summary' ? [] : steps
     .filter((s) => s.kind === 'cardio' || s.kind === 'pool')
     .map((s) => {
-      const c = cardioLogs[s.id] || {};
+      const c = metricLogs.cardioLogs[s.id] || {};
       const distance = parseFloat(c.distance) || 0;
       const incline = parseFloat(c.incline) || 0;
       const duration = parseInt(c.duration, 10) || 0;
       if (distance <= 0 && duration <= 0) return null;
       const title = s.title || s.name || '';
-      const label = s.finisher ? 'Кардио-финиш' : /разминк/i.test(title) ? 'Разминка' : s.kind === 'pool' ? 'Бассейн' : title;
+      const label = s.finisher ? tr('Кардио-финиш') : /разминк/i.test(title) ? tr('Разминка') : s.kind === 'pool' ? tr('Бассейн') : tr(title);
       return {
         key: s.id, label, distance, duration,
         gainM: s.finisher && distance > 0 && incline > 0 ? Math.round(distance * incline * 10) : null,
@@ -794,7 +854,7 @@ export function GuidedWorkout({
               fontSize: 10, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',
               letterSpacing: '0.09em', fontFamily: t.FONT_MONO,
             }}>
-              Тренировка · {fmtElapsed(elapsed)}{restActive ? ` · отдых ${fmtClock(restRemaining)}` : ''}
+              {tr("Тренировка ·")} {fmtElapsed(elapsed)}{restActive ? tr(" · отдых {0}", fmtClock(restRemaining)) : ''}
             </div>
             <div style={{
               fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginTop: 1,
@@ -807,7 +867,7 @@ export function GuidedWorkout({
             flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4,
             fontSize: 11.5, fontWeight: 700, color: t.ACCENT_SOFT,
           }}>
-            <ChevronUp size={17} /> Развернуть
+            <ChevronUp size={17} /> {tr("Развернуть")}
           </span>
         </div>
       </div>
@@ -869,7 +929,7 @@ export function GuidedWorkout({
               letterSpacing: '0.1em', fontFamily: t.FONT_MONO,
               display: 'flex', alignItems: 'center', gap: 8,
             }}>
-              <span>Шаг {stepIdx + 1} из {steps.length}</span>
+              <span>{tr("Шаг")} {stepIdx + 1} {tr("из")} {steps.length}</span>
               <span style={{ color: t.TEXT_FAINT }}>·</span>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: t.TEXT_DIM }}>
                 <Timer size={11} />{fmtElapsed(elapsed)}
@@ -879,15 +939,15 @@ export function GuidedWorkout({
               fontSize: 17, fontWeight: 700, color: t.TEXT, marginTop: 3,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
-              {dayPlan.title}
+              {tr(dayPlan.title)}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             {onMinimize && (
               <button
                 onClick={onMinimize}
-                aria-label="Свернуть тренировку"
-                title="Свернуть — тренировка не закроется"
+                aria-label={tr("Свернуть тренировку")}
+                title={tr("Свернуть — тренировка не закроется")}
                 style={{
                   width: 40, height: 40, borderRadius: 11, border: `1px solid ${t.BORDER}`,
                   background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
@@ -898,8 +958,8 @@ export function GuidedWorkout({
               </button>
             )}
             <button
-              onClick={() => { clearTimer(); cancelBotAlert(); onClose(); }}
-              aria-label="Закрыть"
+              onClick={() => { clearTimer(); cancelBotAlert(); onClose({ keepDraft: true }); }}
+              aria-label={tr("Закрыть")}
               style={{
                 width: 40, height: 40, borderRadius: 11, border: `1px solid ${t.BORDER}`,
                 background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
@@ -918,7 +978,7 @@ export function GuidedWorkout({
             maxWidth: 480, margin: '7px auto 0', fontSize: 10, color: t.TEXT_FAINT,
             fontFamily: t.FONT_MONO, display: 'flex', alignItems: 'center', gap: 5,
           }}>
-            <Check size={11} /> черновик сохранён на устройстве
+            <Check size={11} /> {tr("черновик сохранён на устройстве")}
           </div>
         )}
       </div>
@@ -968,7 +1028,7 @@ export function GuidedWorkout({
               <CardioStep step={step} value={cardioLogs[stepId] || {}} onChange={setCardioField} />
               {/* С финишной дорожки тоже можно добавить упражнение: встанет перед ней. */}
               {canAddExerciseAt(step) && (
-                <AddExerciseButton onClick={() => setSheet({ mode: 'add' })} label="Ещё упражнение перед дорожкой" />
+                <AddExerciseButton onClick={() => setSheet({ mode: 'add' })} label={tr("Ещё упражнение перед дорожкой")} />
               )}
             </>
           )}
@@ -999,7 +1059,7 @@ export function GuidedWorkout({
               color: stepIdx === 0 ? t.TEXT_FAINT : t.TEXT_DIM,
               opacity: stepIdx === 0 ? 0.5 : 1, cursor: stepIdx === 0 ? 'default' : 'pointer', padding: 0,
             }}
-            aria-label="Назад"
+            aria-label={tr("Назад")}
           >
             <ChevronLeft size={20} />
           </button>
@@ -1011,14 +1071,14 @@ export function GuidedWorkout({
             const items = [];
             if (step.kind === 'exercise' || restActive) {
               items.push(restActive
-                ? { key: 'rest', icon: Timer, label: 'Пропустить отдых', hint: `осталось ${fmtClock(restRemaining)}`, onClick: skipRest }
-                : { key: 'rest', icon: Timer, label: 'Отдых 2:00', hint: 'сигнал в конце, звук и в наушники', onClick: () => startRest() });
+                ? { key: 'rest', icon: Timer, label: tr('Пропустить отдых'), hint: tr('осталось {0}', fmtClock(restRemaining)), onClick: skipRest }
+                : { key: 'rest', icon: Timer, label: tr('Отдых 2:00'), hint: tr('сигнал в конце, звук и в наушники'), onClick: () => startRest() });
             }
             if (step.kind === 'exercise') {
-              items.push({ key: 'edit', icon: Shuffle, label: 'Заменить упражнение', hint: 'или подходы и повторы', onClick: () => setSheet({ mode: 'edit', stepId }) });
+              items.push({ key: 'edit', icon: Shuffle, label: tr('Заменить упражнение'), hint: tr('или подходы и повторы'), onClick: () => setSheet({ mode: 'edit', stepId }) });
             }
             if (step.kind === 'exercise' || canAddExerciseAt(step)) {
-              items.push({ key: 'add', icon: Plus, label: 'Добавить упражнение', hint: step.finisher ? 'встанет перед дорожкой' : 'встанет следующим', onClick: () => setSheet({ mode: 'add' }) });
+              items.push({ key: 'add', icon: Plus, label: tr('Добавить упражнение'), hint: step.finisher ? tr('встанет перед дорожкой') : tr('встанет следующим'), onClick: () => setSheet({ mode: 'add' }) });
             }
             if (items.length === 0 && !restDone) return null;
             const toggle = () => {
@@ -1030,7 +1090,7 @@ export function GuidedWorkout({
               <div style={{ position: 'relative', flex: '0 0 auto', display: 'flex' }}>
                 <button
                   onClick={toggle}
-                  aria-label={restActive ? `Отдых, осталось ${fmtClock(restRemaining)}` : 'Ещё: отдых, заменить, добавить'}
+                  aria-label={restActive ? tr("Отдых, осталось {0}", fmtClock(restRemaining)) : tr("Ещё: отдых, заменить, добавить")}
                   aria-expanded={menuOpen}
                   className={restDone ? 'rest-done-flash' : ''}
                   style={{
@@ -1100,9 +1160,9 @@ export function GuidedWorkout({
               const target = parseFloat(secData && secData.target) || 0;
               const mKey = (secData && secData.metric) || 'distance';
               const isElevGoal = mKey === 'elevation';
-              const unit = (SECTOR_METRICS[mKey] || SECTOR_METRICS.distance).unit;
-              if (target <= 0) shortLabel = 'Цель не задана — дальше?';
-              else shortLabel = `Осталось ${fmtGoal(Math.max(0, target - sectorAchieved(secData)), isElevGoal)} ${unit}`;
+              const goalUnit = metricUnit(SECTOR_METRICS[mKey] || SECTOR_METRICS.distance);
+              if (target <= 0) shortLabel = tr('Цель не задана — дальше?');
+              else shortLabel = tr('Осталось {0} {1}', fmtGoal(Math.max(0, target - sectorAchieved(secData)), isElevGoal), goalUnit);
             }
             const armed = goalShort && confirmEarly;
             const disabled = saving || leaving !== 0;
@@ -1132,10 +1192,10 @@ export function GuidedWorkout({
                   transition: 'background 0.25s ease, box-shadow 0.25s ease',
                 }}
               >
-                {saving ? 'Сохраняю…'
-                  : armed ? (isLast ? <><Check size={19} /> Всё равно завершить</> : <>Всё равно дальше <ChevronRight size={19} /></>)
+                {saving ? tr("Сохраняю…")
+                  : armed ? (isLast ? <><Check size={19} /> {tr("Всё равно завершить")}</> : <>{tr("Всё равно дальше")} <ChevronRight size={19} /></>)
                     : goalShort ? shortLabel
-                      : isLast ? <><Check size={19} /> Завершить и сохранить</> : <>Дальше <ChevronRight size={19} /></>}
+                      : isLast ? <><Check size={19} /> {tr("Завершить и сохранить")}</> : <>{tr("Дальше")} <ChevronRight size={19} /></>}
               </button>
             );
           })()}
@@ -1167,7 +1227,7 @@ export function GuidedWorkout({
           step={sheetStep}
           log={sheetStep ? exLogs[sheetStep.id] : null}
           knownNames={knownNames}
-          addHint={step.finisher ? 'Встанет перед финишной дорожкой' : 'Встанет следующим после текущего'}
+          addHint={step.finisher ? tr("Встанет перед финишной дорожкой") : tr("Встанет следующим после текущего")}
           onClose={() => setSheet(null)}
           onAdd={applyAdd}
           onSave={(vals) => applyEdit(sheetStep.id, vals)}
@@ -1183,7 +1243,7 @@ export function GuidedWorkout({
   );
 }
 
-function AddExerciseButton({ onClick, label = 'Добавить упражнение' }) {
+function AddExerciseButton({ onClick, label = tr('Добавить упражнение') }) {
   const t = useTheme();
   return (
     <button
@@ -1214,7 +1274,8 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
   const [armed, setArmed] = useState(false);
   const [armedDelete, setArmedDelete] = useState(false);
 
-  const trimmed = name.trim();
+  // Набрали по-английски («Plank») — в данные русский ключ (i18n.js → exKey).
+  const trimmed = exKey(name.trim());
   const setsNum = clampSets(sets);
   const effect = !isAdd ? planLogAfterEdit(step, log, { name: trimmed || step.name, sets: setsNum }) : null;
   const losesData = !!(effect && effect.losesData);
@@ -1233,10 +1294,10 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
 
   const stepSets = (d) => setSets(String(clampSets(setsNum + d)));
 
-  const title = isAdd ? 'Добавить упражнение' : 'Заменить или изменить';
-  const submitLabel = isAdd ? 'Добавить'
-    : armed ? (renamed ? 'Заменить и очистить подходы' : 'Убрать заполненные подходы')
-      : renamed ? 'Заменить' : 'Сохранить';
+  const title = isAdd ? tr('Добавить упражнение') : tr('Заменить или изменить');
+  const submitLabel = isAdd ? tr('Добавить')
+    : armed ? (renamed ? tr('Заменить и очистить подходы') : tr('Убрать заполненные подходы'))
+      : renamed ? tr('Заменить') : tr('Сохранить');
 
   return (
     <div
@@ -1263,13 +1324,13 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
             <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: t.TEXT, lineHeight: 1.2 }}>{title}</h3>
             <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, marginTop: 4, lineHeight: 1.4 }}>
               {isAdd ? addHint
-                : step.replacedFrom ? `По плану: ${step.replacedFrom}`
-                  : step.added ? 'Добавлено в этой тренировке' : 'Упражнение из плана'}
+                : step.replacedFrom ? tr("По плану: {0}", exName(step.replacedFrom))
+                  : step.added ? tr("Добавлено в этой тренировке") : tr("Упражнение из плана")}
             </div>
           </div>
           <button
             onClick={onClose}
-            aria-label="Закрыть"
+            aria-label={tr("Закрыть")}
             style={{
               flexShrink: 0, width: 34, height: 34, borderRadius: 10, border: `1px solid ${t.BORDER}`,
               background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
@@ -1285,17 +1346,17 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
             value={name}
             onChange={setName}
             knownNames={knownNames}
-            label="Упражнение"
-            placeholder={isAdd ? 'Например, Бабочка' : step.name}
+            label={tr("Упражнение")}
+            placeholder={isAdd ? tr("Например, Бабочка") : exName(step.name)}
           />
         </div>
 
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
-          <Field label="Подходы">
+          <Field label={tr("Подходы")}>
             <div style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
               <button
                 onClick={() => stepSets(-1)}
-                aria-label="Меньше подходов"
+                aria-label={tr("Меньше подходов")}
                 disabled={setsNum <= 1}
                 style={{
                   flexShrink: 0, width: 42, borderRadius: 12, border: `1px solid ${t.BORDER}`,
@@ -1314,7 +1375,7 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
               />
               <button
                 onClick={() => stepSets(1)}
-                aria-label="Больше подходов"
+                aria-label={tr("Больше подходов")}
                 disabled={setsNum >= MAX_SETS}
                 style={{
                   flexShrink: 0, width: 42, borderRadius: 12, border: `1px solid ${t.BORDER}`,
@@ -1326,7 +1387,7 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
               </button>
             </div>
           </Field>
-          <Field label="Повторы (цель)">
+          <Field label={tr("Повторы (цель)")}>
             <input
               style={getLabelInputStyle(t)}
               type="text" inputMode="text"
@@ -1343,8 +1404,8 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
             background: t.ACCENT_BG, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 10, padding: '9px 12px',
           }}>
             {renamed
-              ? 'В этом упражнении уже есть записанные подходы — к новому упражнению они не относятся и будут очищены. Заметка и секундомер останутся.'
-              : 'Последние подходы уже заполнены — при уменьшении числа подходов они пропадут.'}
+              ? tr("В этом упражнении уже есть записанные подходы — к новому упражнению они не относятся и будут очищены. Заметка и секундомер останутся.")
+              : tr("Последние подходы уже заполнены — при уменьшении числа подходов они пропадут.")}
           </div>
         )}
 
@@ -1375,7 +1436,7 @@ function ExerciseSheet({ mode, step, log, knownNames, addHint, onClose, onAdd, o
             }}
           >
             <Trash2 size={15} />
-            {armedDelete ? 'Удалить вместе с подходами' : 'Убрать из тренировки'}
+            {armedDelete ? tr("Удалить вместе с подходами") : tr("Убрать из тренировки")}
           </button>
         )}
       </div>
@@ -1401,11 +1462,10 @@ function RestoreOverlay({ draft, onRestore, onDrop }) {
           }}>
             <RotateCcw size={16} />
           </span>
-          <div style={{ fontSize: 16.5, fontWeight: 700, color: t.TEXT }}>Есть незавершённая тренировка</div>
+          <div style={{ fontSize: 16.5, fontWeight: 700, color: t.TEXT }}>{tr("Есть незавершённая тренировка")}</div>
         </div>
         <div style={{ fontSize: 13.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 16 }}>
-          {draft.title ? `«${draft.title}» · ` : ''}черновик от {fmtSavedAt(draft.savedAt)}.
-          Можно продолжить с того шага, где остановился, — все подходы и заметки на месте.
+          {draft.title ? `«${tr(draft.title)}» · ` : ''}{tr("черновик от")} {fmtSavedAt(draft.savedAt)}{tr(". Можно продолжить с того шага, где остановился, — все подходы и заметки на месте.")}
         </div>
         <button
           onClick={onRestore}
@@ -1415,7 +1475,7 @@ function RestoreOverlay({ draft, onRestore, onDrop }) {
             cursor: 'pointer', fontFamily: 'inherit', boxShadow: t.GLOW,
           }}
         >
-          Продолжить тренировку
+          {tr("Продолжить тренировку")}
         </button>
         <button
           onClick={onDrop}
@@ -1425,7 +1485,7 @@ function RestoreOverlay({ draft, onRestore, onDrop }) {
             cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
-          Начать заново
+          {tr("Начать заново")}
         </button>
       </div>
     </div>
@@ -1444,12 +1504,12 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName, action }) {
           }}>{Icon && <Icon size={15} />}</span>
         )}
         <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 20, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em', lineHeight: 1.15 }}>
-          {name}
+          {tr(name)}
         </h2>
         {action}
       </div>
       {subtitle && (
-        <div style={{ fontSize: 13, color: t.TEXT_FAINT, paddingLeft: 36 }}>{subtitle}</div>
+        <div style={{ fontSize: 13, color: t.TEXT_FAINT, paddingLeft: 36 }}>{tr(subtitle)}</div>
       )}
     </div>
   );
@@ -1542,9 +1602,9 @@ function ExerciseStep({
   // Текст рекорда: вес / повторы / секунды в зависимости от типа упражнения.
   let recordText = null;
   if (record) {
-    if (record.weight) recordText = `${record.weight} кг`;
-    else if (record.metric === 'sec') recordText = `${record.value} сек`;
-    else if (record.metric === 'reps') recordText = `${record.value} повт`;
+    if (record.weight) recordText = U('w', record.weight);
+    else if (record.metric === 'sec') recordText = tr('{0} сек', record.value);
+    else if (record.metric === 'reps') recordText = tr('{0} повт', record.value);
   }
 
   const smallBtn = (disabled) => ({
@@ -1571,8 +1631,8 @@ function ExerciseStep({
     fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
   };
   const keep = { flex: '1 0 auto', minWidth: 'auto' };
-  const goalLine = `Цель: ${fmtTargetReps(step.targetReps, timed)} · ${sets.length} подх`;
-  const recordLine = recordText ? `Рекорд ${recordText}` : 'Без рекорда';
+  const goalLine = tr('Цель: {0} · {1} подх', fmtTargetReps(step.targetReps, timed), sets.length);
+  const recordLine = recordText ? tr('Рекорд {0}', recordText) : tr('Без рекорда');
   const ellipsis = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
   const afterNext = Math.max(0, allSteps.length - currentIdx - 2);
 
@@ -1581,7 +1641,7 @@ function ExerciseStep({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <MuscleBadge name={step.name} size={26} />
         <FitLine
-          text={step.name}
+          text={exName(step.name)}
           style={{ margin: 0, flex: 1, minWidth: 0, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em', lineHeight: 1.25 }}
         />
       </div>
@@ -1613,7 +1673,7 @@ function ExerciseStep({
                 }}
               >
                 <HelpCircle size={13} style={{ flexShrink: 0 }} />
-                <span>Как выполнять</span>
+                <span>{tr("Как выполнять")}</span>
               </button>
             )}
             {nextName && (
@@ -1629,7 +1689,7 @@ function ExerciseStep({
                   ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
                   : <ChevronRight size={12} style={{ flexShrink: 0 }} />}
                 {/* Название обрезаем многоточием: полное — в развёрнутом списке. */}
-                <span style={ellipsis}>Далее: {nextName}</span>
+                <span style={ellipsis}>{tr("Далее:")} {nextName}</span>
                 {afterNext > 0 && (
                   <span style={{ flexShrink: 0, opacity: 0.8 }}>+{afterNext}</span>
                 )}
@@ -1644,7 +1704,7 @@ function ExerciseStep({
           fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45, marginBottom: 12,
           background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10, padding: '9px 12px',
         }}>
-          {planNotes.tip}
+          {tr(planNotes.tip)}
         </div>
       )}
 
@@ -1659,7 +1719,7 @@ function ExerciseStep({
             fontSize: 10, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
             letterSpacing: '0.1em', fontFamily: t.FONT_MONO, margin: '0 6px 6px',
           }}>
-            Тренировка · шаг {currentIdx + 1} из {allSteps.length}
+            {tr("Тренировка · шаг")} {currentIdx + 1} {tr("из")} {allSteps.length}
           </div>
           {allSteps.map((rs) => {
             const isCur = rs.idx === currentIdx;
@@ -1711,7 +1771,7 @@ function ExerciseStep({
           {!running && timerSec > 0 && (
             <button
               onClick={onTimerReset}
-              aria-label="Сбросить секундомер"
+              aria-label={tr("Сбросить секундомер")}
               style={{ ...iconBtn, border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_FAINT }}
             >
               <RotateCcw size={15} />
@@ -1719,7 +1779,7 @@ function ExerciseStep({
           )}
           <button
             onClick={onTimerToggle}
-            aria-label={running ? 'Пауза секундомера' : 'Запустить секундомер'}
+            aria-label={running ? tr("Пауза секундомера") : tr("Запустить секундомер")}
             style={{
               ...iconBtn,
               border: running ? `1px solid ${t.ACCENT_BORDER}` : 'none',
@@ -1743,11 +1803,11 @@ function ExerciseStep({
                 fontSize: 11, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
                 letterSpacing: '0.08em', fontFamily: t.FONT_MONO, marginBottom: 10,
               }}>
-                Подход {si + 1}
+                {tr("Подход")} {si + 1}
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                 {!weightless && (
-                  <Field label="Вес, кг">
+                  <Field label={`${tr('Вес')}, ${unitOf('w')}`}>
                     <input
                       style={getInputStyle(t)}
                       type="number" inputMode="decimal" min="0"
@@ -1757,7 +1817,7 @@ function ExerciseStep({
                     />
                   </Field>
                 )}
-                <Field label={timed ? 'Секунды' : 'Повторы'}>
+                <Field label={timed ? tr("Секунды") : tr("Повторы")}>
                   <input
                     style={getInputStyle(t)}
                     type="number" inputMode="numeric" min="0"
@@ -1777,22 +1837,22 @@ function ExerciseStep({
       {onSetCount && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           <button onClick={() => onSetCount(-1)} disabled={!lastSetEmpty} style={smallBtn(!lastSetEmpty)}>
-            <Minus size={14} /> Подход
+            <Minus size={14} /> {tr("Подход")}
           </button>
           <button onClick={() => onSetCount(1)} disabled={sets.length >= MAX_SETS} style={smallBtn(sets.length >= MAX_SETS)}>
-            <Plus size={14} /> Подход
+            <Plus size={14} /> {tr("Подход")}
           </button>
         </div>
       )}
 
       {/* Самочувствие / заметка по упражнению — поле растёт вместе с текстом */}
       <div style={{ marginTop: 4 }}>
-        <Field label="Самочувствие · заметка">
+        <Field label={tr("Самочувствие · заметка")}>
           <AutoGrowTextarea
             style={{ ...getLabelInputStyle(t), minHeight: 52, fontFamily: 'inherit', lineHeight: 1.4 }}
             value={note}
             onChange={(e) => onNote(e.target.value)}
-            placeholder="Как ощущения, техника, боль/дискомфорт…"
+            placeholder={tr("Как ощущения, техника, боль/дискомфорт…")}
           />
         </Field>
       </div>
@@ -1813,17 +1873,14 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
         fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.55, marginBottom: 14,
         background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 12, padding: '11px 13px',
       }}>
-        Записывать ничего не нужно — просто отметь, что сделал. Тянем на выдохе, спокойно,
-        до ощущения натяжения, а не боли. Никаких пружинящих рывков.
-        Если упражнение не подходит (нет места, ноет сустав) — жми «заменить»,
-        подставится другой вариант на ту же зону.
+        {tr("Записывать ничего не нужно — просто отметь, что сделал. Тянем на выдохе, спокойно, до ощущения натяжения, а не боли. Никаких пружинящих рывков. Если упражнение не подходит (нет места, ноет сустав) — жми «заменить», подставится другой вариант на ту же зону.")}
       </div>
 
       <div style={{
         fontSize: 11, fontWeight: 700, color: doneCount === items.length ? t.POSITIVE : t.TEXT_FAINT,
         textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: t.FONT_MONO, marginBottom: 10,
       }}>
-        Сделано {doneCount} из {items.length}
+        {tr("Сделано")} {doneCount} {tr("из")} {items.length}
       </div>
 
       {items.map((it, i) => {
@@ -1866,15 +1923,15 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
                     textDecoration: isDone ? 'line-through' : 'none',
                     textDecorationColor: t.TEXT_FAINT,
                   }}>
-                    {cur.name}
+                    {tr(cur.name)}
                   </div>
                   <div style={{
                     fontSize: 12, fontWeight: 700, color: isDone ? t.POSITIVE : t.ACCENT_SOFT,
                     fontFamily: t.FONT_MONO, marginBottom: 6,
                   }}>
-                    {cur.dose}
+                    {tr(cur.dose)}
                   </div>
-                  <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45 }}>{cur.hint}</div>
+                  <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45 }}>{tr(cur.hint)}</div>
                 </div>
               </div>
             </button>
@@ -1900,7 +1957,7 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
                   }}
                 >
                   <Shuffle size={13} />
-                  заменить
+                  {tr("заменить")}
                 </button>
               </div>
             )}
@@ -1920,7 +1977,7 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
 
   return (
     <div>
-      <StepHeader icon={CheckCircle2} name="Итог тренировки" subtitle="Сон, энергия, тяжесть — и сохраняем" />
+      <StepHeader icon={CheckCircle2} name={tr("Итог тренировки")} subtitle={tr("Сон, энергия, тяжесть — и сохраняем")} />
 
       {showMountain && (
         <div style={{ marginBottom: 18 }}>
@@ -1929,20 +1986,20 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
             display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 9,
             fontFamily: t.FONT_MONO, fontSize: 11.5, color: t.TEXT_DIM,
           }}>
-            <span>{Math.round(totalKm * 100) / 100} км</span>
-            <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>↑ {gainM} м</span>
+            <span>{U('d', totalKm)}</span>
+            <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>↑ {U('h', gainM)}</span>
           </div>
           {mountainClimb && (
             <div style={{ marginTop: 7, fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45 }}>
-              <span style={{ fontWeight: 700, color: t.TEXT }}>{mountainClimb.name}</span>
-              {mountainClimb.stages > 1 && ` · этап ${mountainClimb.stage} из ${mountainClimb.stages}`}
-              {' · '}{mountainClimb.place}
+              <span style={{ fontWeight: 700, color: t.TEXT }}>{tr(mountainClimb.name)}</span>
+              {mountainClimb.stages > 1 && tr(" · этап {0} из {1}", mountainClimb.stage, mountainClimb.stages)}
+              {' · '}{tr(mountainClimb.place)}
             </div>
           )}
         </div>
       )}
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <Field label="Сон, часы">
+        <Field label={tr("Сон, часы")}>
           <input
             style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
             value={summary.sleep} onChange={(e) => onChange({ sleep: e.target.value })}
@@ -1956,11 +2013,11 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
       <div style={{ marginBottom: 16 }}>
         <DifficultySlider value={summary.difficulty} onChange={(n) => onChange({ difficulty: n })} />
       </div>
-      <Field label="Самочувствие, заметки">
+      <Field label={tr("Самочувствие, заметки")}>
         <AutoGrowTextarea
           style={{ ...getLabelInputStyle(t), minHeight: 64, fontFamily: 'inherit', lineHeight: 1.4 }}
           value={summary.feeling} onChange={(e) => onChange({ feeling: e.target.value })}
-          placeholder="Как прошло в целом, что почувствовал…"
+          placeholder={tr("Как прошло в целом, что почувствовал…")}
         />
       </Field>
 
@@ -1968,17 +2025,17 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
           пока ты на итоге), кардио и сводка по упражнениям. */}
       <div style={{ marginTop: 22 }}>
         <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO, marginBottom: 8 }}>
-          Результат тренировки
+          {tr("Результат тренировки")}
         </div>
         <div style={{
           display: 'grid', gap: 8,
           gridTemplateColumns: `repeat(${Math.min(3, 1 + cardioResults.length)}, minmax(0, 1fr))`,
         }}>
-          {[{ key: 'time', label: 'Время', value: fmtElapsed(totalSec) }]
+          {[{ key: 'time', label: tr('Время'), value: fmtElapsed(totalSec) }]
             .concat(cardioResults.map((c) => ({
               key: c.key, label: c.label,
-              value: c.distance > 0 ? `${Math.round(c.distance * 100) / 100} км` : `${c.duration} мин`,
-              sub: c.gainM ? `↑ ${c.gainM} м` : (c.distance > 0 && c.duration > 0 ? `${c.duration} мин` : null),
+              value: c.distance > 0 ? U('d', c.distance) : tr('{0} мин', c.duration),
+              sub: c.gainM ? `↑ ${U('h', c.gainM)}` : (c.distance > 0 && c.duration > 0 ? tr('{0} мин', c.duration) : null),
             })))
             .map((tile) => (
               <div key={tile.key} style={{
@@ -2001,6 +2058,44 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
         </div>
         {exerciseSummary && <ExerciseSummaryCard data={exerciseSummary} />}
       </div>
+      <AiQuizCard />
+    </div>
+  );
+}
+
+// Блиц-опрос от ИИ (src/workoutQuiz.js) — пока не подключён: карточка видна, но
+// неактивна. Данные для опроса и инструкция модели уже готовы; включается, когда
+// Никита подключит и оплатит ИИ.
+function AiQuizCard() {
+  const t = useTheme();
+  return (
+    <div style={{
+      marginTop: 14, background: t.BG_RAISED, border: `1px dashed ${t.ACCENT_BORDER}`, borderRadius: 16,
+      padding: '14px 15px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <Sparkles size={16} color={t.ACCENT_SOFT} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>{tr("Блиц-опрос от ИИ")}</span>
+        <span style={{
+          flexShrink: 0, fontSize: 10, fontFamily: t.FONT_MONO, letterSpacing: '0.08em', color: t.ACCENT_SOFT,
+          border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 6, padding: '2px 6px',
+        }}>
+          {tr("СКОРО")}
+        </span>
+      </div>
+      <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.45, marginBottom: 12 }}>
+        {tr("ИИ задаст 2–3 коротких вопроса о тренировке: по весам, повторам и подходам, добавленным и убранным упражнениям и заметкам.")}
+      </div>
+      <button
+        disabled
+        style={{
+          width: '100%', padding: '11px', borderRadius: 12, border: `1px solid ${t.BORDER}`,
+          background: 'transparent', color: t.TEXT_FAINT, fontSize: 14, fontWeight: 600,
+          fontFamily: 'inherit', cursor: 'default',
+        }}
+      >
+        {tr("Пройти опрос")}
+      </button>
     </div>
   );
 }
@@ -2018,7 +2113,7 @@ function ExerciseSummaryCard({ data }) {
         : { icon: Minus, color: t.ACCENT_SOFT, bg: t.ACCENT_BG };
     const Icon = tone.icon;
     const note = kind === 'same'
-      ? (item.stuck >= 3 ? `${item.stuck}-я тренировка подряд без роста` : 'как в прошлый раз')
+      ? (item.stuck >= 3 ? tr('{0}-я тренировка подряд без роста', item.stuck) : tr('как в прошлый раз'))
       : null;
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '11px 12px' }}>
@@ -2031,20 +2126,20 @@ function ExerciseSummaryCard({ data }) {
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: t.TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {item.name}
+              {exName(item.name)}
             </span>
             {item.isRecord && (
               <span style={{
                 flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 6,
                 fontSize: 10.5, fontWeight: 700, color: t.ON_ACCENT, background: t.ACCENT_GRAD,
               }}>
-                <Flame size={11} /> Рекорд
+                <Flame size={11} /> {tr("Рекорд")}
               </span>
             )}
           </span>
           <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: t.TEXT_DIM, fontFamily: t.FONT_MONO }}>
             {item.baseText} → {item.currentText}
-            <span style={{ color: t.TEXT_FAINT, fontFamily: t.FONT }}> · прошлый раз {fmtDayMonth(item.baseDate)}</span>
+            <span style={{ color: t.TEXT_FAINT, fontFamily: t.FONT }}> {tr("· прошлый раз")} {fmtDayMonth(item.baseDate)}</span>
           </span>
           {note && <span style={{ display: 'block', marginTop: 2, fontSize: 11.5, color: t.TEXT_FAINT }}>{note}</span>}
         </span>
@@ -2056,20 +2151,20 @@ function ExerciseSummaryCard({ data }) {
   };
 
   const countParts = [
-    counts.up && `рост ${counts.up}`,
-    counts.same && `без изменений ${counts.same}`,
-    counts.down && `спад ${counts.down}`,
-    counts.planned && `по плану ${counts.planned}`,
-    counts.new && `новых ${counts.new}`,
+    counts.up && tr('рост {0}', counts.up),
+    counts.same && tr('без изменений {0}', counts.same),
+    counts.down && tr('спад {0}', counts.down),
+    counts.planned && tr('по плану {0}', counts.planned),
+    counts.new && tr('новых {0}', counts.new),
   ].filter(Boolean);
 
   return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
         <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO }}>
-          Итог по упражнениям
+          {tr("Итог по упражнениям")}
         </span>
-        <span style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{counts.total} упр.</span>
+        <span style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{counts.total} {tr("упр.")}</span>
       </div>
       {(best || worst) && (
         <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
@@ -2080,15 +2175,15 @@ function ExerciseSummaryCard({ data }) {
       )}
       {records.length > 0 && (
         <div style={{ marginTop: 10, fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.6 }}>
-          <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>Новые рекорды: </span>
-          {records.map((r) => `${r.name} ${r.currentText}`).join(' · ')}
+          <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>{tr("Новые рекорды:")} </span>
+          {records.map((r) => `${exName(r.name)} ${r.currentText}`).join(' · ')}
         </div>
       )}
       {plannedNote && (
         <div style={{ marginTop: 10, fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5 }}>{plannedNote}</div>
       )}
       {!best && !worst && records.length === 0 && !plannedNote && (
-        <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, lineHeight: 1.5 }}>Сравнивать пока не с чем — это первый раз для всех упражнений.</div>
+        <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, lineHeight: 1.5 }}>{tr("Сравнивать пока не с чем — это первый раз для всех упражнений.")}</div>
       )}
       {countParts.length > 0 && (
         <div style={{ marginTop: 8, fontSize: 11.5, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO }}>{countParts.join(' · ')}</div>
@@ -2101,7 +2196,7 @@ function ExerciseSummaryCard({ data }) {
 function fmtDayMonth(iso) {
   const M = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
   const [, m, d] = String(iso || '').split('-').map(Number);
-  return m && d ? `${d} ${M[m - 1]}` : '';
+  return m && d ? `${d} ${tr(M[m - 1])}` : '';
 }
 
 // Модалка-подсказка «как выполнять» (пункт 6): техника по шагам, частые ошибки, мышцы.
@@ -2115,7 +2210,7 @@ function GuideModal({ name, onClose }) {
         fontSize: 10.5, fontWeight: 700, color, textTransform: 'uppercase',
         letterSpacing: '0.1em', marginBottom: 8, fontFamily: t.FONT_MONO,
       }}>
-        {title}
+        {tr(title)}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {items.map((line, i) => (
@@ -2123,7 +2218,7 @@ function GuideModal({ name, onClose }) {
             <span style={{
               flexShrink: 0, minWidth: ordered ? 20 : 12, color, fontWeight: 700, fontFamily: t.FONT_MONO, fontSize: ordered ? 13 : 15,
             }}>{ordered ? `${i + 1}.` : '·'}</span>
-            <span>{line}</span>
+            <span>{tr(line)}</span>
           </div>
         ))}
       </div>
@@ -2152,11 +2247,11 @@ function GuideModal({ name, onClose }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
             <MuscleBadge name={name} size={26} />
-            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: t.TEXT, lineHeight: 1.15 }}>{name}</h3>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: t.TEXT, lineHeight: 1.15 }}>{exName(name)}</h3>
           </div>
           <button
             onClick={onClose}
-            aria-label="Закрыть подсказку"
+            aria-label={tr("Закрыть подсказку")}
             style={{
               flexShrink: 0, width: 34, height: 34, borderRadius: 10, border: `1px solid ${t.BORDER}`,
               background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer',
@@ -2173,7 +2268,7 @@ function GuideModal({ name, onClose }) {
               <span key={m} style={{
                 fontSize: 11.5, fontWeight: 700, color: t.ACCENT_SOFT, background: t.ACCENT_BG,
                 padding: '4px 9px', borderRadius: 7,
-              }}>{m}</span>
+              }}>{tr(m)}</span>
             ))}
           </div>
         )}
@@ -2193,22 +2288,24 @@ function CardioStep({ step, value, onChange }) {
 
   return (
     <div>
-      <StepHeader icon={Icon} name={step.title} subtitle={step.subtitle} />
+      {/* У бассейна подзаголовок «60 минут» собирался при старте и застывал на том
+          языке — переводим при показе. */}
+      <StepHeader icon={Icon} name={step.title} subtitle={step.kind === 'pool' && step.target && step.target.duration ? tr('{0} минут', step.target.duration) : step.subtitle} />
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {f.distance && (
           <div style={{ flex: '1 1 45%', minWidth: 130 }}>
-            <Field label="Дистанция, км">
+            <Field label={`${tr('Дистанция')}, ${unitOf('d')}`}>
               <input
                 style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
                 value={value.distance || ''} onChange={(e) => onChange({ distance: e.target.value })}
-                placeholder={(step.target && step.target.distance) || '0'}
+                placeholder={(step.target && step.target.distance && num('d', step.target.distance)) || '0'}
               />
             </Field>
           </div>
         )}
         {f.speed && (
           <div style={{ flex: '1 1 45%', minWidth: 130 }}>
-            <Field label="Скорость, км/ч">
+            <Field label={`${tr('Скорость')}, ${unitOf('s')}`}>
               <input
                 style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
                 value={value.speed || ''} onChange={(e) => onChange({ speed: e.target.value })}
@@ -2219,7 +2316,7 @@ function CardioStep({ step, value, onChange }) {
         )}
         {f.incline && (
           <div style={{ flex: '1 1 45%', minWidth: 130 }}>
-            <Field label="Наклон, %">
+            <Field label={tr("Наклон, %")}>
               <input
                 style={getInputStyle(t)} type="number" inputMode="decimal" min="0" max={MAX_INCLINE}
                 value={value.incline || ''} onChange={(e) => onChange({ incline: clampIncline(e.target.value) })}
@@ -2230,7 +2327,7 @@ function CardioStep({ step, value, onChange }) {
         )}
         {f.duration && (
           <div style={{ flex: '1 1 45%', minWidth: 130 }}>
-            <Field label="Время, мин">
+            <Field label={tr("Время, мин")}>
               <input
                 style={getInputStyle(t)} type="number" inputMode="numeric" min="0"
                 value={value.duration || ''} onChange={(e) => onChange({ duration: e.target.value })}
@@ -2247,11 +2344,12 @@ function CardioStep({ step, value, onChange }) {
 function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
   const t = useTheme();
   const d = data || { metric: 'distance', target: '', sectors: [] };
-  const codes = sectorCodes(d.sectors); // подписи секторов «1A, 1B, 2A…» по километрам
+  // подписи секторов «1A, 1B, 2A…» по километрам — как в записи (guidedSteps.js)
+  const codes = sectorCodes((d.sectors || []).map((s) => ({ ...s, distance: fromDisp('d', s.distance) || 0 })));
   const isTime = d.metric === 'time';
   const isElev = d.metric === 'elevation';
   const M = SECTOR_METRICS[d.metric] || SECTOR_METRICS.distance;
-  const unit = M.unit;
+  const goalUnit = metricUnit(M);
   const target = parseFloat(d.target) || 0;
   const achieved = sectorAchieved(d);
   const reached = sectorGoalReached(d);
@@ -2274,7 +2372,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
           color: active ? t.ACCENT_SOFT : t.TEXT_DIM,
         }}
       >
-        {label}
+        {tr(label)}
       </button>
     );
   };
@@ -2292,29 +2390,37 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
           fontSize: 10.5, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',
           letterSpacing: '0.1em', marginBottom: 10, fontFamily: t.FONT_MONO,
         }}>
-          Цель тренировки
+          {tr("Цель тренировки")}
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           {metricBtn('distance', SECTOR_METRICS.distance.label)}
           {metricBtn('time', SECTOR_METRICS.time.label)}
           {metricBtn('elevation', SECTOR_METRICS.elevation.label)}
         </div>
-        <Field label={M.goalLabel}>
+        <Field label={`${tr(M.goal)}, ${metricUnit(M)}`}>
           <input
             style={getInputStyle(t)} type="number" inputMode="decimal" min="0"
             value={d.target || ''} onChange={(e) => onMeta({ target: e.target.value })}
-            placeholder={d.metric === 'distance' ? (step.planDistance || M.ph) : M.ph}
+            placeholder={metricPh(M, d.metric === 'distance' ? (step.planDistance || M.ph) : M.ph)}
           />
         </Field>
         {isElev && (
           <div style={{ marginTop: 8, fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.45 }}>
-            Высота считается из дистанции и наклона каждого сектора: 0.2 км при 25% дают 50 м подъёма.
+            {convertText(tr("Высота считается из дистанции и наклона каждого сектора: 0.2 км при 25% дают 50 м подъёма."))}
           </div>
         )}
         {isElev && (
           <ClimbPicker
             currentClimb={d.climb}
-            onPick={({ target, sectors, climb }) => onMeta({ target, sectors, climb })}
+            onPick={({ target, sectors, climb }) => {
+              if (!isImperial()) { onMeta({ target, sectors, climb }); return; }
+              // Маршрут — в метрике (climbs.js). В милях секторы — с тремя знаками, а
+              // цель — не выше того, что они реально дают: с округлением до сотых
+              // маршрут не проходился (698 из 705 ft) и в запись уходило меньше.
+              const disp = sectors.map((s) => ({ ...s, distance: num('d', s.distance, 3) }));
+              const reach = sectorAchieved({ metric: 'elevation', sectors: disp });
+              onMeta({ target: String(Math.min(Math.round(toDisp('h', target)), Math.floor(reach + 1e-6))), sectors: disp, climb });
+            }}
           />
         )}
 
@@ -2322,10 +2428,10 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
         <div style={{ marginTop: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
             <span style={{ fontSize: 12.5, color: t.TEXT_DIM, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              {isElev ? <TrendingUp size={13} /> : <Route size={13} />} {isElev ? 'Набрано' : 'Пройдено'}
+              {isElev ? <TrendingUp size={13} /> : <Route size={13} />} {isElev ? tr("Набрано") : tr("Пройдено")}
             </span>
             <span style={{ fontSize: 13.5, fontWeight: 700, color: reached ? t.POSITIVE : t.TEXT, fontFamily: t.FONT_MONO }}>
-              {fmtGoal(achieved, isElev)} / {target > 0 ? fmtGoal(target, isElev) : '—'} {unit}
+              {fmtGoal(achieved, isElev)} / {target > 0 ? fmtGoal(target, isElev) : '—'} {goalUnit}
             </span>
           </div>
           <div style={{ height: 8, borderRadius: 5, background: t.BG_INPUT, overflow: 'hidden' }}>
@@ -2336,7 +2442,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
           </div>
           {reached && (
             <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: t.POSITIVE, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <CheckCircle2 size={14} /> Цель достигнута — можно завершать
+              <CheckCircle2 size={14} /> {tr("Цель достигнута — можно завершать")}
             </div>
           )}
         </div>
@@ -2350,7 +2456,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
         const inclHighlight = isElev;
         const inputBlock = (key, label, inputMode, highlight) => (
           <div style={{ flex: '1 1 45%', minWidth: 120 }}>
-            <Field label={highlight ? `${label} · цель` : label}>
+            <Field label={highlight ? tr("{0} · цель", tr(label)) : tr(label)}>
               <input
                 style={{
                   ...getInputStyle(t),
@@ -2385,12 +2491,12 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 12, fontWeight: 700, fontFamily: t.FONT_MONO,
                 }}>{codes[si]}</span>
-                Сектор {codes[si]}
+                {tr("Сектор")} {codes[si]}
               </span>
               {(d.sectors.length > 1) && (
                 <button
                   onClick={() => onRemove(si)}
-                  aria-label="Удалить сектор"
+                  aria-label={tr("Удалить сектор")}
                   style={{ background: 'transparent', border: 'none', color: t.TEXT_FAINT, cursor: 'pointer', padding: 4 }}
                 >
                   <X size={16} />
@@ -2398,11 +2504,11 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
               )}
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {inputBlock('distance', 'Дистанция, км', 'decimal', distHighlight)}
-              {inputBlock('speed', 'Скорость, км/ч', 'decimal', false)}
+              {inputBlock('distance', `${tr('Дистанция')}, ${unitOf('d')}`, 'decimal', distHighlight)}
+              {inputBlock('speed', `${tr('Скорость')}, ${unitOf('s')}`, 'decimal', false)}
               {inputBlock('incline', 'Наклон, %', 'decimal', inclHighlight)}
               <div style={{ flex: '1 1 45%', minWidth: 120 }}>
-                <Field label={`Таймер дорожки, мм:сс${isTime ? ' · цель' : ''}`}>
+                <Field label={tr("Таймер дорожки, мм:сс{0}", isTime ? tr(' · цель') : '')}>
                   <input
                     style={{
                       ...getInputStyle(t),
@@ -2417,7 +2523,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
             </div>
             {deltaSec > 0 && (
               <div style={{ marginTop: 9, fontSize: 11.5, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO }}>
-                Длительность сектора: <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>+{secToClock(deltaSec)}</span>
+                {tr("Длительность сектора:")} <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>+{secToClock(deltaSec)}</span>
               </div>
             )}
           </div>
@@ -2433,7 +2539,7 @@ function SectorsStep({ step, data, onMeta, onField, onAdd, onRemove }) {
           cursor: 'pointer', fontFamily: 'inherit', marginTop: 2,
         }}
       >
-        <Plus size={16} /> Добавить сектор
+        <Plus size={16} /> {tr("Добавить сектор")}
       </button>
     </div>
   );

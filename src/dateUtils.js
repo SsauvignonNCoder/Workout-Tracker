@@ -1,3 +1,4 @@
+import { locale } from './i18n.js';
 export const pad2 = (n) => String(n).padStart(2, '0');
 
 export const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -24,10 +25,10 @@ export const isWeighInTime = (d = new Date()) => {
 
 export const fmtDateShort = (iso) => {
   const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  return d.toLocaleDateString(locale(), { day: 'numeric', month: 'short' });
 };
 
 export const fmtDateFull = (iso) => {
   const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' });
+  return d.toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'long' });
 };

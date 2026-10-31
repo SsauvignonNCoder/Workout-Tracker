@@ -20,6 +20,8 @@ import { getPlan, planWeekOf } from './plans.js';
 import {
   categorizeExercise, MUSCLE_GROUPS, isWeightlessExercise, isTimeBasedExercise,
 } from './tabs/workoutTabHelpers.jsx';
+import { tr } from './i18n.js';
+import { U, num as unum, heavier, sameWeight } from './units.js';
 
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/ё/g, 'е');
 const num = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isFinite(n) ? n : 0; };
@@ -61,29 +63,30 @@ export function weekInfo(planId, day) {
 }
 
 function cmp(a, b) {
-  if (a.weight !== b.weight) return a.weight > b.weight ? 1 : -1;
+  if (!sameWeight(a.weight, b.weight)) return a.weight > b.weight ? 1 : -1;
   if (a.reps !== b.reps) return a.reps > b.reps ? 1 : -1;
   return 0;
 }
 
 function fmtSet(s, weightless) {
-  return weightless || !s.weight ? `${s.reps} повт` : `${s.weight}×${s.reps}`;
+  return weightless || !s.weight ? tr('{0} повт', s.reps) : `${unum('w', s.weight)}×${s.reps}`;
 }
 
 function fmtDelta(cur, base, weightless) {
-  const r1 = (n) => Math.round(n * 10) / 10;
-  if (!weightless && cur.weight !== base.weight) {
-    const d = r1(cur.weight - base.weight);
-    return `${d > 0 ? '+' : '−'}${Math.abs(d)} кг`;
+  // Разница — без округления до пересчёта: U округлит уже в единицах экрана
+  // (раньше 0.1 кг → «+5.1 lb» вместо +5).
+  if (!weightless && !sameWeight(cur.weight, base.weight)) {
+    const d = cur.weight - base.weight;
+    return `${d > 0 ? '+' : '−'}${U('w', Math.abs(d))}`;
   }
   const d = cur.reps - base.reps;
-  return d === 0 ? '=' : `${d > 0 ? '+' : '−'}${Math.abs(d)} повт`;
+  return d === 0 ? '=' : `${d > 0 ? '+' : '−'}${tr('{0} повт', Math.abs(d))}`;
 }
 
 // Насколько вырос / упал результат — для выбора «лучшего» и «худшего». Прибавка
 // в весе весит больше, чем такая же в процентах прибавка в повторах.
 function changeScore(cur, base, weightless) {
-  if (!weightless && cur.weight !== base.weight && base.weight > 0) return (cur.weight - base.weight) / base.weight;
+  if (!weightless && !sameWeight(cur.weight, base.weight) && base.weight > 0) return (cur.weight - base.weight) / base.weight;
   if (base.reps > 0) return ((cur.reps - base.reps) / base.reps) * 0.5;
   return 0;
 }
@@ -118,7 +121,7 @@ export function compareExercise({ name, sets, history, records, current }) {
   // Рекорд — только если прежний рекорд был: первый раз — это «новое», а не рекорд.
   const isRecord = weightless
     ? !!(rec && !rec.weight && rec.metric === 'reps' && cur.reps > (rec.value || 0))
-    : !!(rec && rec.weight && cur.weight > rec.weight);
+    : !!(rec && rec.weight && heavier(cur.weight, rec.weight));
 
   const item = { name, weightless, current: cur, currentText: fmtSet(cur, weightless), isRecord };
   if (!base) return { ...item, outcome: 'new' };
@@ -143,7 +146,7 @@ export function compareExercise({ name, sets, history, records, current }) {
     delta: fmtDelta(cur, base.top, weightless),
     score: changeScore(cur, base.top, weightless),
     stuck,
-    planned: outcome === 'planned' ? (curDeload ? 'разгрузка' : 'новый цикл') : null,
+    planned: outcome === 'planned' ? (curDeload ? tr('разгрузка') : tr('новый цикл')) : null,
   };
 }
 
@@ -170,7 +173,7 @@ export function buildWorkoutSummary({ exercises, history, records, current }) {
   const newRecords = items.filter((i) => i.isRecord && i !== best);
   // Спокойная строка вместо «спада», если всё просевшее — по плану.
   const plannedNote = planned.length > 0 && !downs.length
-    ? (curWeek && curWeek.deload ? 'Разгрузка: веса легче — так и задумано' : 'Новый цикл: веса ниже тяжёлой недели — так и задумано')
+    ? (curWeek && curWeek.deload ? tr('Разгрузка: веса легче — так и задумано') : tr('Новый цикл: веса ниже тяжёлой недели — так и задумано'))
     : null;
 
   if (!best && !worst && newRecords.length === 0 && !plannedNote && counts.new === 0) return null;

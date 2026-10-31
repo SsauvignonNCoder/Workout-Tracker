@@ -3,6 +3,7 @@ import { FileDown, Copy, Check, Share2 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { fmtDateShort } from '../dateUtils.js';
 import { listExportableWeeks, buildWeekMarkdown, weekFilename } from '../weekExport.js';
+import { tr, trn } from '../i18n.js';
 
 // Панель экспорта результатов недели в Markdown-файл.
 // Итог включает: результат по каждому упражнению, прогрессию к прошлой неделе,
@@ -28,7 +29,7 @@ export function WeekExportPanel({ sessions, measurements }) {
 
   if (weeks.length === 0) return null;
 
-  const labelFor = (w) => `${fmtDateShort(w.weekStart)} – ${fmtDateShort(w.weekEnd)} · ${w.count} трен.`;
+  const labelFor = (w) => `${fmtDateShort(w.weekStart)} – ${fmtDateShort(w.weekEnd)} · ${w.count} ${trn(w.count, ['трен.', 'трен.', 'трен.'], ['workout', 'workouts'])}`;
   const activeMeta = weeks.find((w) => w.weekStart === activeWeek);
 
   const filename = weekFilename(activeWeek);
@@ -97,8 +98,8 @@ export function WeekExportPanel({ sessions, measurements }) {
     if (!isTelegram && downloadBlob()) return;     // 2) обычное скачивание вне Telegram
     const ok = await copy();                       // 3) в Telegram без Web Share — копируем текст
     flash(ok
-      ? 'Скачивание тут недоступно — текст скопирован, вставь в заметки'
-      : 'Не удалось — выдели текст в поле выше и скопируй вручную');
+      ? tr('Скачивание тут недоступно — текст скопирован, вставь в заметки')
+      : tr('Не удалось — выдели текст в поле выше и скопируй вручную'));
   };
 
   return (
@@ -111,7 +112,7 @@ export function WeekExportPanel({ sessions, measurements }) {
         }}
       >
         <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: 7 }}>
-          <FileDown size={13} /> Экспорт недели в Markdown
+          <FileDown size={13} /> {tr("Экспорт недели в Markdown")}
         </span>
         <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{open ? '▼' : '▶'}</span>
       </button>
@@ -119,8 +120,7 @@ export function WeekExportPanel({ sessions, measurements }) {
       {open && (
         <div style={{ padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10 }}>
           <div style={{ fontSize: 12.5, color: t.TEXT_DIM, marginBottom: 10, lineHeight: 1.5 }}>
-            Отчёт за неделю: результат по каждому упражнению, прогрессия к прошлой неделе и личные рекорды.
-            Упражнения и дни из плана, которые не были записаны, помечаются как пропущенные.
+            {tr("Отчёт за неделю: результат по каждому упражнению, прогрессия к прошлой неделе и личные рекорды. Упражнения и дни из плана, которые не были записаны, помечаются как пропущенные.")}
           </div>
 
           {/* Выбор недели */}
@@ -135,7 +135,7 @@ export function WeekExportPanel({ sessions, measurements }) {
               }}
             >
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {activeMeta ? labelFor(activeMeta) : 'Выбери неделю'}
+                {activeMeta ? labelFor(activeMeta) : tr("Выбери неделю")}
               </span>
               <span style={{ color: t.TEXT_FAINT, flexShrink: 0, marginLeft: 8 }}>{pickerOpen ? '▲' : '▼'}</span>
             </button>
@@ -191,7 +191,7 @@ export function WeekExportPanel({ sessions, measurements }) {
                 cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
               }}
             >
-              {isTelegram ? <><Share2 size={16} /> Сохранить .md</> : <><FileDown size={16} /> Скачать .md</>}
+              {isTelegram ? <><Share2 size={16} /> {tr("Сохранить .md")}</> : <><FileDown size={16} /> {tr("Скачать .md")}</>}
             </button>
             <button
               onClick={copy}
@@ -201,7 +201,7 @@ export function WeekExportPanel({ sessions, measurements }) {
                 cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               }}
             >
-              {copied ? <><Check size={15} /> Готово</> : <><Copy size={15} /> Копировать</>}
+              {copied ? <><Check size={15} /> {tr("Готово")}</> : <><Copy size={15} /> {tr("Копировать")}</>}
             </button>
           </div>
 

@@ -312,6 +312,19 @@ function todayUtc() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Промпт под язык и единицы пользователя. Строки-якоря — из SYSTEM_PROMPT.
+export function systemPromptFor({ lang, units } = {}) {
+  let s = SYSTEM_PROMPT;
+  if (lang === 'en') {
+    s = s.replace('Отвечаешь его владельцу на русском языке,', 'Отвечаешь его владельцу на английском языке (интерфейс у него английский; названия упражнений из данных переводи на английский),');
+  }
+  if (units === 'imperial') {
+    s = s.replace('- Веса в килограммах, дистанции в километрах, время в минутах.',
+      '- Данные в инструментах — в метрике (кг, км, км/ч, м, см), но у пользователя имперские единицы: в ответе веса в фунтах (lb), дистанции в милях (mi), скорость в mph, высота в футах (ft), обхваты в дюймах (in), время в минутах. Числа в вопросе пользователя — тоже в этих единицах: переводи их в метрику, прежде чем сравнивать с данными.');
+  }
+  return s;
+}
+
 async function checkLimits(admin, userId) {
   const [daily, monthly] = await Promise.all([
     admin.from('ai_daily_usage').select('request_count').eq('user_id', userId).eq('usage_date', todayUtc()).maybeSingle(),
@@ -322,7 +335,8 @@ async function checkLimits(admin, userId) {
   const used = (daily.data && daily.data.request_count) || 0;
   const tokens = (monthly.data && monthly.data.total_tokens) || 0;
   if (used >= DAILY_LIMIT) {
-    return { ok: false, code: 'daily_limit', error: `На сегодня лимит исчерпан — ${DAILY_LIMIT} вопросов в день. Возвращайся завтра.` };
+    // limit — чтобы клиент собрал текст на своём языке (AssistantTab); error — для старых клиентов.
+    return { ok: false, code: 'daily_limit', limit: DAILY_LIMIT, error: `На сегодня лимит исчерпан — ${DAILY_LIMIT} вопросов в день. Возвращайся завтра.` };
   }
   if (tokens >= MONTHLY_TOKEN_BLOCK_AT) {
     return { ok: false, code: 'monthly_limit', error: 'Месячный бюджет ассистента исчерпан. Он снова заработает в начале следующего месяца.' };
@@ -376,7 +390,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { initData, question } = req.body || {};
+  const { initData, question, lang, units } = req.body || {};
 
   const tgUser = checkTelegramAuth(initData, BOT_TOKEN);
   if (!tgUser) {
@@ -416,8 +430,14 @@ export default async function handler(req, res) {
       global: { headers: { Authorization: `Bearer ${mintReadonlyJwt()}` } },
     });
 
+    // Английский интерфейс (src/i18n.js) — ответ по-английски; данные (названия
+    // упражнений) остаются как записаны. Имперские единицы (src/units.js) — данные
+    // в базе всё равно в кг/км, ответ — в фунтах и милях.
+    // Язык и единицы — ЗАМЕНОЙ строк промпта (systemPromptFor): дописанное в конец
+    // спорило с «на русском» и «в килограммах» в начале, и модель путалась.
+    const system = systemPromptFor({ lang, units });
     const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: system },
       { role: 'user', content: q },
     ];
 

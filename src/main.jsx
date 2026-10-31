@@ -1,6 +1,9 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
+import { ErrorBoundary } from './ErrorBoundary.jsx';
+import { setLang, initialLang } from './i18n.js';
+import { setUnits, initialUnits } from './units.js';
 
 // Telegram Mini App: оттягивание страницы вниз тянуло за собой само окно
 // мини-приложения (жест «свернуть / закрыть»). Telegram при этом на ходу менял
@@ -16,4 +19,9 @@ try {
   }
 } catch (e) { /* no-op */ }
 
-createRoot(document.getElementById('root')).render(<App />);
+// Язык до загрузки профиля (экран входа): сохранённый на устройстве или язык Telegram.
+setLang(initialLang());
+// Единицы — сохранённые на устройстве; по умолчанию всегда метрика.
+setUnits(initialUnits());
+
+createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);

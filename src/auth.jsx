@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Dumbbell, Send } from 'lucide-react';
 import { THEME_2A } from './theme.js';
+import { tr } from './i18n.js';
 
 // ============================================================
 // Авторизация — два способа входа, у каждого свой аккаунт:
@@ -50,7 +51,7 @@ async function browserAuth(mode, displayName, pin) {
   });
   const data = await res.json();
   if (!res.ok || !data.ok) {
-    return { error: data.error || 'Что-то пошло не так' };
+    return { error: tr(data.error || 'Что-то пошло не так') };
   }
   return { userId: data.userId, displayName: data.displayName };
 }
@@ -106,9 +107,9 @@ export function AuthGate({ children }) {
 
   const handleSubmit = async () => {
     setErr('');
-    if (!name.trim()) { setErr('Введи имя'); return; }
-    if (pin.length < 4) { setErr('PIN должен быть не короче 4 символов'); return; }
-    if (authMode === 'register' && !/^\d+$/.test(pin)) { setErr('PIN должен состоять только из цифр'); return; }
+    if (!name.trim()) { setErr(tr("Введи имя")); return; }
+    if (pin.length < 4) { setErr(tr("PIN должен быть не короче 4 символов")); return; }
+    if (authMode === 'register' && !/^\d+$/.test(pin)) { setErr(tr("PIN должен состоять только из цифр")); return; }
     setBusy(true);
     const result = await browserAuth(authMode, name.trim(), pin);
     setBusy(false);
@@ -155,12 +156,12 @@ export function AuthGate({ children }) {
           </div>
         </div>
         <h1 style={{ color: t.TEXT, fontSize: 24, textAlign: 'center', margin: '0 0 6px', fontWeight: 700, fontFamily: t.FONT_DISPLAY, letterSpacing: '-0.01em' }}>
-          {authMode === 'login' ? 'Вход' : 'Создай аккаунт'}
+          {authMode === 'login' ? tr("Вход") : tr("Создай аккаунт")}
         </h1>
         <p style={{ color: t.TEXT_FAINT, fontSize: 13, textAlign: 'center', margin: '0 0 22px' }}>
           {telegramFailed
-            ? 'Не получилось войти через Telegram — войди по имени и PIN'
-            : authMode === 'login' ? 'Введи своё имя и PIN' : 'Придумай имя и PIN — минимум 4 символа'}
+            ? tr("Не получилось войти через Telegram — войди по имени и PIN")
+            : authMode === 'login' ? tr("Введи своё имя и PIN") : tr("Придумай имя и PIN — минимум 4 символа")}
         </p>
 
         {/* Кнопка показывается всегда, когда мы внутри Telegram и не авторизованы.
@@ -178,7 +179,7 @@ export function AuthGate({ children }) {
               fontSize: 14.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 16,
             }}
           >
-            <Send size={16} color={t.ACCENT_SOFT} /> Войти через Telegram
+            <Send size={16} color={t.ACCENT_SOFT} /> {tr("Войти через Telegram")}
           </button>
         )}
 
@@ -187,7 +188,7 @@ export function AuthGate({ children }) {
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Имя"
+          placeholder={tr("Имя")}
           style={{
             width: '100%', boxSizing: 'border-box', background: t.BG_INPUT, border: `1px solid ${t.BORDER}`,
             borderRadius: 10, padding: '13px 14px', color: t.TEXT, fontSize: 15, marginBottom: 10,
@@ -201,7 +202,7 @@ export function AuthGate({ children }) {
           value={pin}
           onChange={(e) => setPin(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
-          placeholder="PIN-код"
+          placeholder={tr("PIN-код")}
           style={{
             width: '100%', boxSizing: 'border-box', background: t.BG_INPUT, border: `1px solid ${t.BORDER}`,
             borderRadius: 10, padding: '13px 14px', color: t.TEXT, fontSize: 17, marginBottom: 10,
@@ -222,7 +223,7 @@ export function AuthGate({ children }) {
             cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1, fontFamily: 'inherit', marginBottom: 12, boxShadow: t.GLOW,
           }}
         >
-          {busy ? 'Проверяю...' : authMode === 'login' ? 'Войти' : 'Создать и войти'}
+          {busy ? tr("Проверяю...") : authMode === 'login' ? tr("Войти") : tr("Создать и войти")}
         </button>
 
         <button
@@ -232,7 +233,7 @@ export function AuthGate({ children }) {
             color: t.TEXT_FAINT, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline',
           }}
         >
-          {authMode === 'login' ? 'Нет аккаунта? Создать новый' : 'Уже есть аккаунт? Войти'}
+          {authMode === 'login' ? tr("Нет аккаунта? Создать новый") : tr("Уже есть аккаунт? Войти")}
         </button>
       </div>
     </div>

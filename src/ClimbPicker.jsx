@@ -4,6 +4,8 @@ import { useTheme } from './theme.js';
 import {
   CLIMBS, CLIMB_CLASSES, climbsOfClass, climbStages, climbCaption,
 } from './climbs.js';
+import { tr } from './i18n.js';
+import { U } from './units.js';
 
 // Кнопка «взять готовый маршрут» рядом с полем цели по набору высоты.
 // Раскрывается списком реальных маршрутов, сгруппированных по классу сложности.
@@ -55,8 +57,8 @@ export function ClimbPicker({ onPick, currentClimb }) {
         <Mountain size={15} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {currentClimb
-            ? `${currentClimb.name}${currentClimb.stages > 1 ? ` · этап ${currentClimb.stage}/${currentClimb.stages}` : ''}`
-            : 'Взять готовый маршрут'}
+            ? `${tr(currentClimb.name)}${currentClimb.stages > 1 ? tr(' · этап {0}/{1}', currentClimb.stage, currentClimb.stages) : ''}`
+            : tr("Взять готовый маршрут")}
         </span>
         <ChevronDown
           size={16}
@@ -66,7 +68,7 @@ export function ClimbPicker({ onPick, currentClimb }) {
 
       {!open && currentClimb && (
         <div style={{ marginTop: 6, fontSize: 11.5, color: t.TEXT_FAINT }}>
-          {currentClimb.place} · цель {currentClimb.gain} м
+          {tr(currentClimb.place)} {tr("· цель")} {U('h', currentClimb.gain)}
         </div>
       )}
 
@@ -80,7 +82,7 @@ export function ClimbPicker({ onPick, currentClimb }) {
               padding: '18px 14px', fontSize: 12.5, color: t.TEXT_DIM,
               lineHeight: 1.5, textAlign: 'center',
             }}>
-              Коллекция пока пуста — маршруты добавляются из GPX-треков.
+              {tr("Коллекция пока пуста — маршруты добавляются из GPX-треков.")}
             </div>
           )}
 
@@ -98,10 +100,10 @@ export function ClimbPicker({ onPick, currentClimb }) {
                     fontSize: 10, fontWeight: 700, color: t.ACCENT_SOFT,
                     textTransform: 'uppercase', letterSpacing: '0.09em', fontFamily: t.FONT_MONO,
                   }}>
-                    {cls.label}
+                    {tr(cls.label)}
                   </span>
                   <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO }}>
-                    до {cls.budget} м
+                    {tr("до")} {U('h', cls.budget)}
                   </span>
                 </div>
 
@@ -126,7 +128,7 @@ export function ClimbPicker({ onPick, currentClimb }) {
                             fontSize: 13.5, fontWeight: 700, color: t.TEXT,
                             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                           }}>
-                            {c.name}
+                            {tr(c.name)}
                           </div>
                           <div style={{ fontSize: 11, color: t.TEXT_FAINT, marginTop: 2 }}>
                             {climbCaption(c)}
@@ -136,21 +138,20 @@ export function ClimbPicker({ onPick, currentClimb }) {
                           fontSize: 12.5, fontWeight: 700, color: t.ACCENT_SOFT,
                           fontFamily: t.FONT_MONO, flexShrink: 0,
                         }}>
-                          ↑{c.gain}
+                          ↑{U('h', c.gain)}
                         </span>
                       </button>
 
                       {isOpen && (
                         <div style={{ padding: '0 12px 12px' }}>
                           <div style={{ fontSize: 11.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 9 }}>
-                            {c.note}
+                            {tr(c.note)}
                           </div>
                           <div style={{
                             fontSize: 11, color: t.TEXT_FAINT, marginBottom: 9,
                             display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
                           }}>
-                            <MapPin size={11} /> {c.place} · {c.start}→{c.top} м ·
-                            уклоны {Math.min(...inc)}–{Math.max(...inc)}%
+                            <MapPin size={11} /> {tr(c.place)} · {U('h', c.start)}→{U('h', c.top)} · {tr("уклоны")} {Math.min(...inc)}–{Math.max(...inc)}%
                           </div>
                           {stages.map((st) => (
                             <button
@@ -164,12 +165,12 @@ export function ClimbPicker({ onPick, currentClimb }) {
                               }}
                             >
                               <div style={{ fontSize: 12.5, fontWeight: 700 }}>
-                                {st.total > 1 ? `Этап ${st.index} из ${st.total}` : 'Взять этот маршрут'}
+                                {st.total > 1 ? tr("Этап {0} из {1}", st.index, st.total) : tr("Взять этот маршрут")}
                               </div>
                               <div style={{
                                 fontSize: 11.5, color: t.TEXT_DIM, marginTop: 3, fontFamily: t.FONT_MONO,
                               }}>
-                                {st.sectors.length} сект · {st.distance} км · ↑{st.gain} м
+                                {st.sectors.length} {tr("сект ·")} {U('d', st.distance)} · ↑{U('h', st.gain)}
                               </div>
                             </button>
                           ))}
@@ -184,8 +185,7 @@ export function ClimbPicker({ onPick, currentClimb }) {
 
           {CLIMBS.length > 0 && (
             <div style={{ padding: '10px 12px', fontSize: 10.5, color: t.TEXT_FAINT, lineHeight: 1.45 }}>
-              Профили сняты с GPS-треков как есть: спуски вырезаны, уклон обрезан
-              по 30%. Класс определяется набором высоты. Скорость и время вводишь сам.
+              {tr("Профили сняты с GPS-треков как есть: спуски вырезаны, уклон обрезан по 30%. Класс определяется набором высоты. Скорость и время вводишь сам.")}
             </div>
           )}
         </div>

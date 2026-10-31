@@ -71,7 +71,10 @@ create index measurements_user_date_idx on measurements (user_id, date);
 -- пропущенной тренировке (1.1.2, api/missed-check.js); protein_alerts —
 -- напоминание о протеине после тренировки (1.1.3, api/rest-fire.js);
 -- achievements — открытые достижения с датой (1.1.3, src/gamification.js);
--- tour_seen — новичку уже предлагали обучение (1.1.4, src/Tour.jsx).
+-- tour_seen — новичку уже предлагали обучение (1.1.4, src/Tour.jsx);
+-- unsaved_alerts, last_unsaved_alert, workout_touched_at — напоминание о
+-- несохранённой тренировке; lang — язык интерфейса и сообщений бота;
+-- units — система единиц показа (данные всегда в метрике).
 create table profile (
   user_id uuid primary key references users(id) on delete cascade,
   plan_id text not null default 'plan1',
@@ -90,7 +93,12 @@ create table profile (
   last_missed_alert text,
   protein_alerts boolean not null default true,
   achievements jsonb not null default '{}',
-  tour_seen boolean not null default false
+  tour_seen boolean not null default false,
+  unsaved_alerts boolean not null default true,
+  last_unsaved_alert text,
+  workout_touched_at timestamptz,
+  lang text,
+  units text
 );
 
 -- ============================================================
@@ -132,6 +140,9 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 --   1.1.3 — переключатель напоминания о протеине (migration-add-protein-alerts.sql),
 --           постоянные достижения (migration-add-achievements.sql).
 --   1.1.4 — обучение по приложению (migration-add-tour-seen.sql).
+--   1.1.5 — напоминание о несохранённой тренировке (migration-add-unsaved-alerts.sql),
+--           язык интерфейса (migration-add-lang.sql),
+--           система единиц (migration-add-units.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
@@ -150,6 +161,27 @@ alter table profile
 alter table profile add column if not exists protein_alerts boolean not null default true;
 alter table profile add column if not exists achievements jsonb not null default '{}';
 alter table profile add column if not exists tour_seen boolean not null default false;
+alter table profile
+  add column if not exists unsaved_alerts boolean not null default true,
+  add column if not exists last_unsaved_alert text,
+  add column if not exists workout_touched_at timestamptz;
+-- метки активности — по часам сервера (migration-add-unsaved-alerts.sql)
+create or replace function public.profile_server_marks() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if new.active_workout_at is not null and new.active_workout_at is distinct from old.active_workout_at then
+    new.active_workout_at := now();
+  end if;
+  if new.workout_touched_at is not null and new.workout_touched_at is distinct from old.workout_touched_at then
+    new.workout_touched_at := now();
+  end if;
+  return new;
+end $$;
+drop trigger if exists profile_server_marks on public.profile;
+create trigger profile_server_marks before update on public.profile
+  for each row execute function public.profile_server_marks();
+alter table profile add column if not exists lang text;
+alter table profile add column if not exists units text;
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.

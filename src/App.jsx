@@ -15,6 +15,8 @@ import { normalizeBodyLog } from './bodyLog.js';
 import { withBestSet } from './bestSet.js';
 import { achievementUnlockDates } from './gamification.js';
 import { Tour, TourPrompt } from './Tour.jsx';
+import { tr, getLang, setLang } from './i18n.js';
+import { getUnits, setUnits } from './units.js';
 
 // ------- Преобразование между форматом БД (snake_case) и форматом приложения (camelCase) -------
 
@@ -24,8 +26,9 @@ function sessionFromRow(row) {
     date: row.date,
     // Итоги упражнения — по лучшему подходу (src/bestSet.js): старые записи
     // пошаговой тренировки хранили повторы последнего подхода.
-    exercises: (row.exercises || []).map(withBestSet),
-    cardio: row.cardio || [],
+    // Кривая запись (не список) не должна ронять загрузку всего остального.
+    exercises: (Array.isArray(row.exercises) ? row.exercises : []).filter((e) => e && typeof e === 'object').map(withBestSet),
+    cardio: Array.isArray(row.cardio) ? row.cardio : [],
     sleep: row.sleep,
     energy: row.energy,
     difficulty: row.difficulty ?? null,
@@ -87,42 +90,55 @@ function profileFromRow(row) {
     missedAlerts: !!row.missed_alerts,
     // Напоминание о протеине после тренировки; по умолчанию включено.
     proteinAlerts: row.protein_alerts !== false,
+    // Напоминание о несохранённой тренировке; по умолчанию включено.
+    unsavedAlerts: row.unsaved_alerts !== false,
     // Открытые достижения с датой: { id: 'ГГГГ-ММ-ДД' } — постоянные (gamification.js).
     achievements: row.achievements && typeof row.achievements === 'object' && !Array.isArray(row.achievements) ? row.achievements : {},
     tz: row.tz || null,
     // Новичку один раз предлагают обучение (src/Tour.jsx); ответил — больше не спрашиваем.
     tourSeen: !!row.tour_seen,
+    // Язык интерфейса (src/i18n.js): 'ru' | 'en'; null — ещё не выбирали.
+    lang: row.lang === 'en' || row.lang === 'ru' ? row.lang : null,
+    // Система единиц (src/units.js): 'metric' | 'imperial'; null — не выбирали (метрика).
+    units: row.units === 'imperial' || row.units === 'metric' ? row.units : null,
   };
 }
 
+// Профиль пишется ПАТЧЕМ: в строку уходят только переданные поля (saveProfile
+// кладёт их поверх свежего состояния). Раньше каждая запись переписывала строку
+// целиком из того profile, что был под рукой у вызывающего: после неудачной
+// загрузки ({}) это сбрасывало план на первый и стирало замеры, а со старого
+// состояния (долго открытое приложение, две записи подряд) откатывало чужие правки.
 function profileToRow(p, userId) {
-  return {
-    user_id: userId,
-    last_program_day: p.lastProgramDay ?? null,
-    plan_id: p.planId || DEFAULT_PLAN_ID,
-    height: p.height ?? null,
-    waist: p.waist ?? null,
-    hips: p.hips ?? null,
-    chest: p.chest ?? null,
-    shoulders: p.shoulders ?? null,
-    body_fat: p.bodyFat ?? null,
-    updated_at: p.updatedAt ?? null,
-    // Без истории в объекте (импорт старой копии) колонку не трогаем: upsert
-    // обновляет только переданные поля, и история в базе остаётся.
-    ...(Array.isArray(p.bodyLog) ? { body_log: normalizeBodyLog(p.bodyLog) } : {}),
-    ...(p.missedAlerts !== undefined ? { missed_alerts: !!p.missedAlerts } : {}),
-    ...(p.proteinAlerts !== undefined ? { protein_alerts: !!p.proteinAlerts } : {}),
-    ...(p.achievements && typeof p.achievements === 'object' && !Array.isArray(p.achievements) ? { achievements: p.achievements } : {}),
-    ...(p.tz ? { tz: p.tz } : {}),
-    // Флаг только ставится, сбрасывать его некому — пишем лишь true.
-    ...(p.tourSeen ? { tour_seen: true } : {}),
-  };
+  const has = (k) => Object.prototype.hasOwnProperty.call(p, k);
+  const row = { user_id: userId };
+  if (has('lastProgramDay')) row.last_program_day = p.lastProgramDay ?? null;
+  if (has('planId')) row.plan_id = p.planId || DEFAULT_PLAN_ID;
+  ['height', 'waist', 'hips', 'chest', 'shoulders'].forEach((k) => { if (has(k)) row[k] = p[k] ?? null; });
+  if (has('bodyFat')) row.body_fat = p.bodyFat ?? null;
+  if (has('updatedAt')) row.updated_at = p.updatedAt ?? null;
+  // Без истории в объекте (импорт старой копии) колонку не трогаем.
+  if (Array.isArray(p.bodyLog)) row.body_log = normalizeBodyLog(p.bodyLog);
+  if (has('missedAlerts')) row.missed_alerts = !!p.missedAlerts;
+  if (has('proteinAlerts')) row.protein_alerts = !!p.proteinAlerts;
+  if (has('unsavedAlerts')) row.unsaved_alerts = !!p.unsavedAlerts;
+  if (p.achievements && typeof p.achievements === 'object' && !Array.isArray(p.achievements)) row.achievements = p.achievements;
+  if (p.tz) row.tz = p.tz;
+  // Флаг только ставится, сбрасывать его некому — пишем лишь true.
+  if (p.tourSeen) row.tour_seen = true;
+  if (p.lang) row.lang = p.lang;
+  if (p.units) row.units = p.units;
+  return row;
 }
 
 function useStorage(userId) {
   const [sessions, setSessions] = useState(null);
   const [measurements, setMeasurements] = useState(null);
   const [profile, setProfile] = useState(null);
+  // Свежий профиль для saveProfile (патч кладётся поверх него, а не поверх
+  // устаревшего profile из замыкания вызывающего) и флаг неудачной загрузки.
+  const profileRef = useRef(null);
+  const loadFailedRef = useRef(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   // Загрузка не удалась: данные пустые не потому, что их нет. Обучение новичку
@@ -146,13 +162,17 @@ function useStorage(userId) {
 
         setSessions((sessionsRes.data || []).map(sessionFromRow));
         setMeasurements((measurementsRes.data || []).map(measurementFromRow));
-        setProfile(profileFromRow(profileRes.data));
+        profileRef.current = profileFromRow(profileRes.data);
+        loadFailedRef.current = false;
+        setProfile(profileRef.current);
         setLoaded(true);
       } catch (e) {
-        setError('Не удалось загрузить данные — проверь подключение к интернету');
+        setError(tr("Не удалось загрузить данные — проверь подключение к интернету"));
         setLoadFailed(true);
+        loadFailedRef.current = true;
         setSessions([]);
         setMeasurements([]);
+        profileRef.current = {};
         setProfile({});
         setLoaded(true);
       }
@@ -228,13 +248,17 @@ function useStorage(userId) {
   // ВАЖНО: save* пробрасывают ошибку наружу. Раньше они её глотали, и вызывающий
   // экран показывал «Сохранено ✓» поверх несостоявшейся записи — самый дорогой баг
   // из найденных. Теперь вызывающий обязан поймать ошибку и не врать пользователю.
-  const SAVE_ERROR = 'Не удалось сохранить — данные остались в приложении, повторю при следующем сохранении';
+  const SAVE_ERROR = tr('Не удалось сохранить — данные остались в приложении, повторю при следующем сохранении');
+
+  // Повтор удался — плашка «не удалось сохранить» от прошлой попытки больше не правда.
+  const clearSaveError = () => setError((cur) => (cur === SAVE_ERROR ? '' : cur));
 
   const saveSessions = async (next) => {
     const prev = sessions || [];
     setSessions(next);
     try {
       await diffAndUpsert('sessions', prev, next, sessionToRow);
+      clearSaveError();
     } catch (e) {
       setError(SAVE_ERROR);
       throw e;
@@ -246,17 +270,28 @@ function useStorage(userId) {
     setMeasurements(next);
     try {
       await diffAndUpsert('measurements', prev, next, measurementToRow);
+      clearSaveError();
     } catch (e) {
       setError(SAVE_ERROR);
       throw e;
     }
   };
 
-  const saveProfile = async (next) => {
+  // patch — только меняемые поля ({ lang: 'en' }, { lastProgramDay: 5 }…).
+  // Данные не загрузились — профиль не пишем вовсе: в памяти пустышка, и любая
+  // запись (даже патч истории замеров) заменила бы настоящие данные.
+  const saveProfile = async (patch) => {
+    if (loadFailedRef.current) {
+      setError(tr('Данные не загрузились — перезапусти приложение, иначе изменения профиля не сохранятся'));
+      throw new Error('profile not loaded');
+    }
+    const next = { ...(profileRef.current || {}), ...patch };
+    profileRef.current = next;
     setProfile(next);
     try {
-      const { error: upsertErr } = await supabase.from('profile').upsert(profileToRow(next, userId));
+      const { error: upsertErr } = await supabase.from('profile').upsert(profileToRow(patch, userId));
       if (upsertErr) throw upsertErr;
+      clearSaveError();
     } catch (e) {
       setError(SAVE_ERROR);
       throw e;
@@ -266,17 +301,68 @@ function useStorage(userId) {
   // Метка «идёт тренировка» для напоминания о пропуске: сервер не пишет, пока
   // тренировка начата меньше 4 часов назад и не закрыта. Заодно — пояс устройства.
   // Это подсказка серверу, а не данные: ошибки молча игнорируем.
-  const markActiveWorkout = async (on) => {
+  const lastTouchRef = useRef(0);
+  const lastDataTouchRef = useRef(0);
+  const touchTimerRef = useRef(null);
+  const touchDataRef = useRef(false); // в отложенной отметке есть записанные подходы
+  const cancelTouch = () => {
+    if (touchTimerRef.current) clearTimeout(touchTimerRef.current);
+    touchTimerRef.current = null;
+    touchDataRef.current = false;
+  };
+  // keepTouched — тренировку закрыли крестиком, не сохранив (черновик остался):
+  // метку подходов не снимаем, напоминание о несохранённой должно прийти.
+  const markActiveWorkout = async (on, keepTouched = false) => {
+    cancelTouch();
+    lastTouchRef.current = on ? Date.now() : 0;
+    if (!on) lastDataTouchRef.current = 0;
     let tz = null;
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* no-op */ }
     try {
+      // Закрыли тренировку — снимаем «идёт тренировку», а после сохранения и метку подходов.
       await supabase.from('profile')
-        .update({ active_workout_at: on ? new Date().toISOString() : null, ...(tz ? { tz } : {}) })
+        .update({ active_workout_at: on ? new Date().toISOString() : null, ...(on || keepTouched ? {} : { workout_touched_at: null }), ...(tz ? { tz } : {}) })
         .eq('user_id', userId);
     } catch (e) { /* no-op */ }
   };
 
-  return { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout };
+  // «Начать заново» на предложении продолжить: черновик выброшен — и метка тоже.
+  const clearWorkoutTouch = () => {
+    cancelTouch();
+    lastDataTouchRef.current = 0;
+    supabase.from('profile').update({ workout_touched_at: null }).eq('user_id', userId).then(() => {}, () => {});
+  };
+
+  // Действие в тренировке (запись черновика), не чаще раза в 5 минут:
+  //   active_workout_at — последнее действие вообще («идёт тренировка» для
+  //     напоминания о пропуске);
+  //   workout_touched_at — последнее действие, когда в черновике уже есть
+  //     записанные подходы: от неё считает напоминание о несохранённой тренировке.
+  // Отметка — в КОНЦЕ пятиминутного окна (а не по первому действию в нём): иначе
+  // последнее действие окна терялось и «час без действий» наступал раньше часа.
+  // Время ставит сервер (триггер profile_server_marks).
+  const TOUCH_MS = 5 * 60 * 1000;
+  const flushTouch = () => {
+    touchTimerRef.current = null;
+    const hasData = touchDataRef.current;
+    touchDataRef.current = false;
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    lastTouchRef.current = now;
+    if (hasData) lastDataTouchRef.current = now;
+    supabase.from('profile').update({ active_workout_at: at, ...(hasData ? { workout_touched_at: at } : {}) })
+      .eq('user_id', userId).then(() => {}, () => {});
+  };
+  const touchActiveWorkout = (hasData) => {
+    touchDataRef.current = touchDataRef.current || !!hasData;
+    if (touchTimerRef.current) return; // отметка уже назначена — уйдёт с последним состоянием
+    // Первые записанные подходы — сразу; дальше — не чаще раза в 5 минут.
+    const wait = hasData && !lastDataTouchRef.current ? 0 : Math.max(0, lastTouchRef.current + TOUCH_MS - Date.now());
+    if (wait === 0) flushTouch();
+    else touchTimerRef.current = setTimeout(flushTouch, wait);
+  };
+
+  return { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout, touchActiveWorkout, clearWorkoutTouch };
 }
 
 // Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые
@@ -322,10 +408,41 @@ function Pill({ children, active, onClick, icon: Icon, main, tour }) {
 function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   const t = useTheme();
   const { ref: brassRef } = useBrassShine();
-  const { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout } = useStorage(userId);
+  const { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout, touchActiveWorkout, clearWorkoutTouch } = useStorage(userId);
   // Порядок в баре: «Тренировка» посередине как главная, ассистент между ней и
   // профилем. Порядок задаёт и направление свайпов.
   const TAB_ORDER = ['progress', 'measurements', 'workout', 'assistant', 'profile'];
+
+  // Язык интерфейса. Смена — перемонтирование вкладок (key ниже): тексты, даты и
+  // посчитанные заранее подписи пересобираются на новом языке. Выбор из профиля
+  // важнее сохранённого на устройстве.
+  const [lang, setLangState] = useState(getLang());
+  const applyLang = (l) => { setLang(l); setLangState(getLang()); };
+  useEffect(() => {
+    if (!loaded || loadFailed || !profile) return;
+    if (profile.lang && profile.lang !== getLang()) applyLang(profile.lang);
+    // Язык определился сам (устройство, Telegram) — записываем его в профиль:
+    // по нему сервер выбирает язык сообщений бота, иначе англоязычный
+    // пользователь получал бы их по-русски, пока сам не тронет переключатель.
+    else if (!profile.lang) saveProfile({ lang: getLang() }).catch(() => { /* сообщение уже показано */ });
+  }, [loaded, profile && profile.lang]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changeLang = (l) => {
+    if (l === lang) return;
+    applyLang(l);
+    if (profile) saveProfile({ lang: l }).catch(() => { /* сообщение уже показано */ });
+  };
+  // Система единиц — так же: данные всегда в метрике, перемонтирование
+  // пересчитывает показ и поля ввода (черновик тренировки пересчитается сам).
+  const [units, setUnitsState] = useState(getUnits());
+  const applyUnits = (u) => { setUnits(u); setUnitsState(getUnits()); };
+  useEffect(() => {
+    if (loaded && profile && profile.units && profile.units !== getUnits()) applyUnits(profile.units);
+  }, [loaded, profile && profile.units]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changeUnits = (u) => {
+    if (u === units) return;
+    applyUnits(u);
+    if (profile) saveProfile({ units: u }).catch(() => { /* сообщение уже показано */ });
+  };
   // Стартовый экран зависит от времени: утром, в окно взвешивания, приложение
   // открывается сразу на «Весе», в остальное время — на «Тренировке». Проверка
   // делается ОДИН раз, при инициализации: если приложение открыто и время вышло
@@ -371,10 +488,10 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   // профиля из другого места перетёрла их старым значением, эффект сработает
   // снова и допишет. Ошибку сети покажет сам saveProfile.
   useEffect(() => {
-    if (!loaded || !profile || !sessions) return;
+    if (!loaded || loadFailed || !profile || !sessions) return;
     const fresh = achievementUnlockDates({ sessions, measurements, profile });
     if (Object.keys(fresh).length === 0) return;
-    saveProfile({ ...profile, achievements: { ...(profile.achievements || {}), ...fresh } }).catch(() => { /* сообщение уже показано */ });
+    saveProfile({ achievements: { ...(profile.achievements || {}), ...fresh } }).catch(() => { /* сообщение уже показано */ });
   }, [loaded, sessions, measurements, profile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteSession = async (id) => {
@@ -412,7 +529,7 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
 
   const answerTour = (yes) => {
     setTourAsk(false);
-    if (!profile.tourSeen) saveProfile({ ...profile, tourSeen: true }).catch(() => { /* сообщение уже показано */ });
+    if (!profile.tourSeen) saveProfile({ tourSeen: true }).catch(() => { /* сообщение уже показано */ });
     if (yes) setTourOpen(true);
   };
 
@@ -544,18 +661,18 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 22 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <h1 style={{ fontSize: 27, fontWeight: 700, color: t.TEXT, margin: 0, letterSpacing: '-0.02em', fontFamily: t.FONT_DISPLAY }}>
-            Дневник тренировок
+            {tr("Дневник тренировок")}
           </h1>
           <p style={{ fontSize: 13, color: t.TEXT_FAINT, margin: '4px 0 0' }}>
-            {displayName ? `Привет, ${displayName}!` : 'Вес, повторы, самочувствие — и динамика по каждому упражнению'}
+            {displayName ? tr("Привет, {0}!", displayName) : tr("Вес, повторы, самочувствие — и динамика по каждому упражнению")}
           </p>
         </div>
         {/* Обучение ещё раз — то же, что предлагают новичку при первом входе. */}
         <button
           data-tour="tour-restart"
           onClick={() => setTourOpen(true)}
-          aria-label="Как пользоваться трекером"
-          title="Как пользоваться трекером"
+          aria-label={tr("Как пользоваться трекером")}
+          title={tr("Как пользоваться трекером")}
           style={{
             flexShrink: 0, width: 40, height: 40, marginTop: 1, borderRadius: 14, padding: 0,
             ...glassCard({ shadow: false }),
@@ -587,11 +704,14 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
         style={{ display: tab === 'workout' ? 'block' : 'none', touchAction: 'pan-y' }}
       >
         <WorkoutTab
+          key={`${lang}-${units}`}
           sessions={sessions} saveSessions={saveSessions} setError={setError}
           profile={profile} saveProfile={saveProfile} userId={userId}
           editSession={editingSession} onEditDone={handleEditDone}
           onMiniBarChange={setMiniBar}
           onWorkoutActive={markActiveWorkout}
+          onWorkoutTouch={touchActiveWorkout}
+          onWorkoutDiscard={clearWorkoutTouch}
         />
       </div>
 
@@ -599,7 +719,7 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
         <div
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
-          key={tab}
+          key={`${tab}-${lang}-${units}`}
           className={slideDir === 1 ? 'slide-in-right' : slideDir === -1 ? 'slide-in-left' : ''}
           style={{ touchAction: 'pan-y' }}
         >
@@ -616,6 +736,8 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
               profile={profile} saveProfile={saveProfile} sessions={sessions} setError={setError}
               measurements={measurements} saveSessions={saveSessions} saveMeasurements={saveMeasurements}
               onLogout={onLogout}
+              lang={lang} onLang={changeLang}
+              units={units} onUnits={changeUnits}
             />
           )}
         </div>
@@ -643,11 +765,11 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
           boxShadow: `${GLASS_EDGE}, 0 16px 40px rgba(0,0,0,0.45)`,
           boxSizing: 'border-box', pointerEvents: 'auto',
         }}>
-          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon} tour="tab-progress">Прогресс</Pill>
-          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler} tour="tab-measurements">Вес</Pill>
-          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell} main tour="tab-workout">Тренировка</Pill>
-          <Pill active={tab === 'assistant'} onClick={() => goToTab('assistant')} icon={Sparkles} tour="tab-assistant">Ассистент</Pill>
-          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User} tour="tab-profile">Профиль</Pill>
+          <Pill active={tab === 'progress'} onClick={() => goToTab('progress')} icon={LineIcon} tour="tab-progress">{tr("Прогресс")}</Pill>
+          <Pill active={tab === 'measurements'} onClick={() => goToTab('measurements')} icon={Ruler} tour="tab-measurements">{tr("Вес")}</Pill>
+          <Pill active={tab === 'workout'} onClick={() => goToTab('workout')} icon={Dumbbell} main tour="tab-workout">{tr("Тренировка")}</Pill>
+          <Pill active={tab === 'assistant'} onClick={() => goToTab('assistant')} icon={Sparkles} tour="tab-assistant">{tr("Ассистент")}</Pill>
+          <Pill active={tab === 'profile'} onClick={() => goToTab('profile')} icon={User} tour="tab-profile">{tr("Профиль")}</Pill>
         </div>
       </div>
 

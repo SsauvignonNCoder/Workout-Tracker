@@ -14,6 +14,8 @@ import {
   isWeightlessExercise, isTimeBasedExercise, parseClock,
 } from './tabs/workoutTabHelpers.jsx';
 import { cooldownFor } from './cooldown.js';
+import { tr } from './i18n.js';
+import { num } from './units.js';
 
 export const SUMMARY_KIND = 'summary';
 
@@ -37,6 +39,25 @@ function setHasData(x) {
 
 export function hasSetData(log) {
   return (log || []).some(setHasData);
+}
+
+// Есть ли в черновике хоть что-то записанное — порог для напоминания о
+// несохранённой тренировке: открыл, посмотрел и вышел — не напоминаем.
+// Считаются подходы с весом или повторами; на дне без силовых (кардио, бассейн)
+// — записанное кардио.
+export function workoutHasData({ steps = [], exLogs = {}, cardioLogs = {}, sectorLogs = {} } = {}) {
+  const exSteps = steps.filter((s) => s.kind === 'exercise');
+  if (exSteps.some((s) => hasSetData(exLogs[s.id]))) return true;
+  if (exSteps.length > 0) return false;
+  const cardio = steps.filter((s) => s.kind === 'cardio' || s.kind === 'pool').some((s) => {
+    const c = cardioLogs[s.id] || {};
+    return (parseFloat(c.distance) || 0) > 0 || (parseInt(c.duration, 10) || 0) > 0;
+  });
+  const sectors = steps.filter((s) => s.kind === 'sectors').some((s) => {
+    const d = sectorLogs[s.id];
+    return !!d && (d.sectors || []).some((x) => (parseFloat(x.distance) || 0) > 0 || !!x.clock);
+  });
+  return cardio || sectors;
 }
 
 // Новый размер списка подходов: введённое сохраняем, недостающие добавляем
@@ -120,7 +141,7 @@ export function buildSteps(day) {
     out.push({ ...SUMMARY_STEP });
   } else if (day.type === 'pool') {
     out.push({
-      kind: 'pool', title: day.title, subtitle: `${day.cardio.duration || '60'} минут`,
+      kind: 'pool', title: day.title, subtitle: tr('{0} минут', day.cardio.duration || '60'),
       name: day.cardio.name,
       fields: { distance: false, speed: false, incline: false, duration: true },
       target: { duration: day.cardio.duration },
@@ -137,7 +158,8 @@ export function initialLogsFor(step) {
   if (step.kind === 'exercise') return { ex: emptySets(step.plannedSets) };
   if (step.kind === 'cardio' || step.kind === 'pool') return { cardio: { distance: '', speed: '', incline: '', duration: '' } };
   if (step.kind === 'sectors') {
-    return { sectors: { metric: 'distance', target: step.planDistance || '', sectors: [{ distance: '', speed: '', incline: '', clock: '' }] } };
+    // Цель из плана — в км; поле — в единицах экрана (src/units.js).
+    return { sectors: { metric: 'distance', target: step.planDistance ? num('d', step.planDistance) : '', sectors: [{ distance: '', speed: '', incline: '', clock: '' }] } };
   }
   return {};
 }
@@ -322,6 +344,7 @@ export function pickedRouteName(steps, sectorLogs) {
   for (const s of steps || []) {
     if (s.kind !== 'sectors') continue;
     const c = sectorLogs && sectorLogs[s.id] && sectorLogs[s.id].climb;
+    // Это данные (route_name): по-русски, как записано; на экран — routeTitle (i18n.js).
     if (c && c.name) return c.stages > 1 ? `${c.name} · этап ${c.stage}/${c.stages}` : c.name;
   }
   return null;
@@ -424,9 +447,11 @@ export function buildGuidedSession({
 
 // ---- Черновик v3 ----
 // Проверка, что сохранённый черновик относится к ЭТОЙ тренировке и цел.
-export function draftMatches(d, { planId, day, date }) {
+// earlier — подходит и черновик того же дня плана с более ранней даты.
+export function draftMatches(d, { planId, day, date }, { earlier = false } = {}) {
   if (!d || d.v !== 3) return false;
-  if (d.planId !== planId || d.day !== day || d.date !== date) return false;
+  if (d.planId !== planId || d.day !== day) return false;
+  if (earlier ? !(d.date <= date) : d.date !== date) return false;
   if (!Array.isArray(d.steps) || d.steps.length === 0) return false;
   return d.steps.every((s) => s && typeof s.id === 'string' && typeof s.kind === 'string');
 }

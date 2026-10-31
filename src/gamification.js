@@ -10,6 +10,7 @@ import { categorizeExercise, MUSCLE_GROUPS, isTimeBasedExercise } from './tabs/w
 import { bodyLogOf } from './bodyLog.js';
 import { makeTrainingDayCheck } from './plans.js';
 import { makeExtraAchievements, makeProgressMap } from './achievementsExtra.js';
+import { heavier } from './units.js';
 
 // Иконки достижений (lucide) вместо эмодзи — ключ совпадает с прежним полем icon.
 export const ACH_ICON = {
@@ -47,7 +48,7 @@ export function computeRecords(sessions) {
       const w = Number(ex.weight) || 0;
       if (w > 0) {
         const prev = records[ex.name];
-        if (!prev || !prev.weight || w > prev.weight) {
+        if (!prev || !prev.weight || heavier(w, prev.weight)) {
           records[ex.name] = { weight: w, reps: ex.reps, date: s.date };
         }
         return;
@@ -434,7 +435,7 @@ const BASE_ACHIEVEMENTS = [
   {
     id: 'heavy-week',
     title: 'Тяжёлая неделя',
-    description: 'Суммарный объём (вес×повторы×подходы) за календарную неделю ≥ 10 000',
+    description: 'Суммарный объём (вес×повторы×подходы) за календарную неделю ≥ 10 000 кг',
     xp: 10,
     icon: '🏗️',
     check: ({ sessions }) => maxWeeklyVolume(sessions) >= 10000,

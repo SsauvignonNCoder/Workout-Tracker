@@ -1,3 +1,5 @@
+import { tr } from './i18n.js';
+import { U } from './units.js';
 // Коллекция реальных маршрутов для цели по набору высоты.
 //
 // ГЛАВНЫЙ ПРИНЦИП: профиль берётся КАК ЕСТЬ, из GPS-трека, без пересчёта.
@@ -141,5 +143,5 @@ function round2(n) { return Math.round(n * 100) / 100; }
 // Подпись маршрута в списке: «3.49 км · ↑544 м · 15.6%».
 export function climbCaption(climb) {
   const avg = (climb.gain / (climb.length * 10)).toFixed(1);
-  return `${climb.length} км · ↑${climb.gain} м · ${avg}%`;
+  return `${U('d', climb.length)} · ↑${U('h', climb.gain)} · ${avg}%`;
 }

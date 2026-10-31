@@ -7,6 +7,8 @@ import {
 } from '../gamification.js';
 import { PLANS, DEFAULT_PLAN_ID, getPlan } from '../plans.js';
 import { APP_VERSION } from '../version.js';
+import { tr, achTitle, achDescription, locale } from '../i18n.js';
+import { toDisp, unit as unitLabel, KIND_OF_UNIT, convertText, isImperial, showNum } from '../units.js';
 
 // Выбор плана тренировок (1.1.0). Планы живут в src/plans.js; старый план не
 // удаляется — к нему привязаны все тренировки до 1.1.0, и на него можно
@@ -27,7 +29,7 @@ function PlanPicker({ profile, saveProfile }) {
     if (!pending) return;
     setSaving(true);
     try {
-      await saveProfile({ ...(profile || {}), planId: pending, lastProgramDay: 0 });
+      await saveProfile({ planId: pending, lastProgramDay: 0 });
       setPending(null);
       setOpen(false);
     } catch (e) {
@@ -47,12 +49,12 @@ function PlanPicker({ profile, saveProfile }) {
         }}
       >
         <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', flexShrink: 0 }}>
-          План тренировок
+          {tr("План тренировок")}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           {!open && (
             <span style={{ fontSize: 12.5, fontWeight: 700, color: t.ACCENT_SOFT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {currentPlan.title}
+              {tr(currentPlan.title)}
             </span>
           )}
           <span style={{ color: t.TEXT_FAINT, fontSize: 11, flexShrink: 0 }}>{open ? '▼' : '▶'}</span>
@@ -81,14 +83,14 @@ function PlanPicker({ profile, saveProfile }) {
                   </span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: 'block', fontSize: 14.5, fontWeight: 700, color: active ? t.ACCENT_SOFT : t.TEXT, marginBottom: 3 }}>
-                      {p.title}
+                      {tr(p.title)}
                     </span>
                     <span style={{ display: 'block', fontSize: 12, color: t.TEXT_FAINT, lineHeight: 1.4 }}>
-                      {p.description}
+                      {tr(p.description)}
                     </span>
                     {active && lastDay > 0 && (
                       <span style={{ display: 'block', fontSize: 11.5, color: t.TEXT_DIM, marginTop: 5, fontFamily: t.FONT_MONO }}>
-                        последний сделанный день: {lastDay} из {p.days.length}
+                        {tr("последний сделанный день:")} {lastDay} {tr("из")} {p.days.length}
                       </span>
                     )}
                   </span>
@@ -102,8 +104,7 @@ function PlanPicker({ profile, saveProfile }) {
               marginTop: 10, padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.ACCENT}`, borderRadius: 12,
             }}>
               <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 10 }}>
-                Переключить с «{currentPlan.title}» на «{getPlan(pending).title}»? Следующая тренировка начнётся
-                с дня 1. История и рекорды не меняются — прошлые тренировки остаются в своём плане.
+                {tr("Переключить с «{0}» на «{1}»? Следующая тренировка начнётся с дня 1. История и рекорды не меняются — прошлые тренировки остаются в своём плане.", tr(currentPlan.title), tr(getPlan(pending).title))}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
@@ -115,7 +116,7 @@ function PlanPicker({ profile, saveProfile }) {
                     cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: 'inherit',
                   }}
                 >
-                  {saving ? 'Переключаю…' : 'Переключить'}
+                  {saving ? tr("Переключаю…") : tr("Переключить")}
                 </button>
                 <button
                   onClick={() => setPending(null)}
@@ -126,7 +127,7 @@ function PlanPicker({ profile, saveProfile }) {
                     cursor: 'pointer', fontFamily: 'inherit',
                   }}
                 >
-                  Отмена
+                  {tr("Отмена")}
                 </button>
               </div>
             </div>
@@ -137,8 +138,8 @@ function PlanPicker({ profile, saveProfile }) {
   );
 }
 
-// Напоминания бота в «Настройках»: о пропущенной тренировке (api/missed-check.js)
-// и о протеине через час после тренировки (api/rest-fire.js). Пояс устройства
+// Напоминания бота в «Настройках»: о пропущенной тренировке и о несохранённой
+// (api/missed-check.js), о протеине через час после тренировки (api/rest-fire.js). Пояс устройства
 // сохраняем вместе с переключением: сервер считает 21:30 по нему.
 function AlertToggles({ profile, saveProfile }) {
   const [saving, setSaving] = useState(false);
@@ -148,18 +149,65 @@ function AlertToggles({ profile, saveProfile }) {
     try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { /* no-op */ }
     setSaving(true);
     try {
-      await saveProfile({ ...(profile || {}), ...patch, ...(tz ? { tz } : {}) });
+      await saveProfile({ ...patch, ...(tz ? { tz } : {}) });
     } catch (e) { /* сообщение уже показал saveProfile */ }
     setSaving(false);
   };
   const missedOn = !!(profile && profile.missedAlerts);
   // Протеин: у профилей до переключателя флага нет — значит включено, как было.
   const proteinOn = !(profile && profile.proteinAlerts === false);
+  const unsavedOn = !(profile && profile.unsavedAlerts === false);
   return (
     <>
-      <SettingToggle label="Напоминать о пропущенной тренировке" on={missedOn} saving={saving} onToggle={() => save({ missedAlerts: !missedOn })} />
-      <SettingToggle label="Напоминать о протеине" on={proteinOn} saving={saving} onToggle={() => save({ proteinAlerts: !proteinOn })} />
+      <SettingToggle label={tr("Напоминать о пропущенной тренировке")} on={missedOn} saving={saving} onToggle={() => save({ missedAlerts: !missedOn })} />
+      <SettingToggle label={tr("Напоминать о несохранённой тренировке")} on={unsavedOn} saving={saving} onToggle={() => save({ unsavedAlerts: !unsavedOn })} />
+      <SettingToggle label={tr("Напоминать о протеине")} on={proteinOn} saving={saving} onToggle={() => save({ proteinAlerts: !proteinOn })} />
     </>
+  );
+}
+
+// Язык интерфейса и система единиц: подпись всегда на обоих языках — чтобы
+// найти, даже не понимая текущий.
+function LangSwitch({ lang, onLang }) {
+  const opts = [{ key: 'ru', label: 'Русский' }, { key: 'en', label: 'English' }];
+  return <ChoiceSwitch title="Язык · Language" opts={opts} value={lang} onChange={onLang} />;
+}
+
+function UnitsSwitch({ units, onUnits }) {
+  const opts = [{ key: 'metric', label: tr('кг, км') }, { key: 'imperial', label: tr('фнт, мили') }];
+  return <ChoiceSwitch title="Единицы · Units" opts={opts} value={units} onChange={onUnits} />;
+}
+
+function ChoiceSwitch({ title, opts, value, onChange }) {
+  const t = useTheme();
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '8px 8px 8px 14px', marginBottom: 10,
+      borderRadius: 12, background: t.BG_RAISED, border: `1px solid ${t.BORDER}`,
+    }}>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: t.TEXT }}>{title}</span>
+      <div role="radiogroup" aria-label={title} style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+        {opts.map((o) => {
+          const on = o.key === value;
+          return (
+            <button
+              key={o.key}
+              role="radio"
+              aria-checked={on}
+              onClick={() => onChange(o.key)}
+              style={{
+                padding: '7px 11px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12.5, fontWeight: 700,
+                background: on ? t.ACCENT_BG : 'transparent', color: on ? t.ACCENT_SOFT : t.TEXT_DIM,
+                border: `1px solid ${on ? t.ACCENT_BORDER : 'transparent'}`,
+              }}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -178,16 +226,18 @@ function SettingToggle({ label, on, saving, onToggle }) {
       }}
     >
       {/* Без пояснения — так попросил Никита. */}
-      <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 700, color: t.TEXT }}>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: t.TEXT }}>
         {label}
       </span>
+      {/* Тумблер длинный и тонкий (52 × 20), ползунок — вытянутая «таблетка»
+          24 × 16, а не круг: так попросил Никита (было 44 × 26 с кругом). */}
       <span aria-hidden style={{
-        flexShrink: 0, width: 44, height: 26, borderRadius: 13, position: 'relative',
+        flexShrink: 0, width: 52, height: 20, borderRadius: 10, position: 'relative',
         background: on ? t.ACCENT : t.BG_INPUT, border: `1px solid ${on ? t.ACCENT : t.BORDER}`,
         transition: 'background 0.2s ease',
       }}>
         <span style={{
-          position: 'absolute', top: 2, left: on ? 20 : 2, width: 20, height: 20, borderRadius: '50%',
+          position: 'absolute', top: 2, left: on ? 26 : 2, width: 24, height: 16, borderRadius: 8,
           background: on ? t.ON_ACCENT : t.TEXT_DIM, transition: 'left 0.2s ease',
         }} />
       </span>
@@ -197,9 +247,18 @@ function SettingToggle({ label, on, saving, onToggle }) {
 
 // «4.4 / 5 км», «68 / 100», «15 181 / 20 000 м». Числа — без лишних нулей,
 // от 10 000 — с разделителем тысяч.
+// Пороги — в метрике; кг, км, м, см и тонны показываются в выбранной системе.
 function fmtProgress({ cur, goal, unit }) {
-  const n = (v) => { const r = Math.round(v * 100) / 100; return r >= 10000 ? Math.round(r).toLocaleString('ru-RU') : String(r); };
-  return `${n(cur)} / ${n(goal)}${unit ? ` ${unit}` : ''}`;
+  const k = KIND_OF_UNIT[unit];
+  // Пересчитанные — как в описании (showNum), порог — вверх: «143 / 221 lb», а не
+  // «220 / 220 lb» у закрытого достижения (порог 100 кг = 220.46 lb).
+  const conv = k && isImperial();
+  const n = (x, ceil = false) => {
+    if (conv) return showNum(toDisp(k, x), ceil);
+    const r = Math.round(x * 100) / 100;
+    return r >= 10000 ? Math.round(r).toLocaleString(locale()) : String(r);
+  };
+  return `${n(cur)} / ${n(goal, true)}${unit ? ` ${k ? unitLabel(k) : tr(unit)}` : ''}`;
 }
 
 // Карточка уровня — стекло (theme.js → GLASS_*), такое же, как у таб-бара.
@@ -245,18 +304,18 @@ function LevelCard({ levelInfo, totalXp }) {
             </div>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em' }}>Уровень {levelInfo.level}</div>
-            <div style={{ fontSize: 11, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO, marginTop: 3 }}>{Math.round(totalXp)} XP всего</div>
+            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.TEXT, letterSpacing: '-0.01em' }}>{tr("Уровень")} {levelInfo.level}</div>
+            <div style={{ fontSize: 11, color: t.TEXT_FAINT, fontFamily: t.FONT_MONO, marginTop: 3 }}>{Math.round(totalXp)} {tr("XP всего")}</div>
           </div>
           <div style={{ flexShrink: 0, textAlign: 'right' }}>
             {levelInfo.isMaxLevel ? (
-              <div style={{ fontSize: 11, color: t.ACCENT_SOFT, fontFamily: t.FONT_MONO, letterSpacing: '0.04em' }}>МАКС.</div>
+              <div style={{ fontSize: 11, color: t.ACCENT_SOFT, fontFamily: t.FONT_MONO, letterSpacing: '0.04em' }}>{tr("МАКС.")}</div>
             ) : (
               <>
                 <div style={{ fontSize: 13, fontWeight: 600, color: t.TEXT, fontFamily: t.FONT_MONO }}>
                   {Math.round(levelInfo.xpIntoLevel)}<span style={{ color: t.TEXT_FAINT }}>/{levelInfo.xpForLevel}</span>
                 </div>
-                <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, marginTop: 3 }}>до ур. {levelInfo.level + 1}</div>
+                <div style={{ fontSize: 10.5, color: t.TEXT_FAINT, marginTop: 3 }}>{tr("до ур.")} {levelInfo.level + 1}</div>
               </>
             )}
           </div>
@@ -297,7 +356,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
           setCopied(true);
           setTimeout(() => setCopied(false), 2200);
         } catch (e2) {
-          setError('Не удалось скопировать — выдели текст вручную и скопируй');
+          setError(tr("Не удалось скопировать — выдели текст вручную и скопируй"));
         }
       }
     }
@@ -305,7 +364,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
 
   const handleImport = async () => {
     if (!importText.trim()) {
-      setError('Вставь сохранённый текст экспорта');
+      setError(tr("Вставь сохранённый текст экспорта"));
       return;
     }
     // Первое нажатие только просит подтверждение — само восстановление (которое
@@ -324,17 +383,23 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       data = JSON.parse(importText.trim());
     } catch (err) {
       setConfirmingImport(false);
-      setError('Не удалось прочитать текст — проверь, что это полная копия из экспорта');
+      setError(tr("Не удалось прочитать текст — проверь, что это полная копия из экспорта"));
       return;
     }
     const looksLikeRows = (arr) => Array.isArray(arr)
       && arr.every((r) => r && typeof r === 'object' && typeof r.id === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date || ''));
+    // Тренировка без списка упражнений (или со списком не того вида) роняла
+    // приложение при отрисовке — такую копию не берём.
+    const looksLikeSessions = (arr) => looksLikeRows(arr) && arr.every((r) => (
+      (r.exercises === undefined || (Array.isArray(r.exercises) && r.exercises.every((e) => e && typeof e === 'object' && typeof e.name === 'string')))
+      && (r.cardio === undefined || (Array.isArray(r.cardio) && r.cardio.every((c) => c && typeof c === 'object')))
+    ));
     if (!data || typeof data !== 'object'
-      || (data.sessions !== undefined && !looksLikeRows(data.sessions))
+      || (data.sessions !== undefined && !looksLikeSessions(data.sessions))
       || (data.measurements !== undefined && !looksLikeRows(data.measurements))
       || (data.profile !== undefined && (typeof data.profile !== 'object' || data.profile === null))) {
       setConfirmingImport(false);
-      setError('Копия повреждена или это не тот текст — восстановление отменено, данные не тронуты');
+      setError(tr("Копия повреждена или это не тот текст — восстановление отменено, данные не тронуты"));
       return;
     }
 
@@ -342,10 +407,21 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
     // тренировки уже записались, а замеры не успели, восстановление окажется
     // половинчатым. Сказать об этом честнее, чем показать общий баннер «не удалось
     // сохранить» и оставить человека гадать, что именно доехало.
+    // Записи, id которых нет среди своих, получают новый id: запись в базу идёт
+    // по id, и копия ДРУГОГО аккаунта (Telegram ↔ вход по PIN) иначе не
+    // копировалась бы, а переезжала сюда — и пропадала у того аккаунта.
+    const suffix = `-r${Date.now().toString(36)}`;
+    const adopt = (rows, mine) => {
+      const own = new Set((mine || []).map((r) => r.id));
+      return rows.map((r) => (own.has(r.id) ? r : { ...r, id: `${r.id}${suffix}` }));
+    };
+    const sessionsIn = data.sessions
+      && adopt(data.sessions.map((s) => ({ ...s, exercises: s.exercises || [], cardio: s.cardio || [] })), sessions);
+    const measurementsIn = data.measurements && adopt(data.measurements, measurements);
     let done = 0;
     try {
-      if (data.sessions) { await saveSessions(data.sessions); done += 1; }
-      if (data.measurements) { await saveMeasurements(data.measurements); done += 1; }
+      if (sessionsIn) { await saveSessions(sessionsIn); done += 1; }
+      if (measurementsIn) { await saveMeasurements(measurementsIn); done += 1; }
       if (data.profile) { await saveProfile(data.profile); done += 1; }
       setMode(null);
       setImportText('');
@@ -353,7 +429,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
     } catch (err) {
       setConfirmingImport(false);
       if (done > 0) {
-        setError('Восстановление прошло не полностью — часть данных заменена, часть осталась прежней. Проверь связь и повтори: текст копии не стёрт.');
+        setError(tr("Восстановление прошло не полностью — часть данных заменена, часть осталась прежней. Проверь связь и повтори: текст копии не стёрт."));
       }
       // При done === 0 общий баннер от save* уже всё сказал.
     }
@@ -367,7 +443,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
         alignItems: 'center', flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 12, color: t.TEXT_FAINT, flex: '1 1 100%', marginBottom: 2 }}>
-          Резервная копия данных текстом — на случай сбоев автосохранения
+          {tr("Резервная копия данных текстом — на случай сбоев автосохранения")}
         </span>
         <button
           onClick={() => setMode(mode === 'export' ? null : 'export')}
@@ -377,7 +453,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
             fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
-          Создать копию
+          {tr("Создать копию")}
         </button>
         <button
           onClick={() => { setMode(mode === 'import' ? null : 'import'); setConfirmingImport(false); }}
@@ -387,14 +463,14 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
             fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
-          Восстановить
+          {tr("Восстановить")}
         </button>
       </div>
 
       {mode === 'export' && (
         <div style={{ marginTop: 10, padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10 }}>
           <div style={{ fontSize: 12.5, color: t.TEXT_DIM, marginBottom: 8, lineHeight: 1.5 }}>
-            Нажми «Скопировать», затем сохрани этот текст куда угодно (заметки, сообщение себе) — позже вставь его в «Восстановить», если данные пропадут.
+            {tr("Нажми «Скопировать», затем сохрани этот текст куда угодно (заметки, сообщение себе) — позже вставь его в «Восстановить», если данные пропадут.")}
           </div>
           <textarea
             ref={textareaRef}
@@ -415,7 +491,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
               cursor: 'pointer', fontFamily: 'inherit',
             }}
           >
-            {copied ? 'Скопировано ✓' : 'Скопировать'}
+            {copied ? tr("Скопировано ✓") : tr("Скопировать")}
           </button>
         </div>
       )}
@@ -423,12 +499,12 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       {mode === 'import' && (
         <div style={{ marginTop: 10, padding: '12px', background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 10 }}>
           <div style={{ fontSize: 12.5, color: t.TEXT_DIM, marginBottom: 8, lineHeight: 1.5 }}>
-            Вставь сюда ранее сохранённый текст копии. Это заменит текущие данные.
+            {tr("Вставь сюда ранее сохранённый текст копии. Это заменит текущие данные.")}
           </div>
           <textarea
             value={importText}
             onChange={(e) => { setImportText(e.target.value); setConfirmingImport(false); }}
-            placeholder="Вставь сюда скопированный текст..."
+            placeholder={tr("Вставь сюда скопированный текст...")}
             style={{
               width: '100%', height: 100, background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8,
               padding: '10px', color: t.TEXT, fontSize: 11, fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
@@ -437,7 +513,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
           />
           {confirmingImport && (
             <div style={{ fontSize: 12.5, color: t.ACCENT_SOFT, fontWeight: 600, marginBottom: 8, lineHeight: 1.4 }}>
-              Точно заменить текущие данные этой копией? Действие необратимо — нажми ещё раз, чтобы подтвердить.
+              {tr("Точно заменить текущие данные этой копией? Действие необратимо — нажми ещё раз, чтобы подтвердить.")}
             </div>
           )}
           <button
@@ -448,7 +524,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
               cursor: 'pointer', fontFamily: 'inherit',
             }}
           >
-            {confirmingImport ? 'Да, заменить данные' : 'Восстановить данные'}
+            {confirmingImport ? tr("Да, заменить данные") : tr("Восстановить данные")}
           </button>
         </div>
       )}
@@ -456,7 +532,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
   );
 }
 
-export function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, onLogout }) {
+export function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, onLogout, lang, onLang, units, onUnits }) {
   const t = useTheme();
   const [showAchievements, setShowAchievements] = useState(false);
   // Выход — в два шага: кнопка открывает подтверждение под собой.
@@ -484,7 +560,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
         }}
       >
         <span style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
-          Достижения ({unlockedCount}/{achievements.length})
+          {tr("Достижения (")}{unlockedCount}/{achievements.length})
         </span>
         <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{showAchievements ? '▼' : '▶'}</span>
       </button>
@@ -500,7 +576,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
                 margin: '10px 2px 2px', fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
                 textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: t.FONT_MONO,
               }}>
-                <span>{g.title}</span>
+                <span>{tr(g.title)}</span>
                 <span style={{ color: g.done === g.total ? t.ACCENT_SOFT : t.TEXT_FAINT }}>{g.done}/{g.total}</span>
               </div>
               {g.items.map((a) => (
@@ -519,10 +595,10 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
                     {React.createElement(ACH_ICON[a.icon] || Award, { size: 18, color: a.unlocked ? t.ACCENT_SOFT : t.TEXT_FAINT, strokeWidth: 1.8 })}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{a.title}</div>
-                    <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.35 }}>{a.description}</div>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 2 }}>{convertText(achTitle(a), { ceil: true })}</div>
+                    <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, lineHeight: 1.35 }}>{convertText(achDescription(a), { ceil: true })}</div>
                     {a.unlocked && a.unlockedAt && (
-                      <div style={{ fontSize: 11, color: t.ACCENT_SOFT, marginTop: 3, fontFamily: t.FONT_MONO }}>открыто {fmtDateShort(a.unlockedAt)}</div>
+                      <div style={{ fontSize: 11, color: t.ACCENT_SOFT, marginTop: 3, fontFamily: t.FONT_MONO }}>{tr("открыто")} {fmtDateShort(a.unlockedAt)}</div>
                     )}
                     {/* Сколько осталось: тонкая полоска на всю ширину, справа — цифры. */}
                     {!a.unlocked && a.progress && (
@@ -560,12 +636,15 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
       <div style={{ height: 1, background: t.BORDER, margin: '12px 0 18px' }} />
 
       <div style={{ fontSize: 12, color: t.TEXT_FAINT, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginBottom: 12 }}>
-        Настройки
+        {tr("Настройки")}
       </div>
 
       {/* Кнопка «Тема оформления» удалена в 1.0.6. Она крутила подпись
           «Авто · ночь → Светлая → Тёмная», но не меняла ничего: приложение
           жёстко в теме 2A с 13 июля. */}
+
+      {onLang && <LangSwitch lang={lang} onLang={onLang} />}
+      {onUnits && <UnitsSwitch units={units} onUnits={onUnits} />}
 
       <div data-tour="alerts">
         <AlertToggles profile={profile} saveProfile={saveProfile} />
@@ -595,18 +674,17 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
             }}
           >
             <LogOut size={19} />
-            Выйти из аккаунта
+            {tr("Выйти из аккаунта")}
           </button>
           {confirmLogout && (
             <div className="dropdown-open" style={{
               marginTop: 10, padding: '13px', background: t.BG_RAISED, border: `1px solid ${t.DANGER_BORDER}`, borderRadius: 14,
             }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT, marginBottom: 5 }}>
-                Выйти из аккаунта?
+                {tr("Выйти из аккаунта?")}
               </div>
               <div style={{ fontSize: 12.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 12 }}>
-                Тренировки и замеры останутся в базе. Чтобы вернуться, войди снова через Telegram
-                или по имени и PIN. Незаконченная тренировка на этом устройстве сохранится черновиком.
+                {tr("Тренировки и замеры останутся в базе. Чтобы вернуться, войди снова через Telegram или по имени и PIN. Незаконченная тренировка на этом устройстве сохранится черновиком.")}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
@@ -617,7 +695,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
                     cursor: 'pointer', fontFamily: 'inherit',
                   }}
                 >
-                  Да, выйти
+                  {tr("Да, выйти")}
                 </button>
                 <button
                   onClick={() => setConfirmLogout(false)}
@@ -627,7 +705,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
                     cursor: 'pointer', fontFamily: 'inherit',
                   }}
                 >
-                  Отмена
+                  {tr("Отмена")}
                 </button>
               </div>
             </div>
@@ -642,7 +720,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
         fontSize: 10.5, letterSpacing: '0.06em',
         color: t.TEXT_FAINT, fontFamily: t.FONT_MONO, opacity: 0.75,
       }}>
-        Дневник тренировок · v{APP_VERSION}
+        {tr("Дневник тренировок · v")}{APP_VERSION}
       </div>
     </div>
   );

@@ -9,8 +9,9 @@
 // Общие расчёты (вес тела на дату подхода, серии, лучшие повторы) приходят из
 // gamification.js параметром h — без циклического импорта.
 
-import { getPlan, getPlanDay, makeTrainingDayCheck, DEFAULT_PLAN_ID } from './plans.js';
+import { getPlan, planDayAt, makeTrainingDayCheck, DEFAULT_PLAN_ID } from './plans.js';
 import { bodyLogOf } from './bodyLog.js';
+import { heavier } from './units.js';
 import { categorizeExercise, MUSCLE_GROUPS, isTimeBasedExercise } from './tabs/workoutTabHelpers.jsx';
 
 const num = (v) => Number(v) || 0;
@@ -61,8 +62,10 @@ function recordEvents(sessions) {
       const value = w > 0 ? w : Math.max(0, ...sets.map((x) => x.reps));
       if (value <= 0) return;
       const prev = best.get(ex.name);
-      if (prev && prev.kind === kind && value > prev.value) events.push({ date: s.date, id: s.id });
-      if (!prev || (prev.kind === kind && value > prev.value) || (prev.kind === 'r' && kind === 'w')) best.set(ex.name, { kind, value });
+      // вес — с допуском на округление фунтов (units.js → heavier), повторы — точно
+      const beats = prev && prev.kind === kind && (kind === 'w' ? heavier(value, prev.value) : value > prev.value);
+      if (beats) events.push({ date: s.date, id: s.id });
+      if (!prev || beats || (prev.kind === 'r' && kind === 'w')) best.set(ex.name, { kind, value });
     });
   });
   return events;
@@ -104,7 +107,8 @@ const anyWeekDone = (c) => [1, 2, 3, 4].some((w) => cycleWeekDone(c, w));
 // (замена засчитывается за плановое).
 function isPerfect(s) {
   if (!s.programDay) return false;
-  const day = getPlanDay(s.planId || DEFAULT_PLAN_ID, num(s.programDay));
+  // день плана — в том виде, каким был в день тренировки (план правили)
+  const day = planDayAt(s.planId || DEFAULT_PLAN_ID, num(s.programDay), s.date);
   if (!day || day.type !== 'strength' || !Array.isArray(day.exercises) || day.exercises.length === 0) return false;
   return day.exercises.every((pe) => {
     const ex = (s.exercises || []).find((e) => e.name === pe.name || e.replacedFrom === pe.name);
@@ -401,7 +405,7 @@ export function makeExtraAchievements(h) {
         (sessions || []).forEach((s) => { const m = h.getMonday(s.date); by[m] = (by[m] || 0) + tonnage(s); });
         return Math.max(0, ...Object.values(by)) >= t * 1000;
       })),
-    ...[[100, 5], [1000, 15]].map(([t, xp]) => A(`tonnage-total-${t}t`, `${t} тонн за всё время`, `Суммарный тоннаж — ${t} 000 кг`, xp, 'layers',
+    ...[[100, 5], [1000, 15]].map(([t, xp]) => A(`tonnage-total-${t}t`, `${t} тонн за всё время`, `Суммарный тоннаж — ${String(t * 1000).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} кг`, xp, 'layers',
       ({ sessions }) => (sessions || []).reduce((a, s) => a + tonnage(s), 0) >= t * 1000)),
     A('sets-1000', '1000 подходов', 'Записано 1000 подходов', 6, 'repeat',
       ({ sessions }) => allEx(sessions).reduce((a, { ex }) => a + setsOf(ex).filter((x) => x.reps > 0 || x.weight > 0).length, 0) >= 1000),

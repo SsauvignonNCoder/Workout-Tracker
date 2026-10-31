@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, ArrowUp } from 'lucide-react';
 import { useTheme, glassCard } from '../theme.js';
 import { getInputStyle } from './workoutTabHelpers.jsx';
+import { tr, getLang } from '../i18n.js';
+import { getUnits } from '../units.js';
 
 // Вкладка «Ассистент» — чат по своим тренировочным данным.
 //
@@ -94,7 +96,7 @@ export function AssistantTab() {
       const r = await fetch('/api/ai-assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ initData, question }),
+        body: JSON.stringify({ initData, question, lang: getLang(), units: getUnits() }),
       });
       const data = await r.json().catch(() => null);
       if (data && typeof data.remaining_today === 'number') setRemaining(data.remaining_today);
@@ -103,13 +105,15 @@ export function AssistantTab() {
       } else {
         setMessages([...withQuestion, {
           role: 'assistant',
-          text: (data && data.error) || 'Не получилось ответить — попробуй ещё раз.',
+          text: data && data.code === 'daily_limit' && data.limit
+            ? tr('На сегодня лимит исчерпан — {0} вопросов в день. Возвращайся завтра.', data.limit)
+            : tr((data && data.error) || 'Не получилось ответить — попробуй ещё раз.'),
           isError: true,
         }]);
       }
     } catch (e) {
       setMessages([...withQuestion, {
-        role: 'assistant', text: 'Нет связи с сервером — проверь интернет.', isError: true,
+        role: 'assistant', text: tr('Нет связи с сервером — проверь интернет.'), isError: true,
       }]);
     } finally {
       setBusy(false);
@@ -123,16 +127,14 @@ export function AssistantTab() {
 
   return (
     <div>
-      <div style={sectionLabel}>Ассистент</div>
+      <div style={sectionLabel}>{tr("Ассистент")}</div>
 
       {!inTelegram && (
         <div style={{
           background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 16,
           padding: '14px 16px', marginBottom: 16, fontSize: 13.5, lineHeight: 1.5, color: t.TEXT_DIM,
         }}>
-          Ассистент работает только внутри Telegram — открой приложение через бота.
-          Так запрос можно подтвердить подписью, и никто посторонний не прочитает твои
-          тренировки.
+          {tr("Ассистент работает только внутри Telegram — открой приложение через бота. Так запрос можно подтвердить подписью, и никто посторонний не прочитает твои тренировки.")}
         </div>
       )}
 
@@ -144,17 +146,16 @@ export function AssistantTab() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
             <Sparkles size={17} color={t.ACCENT_SOFT} />
-            <span style={{ fontSize: 15, fontWeight: 700, color: t.TEXT }}>Спроси про свои тренировки</span>
+            <span style={{ fontSize: 15, fontWeight: 700, color: t.TEXT }}>{tr("Спроси про свои тренировки")}</span>
           </div>
           <div style={{ fontSize: 13, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 14 }}>
-            Ассистент видит историю тренировок, замеры веса и рекорды. Изменить или
-            удалить что-либо он не может — только читать.
+            {tr("Ассистент видит историю тренировок, замеры веса и рекорды. Изменить или удалить что-либо он не может — только читать.")}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {SUGGESTIONS.map((s) => (
               <button
                 key={s}
-                onClick={() => ask(s)}
+                onClick={() => ask(tr(s))}
                 disabled={!inTelegram || busy}
                 style={{
                   textAlign: 'left', width: '100%', boxSizing: 'border-box',
@@ -167,7 +168,7 @@ export function AssistantTab() {
                   opacity: inTelegram ? 1 : 0.85,
                 }}
               >
-                {s}
+                {tr(s)}
               </button>
             ))}
           </div>
@@ -201,14 +202,14 @@ export function AssistantTab() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ask(); } }}
-          placeholder={inTelegram ? 'Спроси про тренировки…' : 'Доступно в Telegram'}
+          placeholder={inTelegram ? tr("Спроси про тренировки…") : tr("Доступно в Telegram")}
           disabled={!inTelegram || busy}
           enterKeyHint="send"
         />
         <button
           onClick={() => ask()}
           disabled={!inTelegram || busy || !input.trim()}
-          aria-label="Отправить"
+          aria-label={tr("Отправить")}
           style={{
             flexShrink: 0, width: 46, height: 46, borderRadius: 14, border: 'none',
             background: (!inTelegram || busy || !input.trim()) ? t.BG_INPUT : t.ACCENT_GRAD,
@@ -227,7 +228,7 @@ export function AssistantTab() {
           marginTop: 8, textAlign: 'center', fontSize: 11, color: t.TEXT_FAINT,
           fontFamily: t.FONT_MONO, letterSpacing: '0.04em',
         }}>
-          {remaining > 0 ? `Осталось вопросов сегодня: ${remaining}` : 'Вопросы на сегодня закончились'}
+          {remaining > 0 ? tr("Осталось вопросов сегодня: {0}", remaining) : tr("Вопросы на сегодня закончились")}
         </div>
       )}
 
@@ -241,7 +242,7 @@ export function AssistantTab() {
             cursor: busy ? 'default' : 'pointer', textDecoration: 'underline',
           }}
         >
-          Очистить переписку
+          {tr("Очистить переписку")}
         </button>
       )}
     </div>

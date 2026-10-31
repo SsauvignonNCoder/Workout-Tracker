@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Compass, X } from 'lucide-react';
 import { useTheme } from './theme.js';
+import { tr } from './i18n.js';
 
 // ============================================================
 // Обучение по приложению: затемнение с «окошком» над нужным местом, окошко
@@ -61,7 +62,7 @@ export const TOUR_STEPS = [
   {
     id: 'alerts', tab: 'profile', targets: ['alerts'],
     title: 'Напоминания',
-    text: 'Бот в Telegram напомнит о пропущенной тренировке — вечером, если по плану был день, а записи нет, — и о протеине через час после тренировки. Включай и выключай здесь.',
+    text: 'Бот в Telegram напомнит о пропущенной тренировке (вечером, если по плану был день, а записи нет), о несохранённой (час без действий в начатой тренировке) и о протеине через час после тренировки. Включай и выключай здесь.',
   },
   {
     id: 'restart', targets: ['tour-restart'],
@@ -173,11 +174,10 @@ export function TourPrompt({ onYes, onNo }) {
           <Compass size={28} color={t.ACCENT_SOFT} strokeWidth={1.7} />
         </div>
         <div id="tour-ask-title" style={{ fontSize: 18, fontWeight: 700, color: t.TEXT, fontFamily: t.FONT_DISPLAY, marginBottom: 8, lineHeight: 1.25 }}>
-          Ознакомиться с функциями трекера?
+          {tr("Ознакомиться с функциями трекера?")}
         </div>
         <div style={{ fontSize: 13.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 18 }}>
-          Покажу за минуту самое нужное: как выбрать план и начать тренировку, где записать
-          вес и смотреть прогресс, как включить напоминания.
+          {tr("Покажу за минуту самое нужное: как выбрать план и начать тренировку, где записать вес и смотреть прогресс, как включить напоминания.")}
         </div>
         <button
           onClick={onYes}
@@ -187,7 +187,7 @@ export function TourPrompt({ onYes, onNo }) {
             cursor: 'pointer', fontFamily: 'inherit', boxShadow: t.GLOW,
           }}
         >
-          Да, покажи
+          {tr("Да, покажи")}
         </button>
         <button
           onClick={onNo}
@@ -197,7 +197,7 @@ export function TourPrompt({ onYes, onNo }) {
             cursor: 'pointer', fontFamily: 'inherit',
           }}
         >
-          Нет, спасибо
+          {tr("Нет, спасибо")}
         </button>
       </div>
     </div>,
@@ -303,7 +303,7 @@ export function Tour({ tab, goToTab, onClose }) {
 
   return createPortal(
     <div
-      role="dialog" aria-modal="true" aria-label="Обучение"
+      role="dialog" aria-modal="true" aria-label={tr("Обучение")}
       className="tour-fade"
       // Тур только показывает: тапы по приложению под затемнением не проходят.
       onClick={(e) => e.stopPropagation()}
@@ -333,7 +333,7 @@ export function Tour({ tab, goToTab, onClose }) {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-          <div style={{ display: 'flex', gap: 4 }} aria-label={`Шаг ${i + 1} из ${TOUR_STEPS.length}`}>
+          <div style={{ display: 'flex', gap: 4 }} aria-label={tr("Шаг {0} из {1}", i + 1, TOUR_STEPS.length)}>
             {TOUR_STEPS.map((s, k) => (
               <span key={s.id} style={{
                 width: k === i ? 16 : 6, height: 6, borderRadius: 3,
@@ -349,16 +349,16 @@ export function Tour({ tab, goToTab, onClose }) {
                 color: t.TEXT_FAINT, fontSize: 12.5, cursor: 'pointer', fontFamily: 'inherit', padding: '2px 0',
               }}
             >
-              Пропустить <X size={13} />
+              {tr("Пропустить")} <X size={13} />
             </button>
           )}
         </div>
         <div key={step.id} className="tour-in" aria-live="polite">
           <div style={{ fontSize: 16, fontWeight: 700, color: t.TEXT, fontFamily: t.FONT_DISPLAY, marginBottom: 5 }}>
-            {step.title}
+            {tr(step.title)}
           </div>
           <div style={{ fontSize: 13.5, color: t.TEXT_DIM, lineHeight: 1.5, marginBottom: 14 }}>
-            {step.text}
+            {tr(step.text)}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -371,7 +371,7 @@ export function Tour({ tab, goToTab, onClose }) {
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
             >
-              Назад
+              {tr("Назад")}
             </button>
           )}
           <button
@@ -382,7 +382,7 @@ export function Tour({ tab, goToTab, onClose }) {
               cursor: 'pointer', fontFamily: 'inherit', boxShadow: t.GLOW,
             }}
           >
-            {isLast ? 'Начать' : 'Далее'}
+            {isLast ? tr("Начать") : tr("Далее")}
           </button>
         </div>
       </div>

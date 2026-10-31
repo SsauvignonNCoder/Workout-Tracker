@@ -4,13 +4,15 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { useTheme, ThemeContext, THEME_2A, FROST, brassFill, brassText, glassCard, GLASS_SHEEN, GLASS_BORDER, GLASS_EDGE } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
 import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js';
-import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise } from './workoutTabHelpers.jsx';
+import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise, groupLetter } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
 import { MountainBox } from '../MountainBox.jsx';
+import { tr, exName, routeTitle } from '../i18n.js';
+import { U, num, unit, toDisp } from '../units.js';
 
 function muscleLetter(name) {
   const g = categorizeExercise(name);
-  return g ? g.letter : (name || '?').trim().charAt(0).toUpperCase();
+  return g ? groupLetter(g) : (exName(name) || '?').trim().charAt(0).toUpperCase();
 }
 
 // Токены темы 2A (THEME_2A, FROST, brassFill, brassText) переехали в src/theme.js —
@@ -51,7 +53,7 @@ function PeriodSelector({ value, onChange }) {
             fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
           }}
         >
-          {p.label}
+          {tr(p.label)}
         </button>
       ))}
     </div>
@@ -77,7 +79,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle, onOnly }) {
         }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {selectedLabels.length === 0 ? 'Выбери, что показать' : selectedLabels.join(', ')}
+          {selectedLabels.length === 0 ? tr("Выбери, что показать") : selectedLabels.join(', ')}
         </span>
         <ChevronDown size={16} color={ON_CREAM_MUTED} style={{ flexShrink: 0, marginLeft: 8 }} />
       </button>
@@ -90,7 +92,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle, onOnly }) {
             maxHeight: 320, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           }}>
             {options.length === 0 && (
-              <div style={{ padding: '14px', fontSize: 13.5, color: t.TEXT_FAINT }}>Пока нет данных для графика.</div>
+              <div style={{ padding: '14px', fontSize: 13.5, color: t.TEXT_FAINT }}>{tr("Пока нет данных для графика.")}</div>
             )}
             {options.map((o) => {
               const isSelected = selectedKeys.includes(o.key);
@@ -102,7 +104,7 @@ function MultiSeriesSelector({ options, selectedKeys, onToggle, onOnly }) {
                 <button
                   onClick={() => onToggle(o.key)}
                   aria-pressed={isSelected}
-                  aria-label={`${isSelected ? 'Убрать с графика' : 'Добавить к графику'}: ${o.label}`}
+                  aria-label={`${isSelected ? tr('Убрать с графика') : tr('Добавить к графику')}: ${o.label}`}
                   style={{
                     flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 11px 0 14px',
                     background: 'transparent', border: 'none', cursor: 'pointer',
@@ -175,13 +177,13 @@ export function exercisePointInfo(p) {
   if (groups.size > 0) {
     return [...groups.entries()]
       .sort((a, b) => b[0] - a[0])
-      .map(([w, reps]) => (w > 0 ? `${w} кг × ${reps.join(', ')}` : `${reps.join(', ')} повт`));
+      .map(([w, reps]) => (w > 0 ? `${U('w', w)} × ${reps.join(', ')}` : tr('{0} повт', reps.join(', '))));
   }
   const top = parseFloat(p.weight) || 0;
   const reps = parseInt(p.reps, 10) || 0;
-  if (!reps) return top > 0 ? [`${top} кг`] : null;
+  if (!reps) return top > 0 ? [U('w', top)] : null;
   const sets = parseInt(p.sets, 10) || 0;
-  return [`${top > 0 ? `${top} кг × ${reps}` : `${reps} повт`}${sets > 1 ? ` · ${sets} подх` : ''}`];
+  return [`${top > 0 ? `${U('w', top)} × ${reps}` : tr('{0} повт', reps)}${sets > 1 ? tr(' · {0} подх', sets) : ''}`];
 }
 
 // Подсказка по тапу на точку: дата, затем по каждой серии — цвет, название и
@@ -334,10 +336,10 @@ function SetChips({ setLog, weightless, timed }) {
           padding: '6px 12px', fontFamily: MONO, fontSize: 13, display: 'inline-flex', alignItems: 'center',
         }}>
           {weightless ? (
-            <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.reps}{timed ? ' с' : ''}</span>
+            <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.reps}{timed ? tr(" с") : ''}</span>
           ) : (
             <>
-              <span style={{ color: t.TEXT, fontWeight: 700 }}>{s.weight}</span>
+              <span style={{ color: t.TEXT, fontWeight: 700 }}>{num('w', s.weight)}</span>
               <span style={{ color: t.TEXT_FAINT, margin: '0 7px' }}>×</span>
               <span style={{ color: t.TEXT_DIM }}>{s.reps}</span>
             </>
@@ -367,10 +369,10 @@ function SectorBlock({ sectors, routeName }) {
         <span style={{ fontSize: 13, fontWeight: 700, color: t.TEXT, display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* Иконка lucide, а не эмодзи 🏃: эмодзи выбивался из стиля. */}
           <Footprints size={14} color={t.ACCENT_SOFT} strokeWidth={2} style={{ flexShrink: 0 }} />
-          {routeName || 'Кардио по секторам'} · {sectors.length}
+          {routeName ? routeTitle(routeName) : tr("Кардио по секторам")} · {sectors.length}
         </span>
         <span style={{ fontSize: 12, fontWeight: 700, color: t.ACCENT_SOFT, fontFamily: MONO }}>
-          {totalDist > 0 ? `${Math.round(totalDist * 100) / 100} км · ` : ''}{secToClock(totalSec)}
+          {totalDist > 0 ? `${U('d', totalDist)} · ` : ''}{secToClock(totalSec)}
         </span>
       </div>
       {rows.map(({ c, delta, cum: cumSec }, i) => (
@@ -384,7 +386,7 @@ function SectorBlock({ sectors, routeName }) {
             fontSize: 11, fontWeight: 700, fontFamily: MONO, flexShrink: 0,
           }}>{secLetter(c.name)}</span>
           <span style={{ flex: 1, minWidth: 0, fontFamily: MONO, fontSize: 11.5, color: t.TEXT_DIM }}>
-            {[c.distance ? `${c.distance} км` : '', c.speed ? `${c.speed} км/ч` : '', c.incline ? `накл. ${c.incline}%` : '']
+            {[c.distance ? U('d', c.distance) : '', c.speed ? U('s', c.speed) : '', c.incline ? tr('накл. {0}%', c.incline) : '']
               .filter(Boolean).join(' · ') || '—'}
           </span>
           <span style={{ textAlign: 'right', flexShrink: 0, fontFamily: MONO }}>
@@ -404,12 +406,13 @@ const TREADMILL_TYPES = [
   { key: 'cardio', label: 'Кардио-тренировка', color: '#5C8A4E' },
 ];
 const TREADMILL_METRICS = [
-  { key: 'speed', label: 'Скорость', unit: 'км/ч' },
-  { key: 'distance', label: 'Дистанция', unit: 'км' },
+  // kind — вид величины для пересчёта единиц (src/units.js); у времени нет.
+  { key: 'speed', label: 'Скорость', unit: 'км/ч', kind: 's' },
+  { key: 'distance', label: 'Дистанция', unit: 'км', kind: 'd' },
   { key: 'duration', label: 'Время', unit: 'мин' },
   // «Подъём» — набор высоты. На общем графике это линия по метрам за тренировку,
   // а в раскрытом кардио-дне вместо графика рисуется гора (ClimbMountain).
-  { key: 'elevation', label: 'Подъём', unit: 'м' },
+  { key: 'elevation', label: 'Подъём', unit: 'м', kind: 'h' },
 ];
 
 function isTreadmillName(name) { return (name || '').toLowerCase().includes('дорожк'); }
@@ -439,8 +442,9 @@ function buildTreadmillPoints(sessions) {
       points.push({
         id: `${s.id}-${c.name}`, date: s.date,
         type: classifyTreadmill(c.name, duration, hasStrength),
-        speed: parseFloat(c.speed) || 0, distance: dist, duration,
-        elevation: Math.round(dist * incl * 10), // км × % × 10 = метры набора
+        // для графика — сразу в единицах экрана (src/units.js)
+        speed: toDisp('s', parseFloat(c.speed) || 0), distance: Math.round(toDisp('d', dist) * 100) / 100, duration,
+        elevation: Math.round(toDisp('h', dist * incl * 10)), // км × % × 10 = метры набора
       });
     });
     if (sectors.length) {
@@ -451,15 +455,17 @@ function buildTreadmillPoints(sessions) {
       points.push({
         id: `${s.id}-sectors`, date: s.date, type: 'cardio', isSectors: true,
         routeName: s.routeName || null,
-        speed: Math.round(speed * 10) / 10, distance: Math.round(distance * 100) / 100, duration: Math.round(durMin),
-        elevation: Math.round(elevation),
+        speed: Math.round(toDisp('s', speed) * 10) / 10, distance: Math.round(toDisp('d', distance) * 100) / 100, duration: Math.round(durMin),
+        elevation: Math.round(toDisp('h', elevation)),
+        // Гора (MountainBox) считает в км и метрах — ей секторы в метрике, без пересчёта.
+        mountain: sectors.map((c) => ({ distance: parseFloat(c.distance) || 0, incline: parseFloat(c.incline) || 0 })),
         // incline обязателен для «Подъёма» — из него строится профиль горы.
         sectors: sectors.map((c, i) => ({
           label: (c.name || '').replace(SECTOR_RE, '').trim() || String(i + 1),
-          speed: parseFloat(c.speed) || 0, distance: parseFloat(c.distance) || 0,
+          speed: toDisp('s', parseFloat(c.speed) || 0), distance: Math.round(toDisp('d', parseFloat(c.distance) || 0) * 100) / 100,
           incline: parseFloat(c.incline) || 0,
           duration: c.durationSec != null ? Math.round(c.durationSec / 60) : (parseFloat(c.duration) || 0),
-          elevation: Math.round((parseFloat(c.distance) || 0) * (parseFloat(c.incline) || 0) * 10),
+          elevation: Math.round(toDisp('h', (parseFloat(c.distance) || 0) * (parseFloat(c.incline) || 0) * 10)),
         })),
       });
     }
@@ -488,7 +494,7 @@ function TreadmillChart({ sessions }) {
               border: `1px solid ${active ? t.ACCENT : t.BORDER}`, background: active ? t.ACCENT_BG : 'transparent',
               color: active ? t.ACCENT_SOFT : t.TEXT_DIM,
             }}
-          >{mm.label}</button>
+          >{tr(mm.label)}</button>
         );
       })}
     </div>
@@ -505,25 +511,25 @@ function TreadmillChart({ sessions }) {
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <button
-            onClick={() => setDrill(null)} aria-label="Назад"
+            onClick={() => setDrill(null)} aria-label={tr("Назад")}
             style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${t.BORDER}`, background: t.BG_INPUT, color: t.TEXT_DIM, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
           >‹</button>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>{drill.routeName || 'Кардио-день · секторы'}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT }}>{drill.routeName ? routeTitle(drill.routeName) : tr("Кардио-день · секторы")}</div>
             <div style={{ fontSize: 12, color: t.TEXT_FAINT }}>{fmtDateFull(drill.date)}</div>
           </div>
         </div>
         {metricToggle}
         {metric === 'elevation' ? (
           <div style={{ marginBottom: 8 }}>
-            <MountainBox sectors={drill.sectors} />
+            <MountainBox sectors={drill.mountain || drill.sectors} />
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10,
               fontFamily: MONO, fontSize: 11.5, color: t.TEXT_DIM,
             }}>
-              <span>{drill.sectors.length} сект.</span>
-              <span>{drill.distance} км</span>
-              <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>↑ {drill.elevation} м</span>
+              <span>{drill.sectors.length} {tr("сект.")}</span>
+              <span>{drill.distance} {unit('d')}</span>
+              <span style={{ color: t.ACCENT_SOFT, fontWeight: 700 }}>↑ {drill.elevation} {unit('h')}</span>
             </div>
           </div>
         ) : (
@@ -532,8 +538,8 @@ function TreadmillChart({ sessions }) {
               <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
               <XAxis dataKey="name" tick={{ fill: t.TEXT_FAINT, fontSize: 11 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
               <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
-              <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v) => [`${v} ${m.unit}`, m.label]} />
-              <Line type="monotone" dataKey="value" name={m.label} stroke={t.ACCENT} strokeWidth={2.2} dot={{ r: 3, fill: t.ACCENT, strokeWidth: 0 }} />
+              <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v) => [`${v} ${m.kind ? unit(m.kind) : tr(m.unit)}`, tr(m.label)]} />
+              <Line type="monotone" dataKey="value" name={tr(m.label)} stroke={t.ACCENT} strokeWidth={2.2} dot={{ r: 3, fill: t.ACCENT, strokeWidth: 0 }} />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -559,6 +565,7 @@ function TreadmillChart({ sessions }) {
     const isClickable = clickable && payload._cardio;
     return (
       <circle
+        key={`${typeKey}-${props.index}`}
         cx={cx} cy={cy} r={isClickable ? 4.8 : 3} fill={color}
         stroke={isClickable ? t.BG_RAISED : undefined} strokeWidth={isClickable ? 1.5 : 0}
         style={{ cursor: isClickable ? 'pointer' : 'default' }}
@@ -571,13 +578,13 @@ function TreadmillChart({ sessions }) {
     <div style={cardStyle}>
       <div style={{ fontSize: 14.5, fontWeight: 700, color: t.TEXT, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 7 }}>
         <Footprints size={16} color={t.ACCENT_SOFT} strokeWidth={2} style={{ flexShrink: 0 }} />
-        Беговая дорожка
+        {tr("Беговая дорожка")}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
         {presentTypes.map((tp) => (
           <span key={tp.key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: tp.color, flexShrink: 0 }} />
-            <span style={{ color: t.TEXT_DIM, fontWeight: 600 }}>{tp.label}</span>
+            <span style={{ color: t.TEXT_DIM, fontWeight: 600 }}>{tr(tp.label)}</span>
           </span>
         ))}
       </div>
@@ -587,10 +594,10 @@ function TreadmillChart({ sessions }) {
           <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
           <XAxis dataKey="label" tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={{ stroke: t.BORDER }} tickLine={false} />
           <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={38} />
-          <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v, n) => [`${v} ${m.unit}`, n]} />
+          <Tooltip contentStyle={{ background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 8, fontSize: 12 }} labelStyle={{ color: t.TEXT_DIM }} formatter={(v, n) => [`${v} ${m.kind ? unit(m.kind) : tr(m.unit)}`, n]} />
           {TREADMILL_TYPES.map((tp) => (
             <Line
-              key={tp.key} type="monotone" dataKey={tp.key} name={tp.label}
+              key={tp.key} type="monotone" dataKey={tp.key} name={tr(tp.label)}
               stroke={tp.color} strokeWidth={2.2} connectNulls
               dot={makeDot(tp.key, tp.color, tp.key === 'cardio')} activeDot={{ r: 5 }}
             />
@@ -599,7 +606,7 @@ function TreadmillChart({ sessions }) {
       </ResponsiveContainer>
       {hasSectors && (
         <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, margin: '2px 0 8px', lineHeight: 1.4 }}>
-          Тап по точке «кардио-тренировка» — разбивка того дня по секторам.
+          {tr("Тап по точке «кардио-тренировка» — разбивка того дня по секторам.")}
         </div>
       )}
     </div>
@@ -640,12 +647,12 @@ function SessionCard({ s, onEdit, onDelete }) {
             const timed = ex.timed || isTimeBasedExercise(ex.name);
             const weightless = isWeightlessExercise(ex.name) || timed;
             const hasSetLog = Array.isArray(ex.setLog) && ex.setLog.length > 0;
-            const repUnit = timed ? ' с' : '';
+            const repUnit = timed ? ` ${tr('с')}` : '';
             return (
               <div key={b.key} style={rowStyle}>
                 <div style={{ color: t.TEXT, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 7 }}>
                   <MuscleBadge name={ex.name} size={17} />
-                  <span style={{ minWidth: 0 }}>{ex.name}</span>
+                  <span style={{ minWidth: 0 }}>{exName(ex.name)}</span>
                   {/* Секундомер упражнения из пошагового режима (1.1.0) */}
                   {ex.durationSec > 0 && (
                     <span style={{
@@ -659,14 +666,14 @@ function SessionCard({ s, onEdit, onDelete }) {
                 {/* Пометки пошагового режима (1.1.0): упражнение заменили или добавили по ходу */}
                 {(ex.replacedFrom || ex.added) && (
                   <div style={{ fontSize: 11.5, color: t.TEXT_FAINT, marginBottom: 3, paddingLeft: categorizeExercise(ex.name) ? 24 : 0 }}>
-                    {ex.replacedFrom ? `вместо «${ex.replacedFrom}»` : 'добавлено в тренировке'}
+                    {ex.replacedFrom ? tr("вместо «{0}»", exName(ex.replacedFrom)) : tr("добавлено в тренировке")}
                   </div>
                 )}
                 {hasSetLog ? (
                   <SetChips setLog={ex.setLog} weightless={weightless} timed={timed} />
                 ) : (
                   <div style={{ color: t.TEXT_DIM, fontFamily: MONO, fontSize: 13 }}>
-                    {weightless ? `${ex.reps}${repUnit}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${ex.weight} кг × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
+                    {weightless ? `${ex.reps}${repUnit}${ex.sets > 1 ? ` × ${ex.sets}` : ''}` : `${U('w', ex.weight)} × ${ex.reps}${ex.sets > 1 ? ` × ${ex.sets}` : ''}`}
                   </div>
                 )}
               </div>
@@ -677,11 +684,11 @@ function SessionCard({ s, onEdit, onDelete }) {
             const isPool = c.name.trim().toLowerCase().includes('бассейн');
             return (
               <div key={b.key} style={rowStyle}>
-                <div style={{ color: t.TEXT, marginBottom: 2 }}>{c.name}</div>
+                <div style={{ color: t.TEXT, marginBottom: 2 }}>{exName(c.name)}</div>
                 <div style={{ color: t.TEXT_DIM, fontFamily: MONO, fontSize: 13 }}>
                   {isPool
-                    ? `${c.duration} мин`
-                    : <>{c.distance ? `${c.distance} км` : ''}{c.speed ? `${c.distance ? ' · ' : ''}${c.speed} км/ч` : ''}{c.incline ? `${(c.distance || c.speed) ? ' · ' : ''}накл. ${c.incline}%` : ''}{c.duration ? `${(c.distance || c.speed || c.incline) ? ' · ' : ''}${c.duration} мин` : ''}</>
+                    ? tr("{0} мин", c.duration)
+                    : <>{c.distance ? U('d', c.distance) : ''}{c.speed ? `${c.distance ? ' · ' : ''}${U('s', c.speed)}` : ''}{c.incline ? tr("{0}накл. {1}%", (c.distance || c.speed) ? ' · ' : '', c.incline) : ''}{c.duration ? tr("{0}{1} мин", (c.distance || c.speed || c.incline) ? ' · ' : '', c.duration) : ''}</>
                   }
                 </div>
               </div>
@@ -705,9 +712,9 @@ function SessionCard({ s, onEdit, onDelete }) {
                   <Timer size={12} style={{ opacity: 0.8 }} /> {secToClock(s.durationSec)}
                 </span>
               )}
-              {s.sleep && <span>Сон {s.sleep} ч</span>}
-              {s.energy && <span>Энергия {s.energy}/5</span>}
-              {s.difficulty && <span>Тяжесть {s.difficulty}/5</span>}
+              {s.sleep && <span>{tr("Сон")} {s.sleep} {tr("ч")}</span>}
+              {s.energy && <span>{tr("Энергия")} {s.energy}/5</span>}
+              {s.difficulty && <span>{tr("Тяжесть")} {s.difficulty}/5</span>}
             </div>
           )}
           {s.feeling && <div style={{ marginTop: 8, lineHeight: 1.45 }}>{s.feeling}</div>}
@@ -736,7 +743,7 @@ function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete }) {
           <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{expanded ? '▼' : '▶'}</span>
           {fmtDateShort(weekStart)} – {fmtDateShort(weekEnd)}
         </span>
-        <span style={{ color: t.TEXT_FAINT, fontSize: 12.5 }}>{items.length} трен.</span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 12.5 }}>{items.length} {tr("трен.")}</span>
       </button>
       {expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, paddingLeft: 8 }}>
@@ -750,7 +757,7 @@ function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete }) {
 }
 
 const MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-function monthLabel(m) { const [y, mo] = m.split('-'); return `${MONTHS_RU[parseInt(mo, 10) - 1]} ${y}`; }
+function monthLabel(m) { const [y, mo] = m.split('-'); return `${tr(MONTHS_RU[parseInt(mo, 10) - 1])} ${y}`; }
 
 // Строит дерево архива: Год → Месяц → Неделя → [сессии], всё по убыванию.
 function buildArchiveTree(list) {
@@ -798,7 +805,7 @@ function ArchiveMonthGroup({ month, onEdit, onDelete }) {
           <span style={{ color: t.TEXT_FAINT, fontSize: 10 }}>{expanded ? '▼' : '▶'}</span>
           {monthLabel(month.month)}
         </span>
-        <span style={{ color: t.TEXT_FAINT, fontSize: 12 }}>{month.count} трен.</span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 12 }}>{month.count} {tr("трен.")}</span>
       </button>
       {expanded && (
         <div style={{ marginTop: 6, paddingLeft: 8 }}>
@@ -828,7 +835,7 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
           <span style={{ color: t.ACCENT_SOFT, fontSize: 11 }}>{expanded ? '▼' : '▶'}</span>
           {year.year}
         </span>
-        <span style={{ color: t.TEXT_FAINT, fontSize: 12.5 }}>{year.count} трен.</span>
+        <span style={{ color: t.TEXT_FAINT, fontSize: 12.5 }}>{year.count} {tr("трен.")}</span>
       </button>
       {expanded && (
         <div style={{ marginTop: 8, paddingLeft: 8 }}>
@@ -877,19 +884,19 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
   const options = useMemo(() => {
     const exOpts = Object.entries(exerciseSeries)
       .filter(([, pts]) => pts.length >= 2)
-      .map(([name]) => ({ key: `ex:${name}`, label: name, type: 'exercise' }));
+      .map(([name]) => ({ key: `ex:${name}`, label: exName(name), type: 'exercise' }));
     // Беговая дорожка, разминка и секторы — отдельная плашка «Беговая дорожка» (TreadmillChart),
     // поэтому из общего селектора их исключаем, чтобы не дублировать.
     const cardioOpts = Object.entries(cardioSeries)
       .filter(([name, pts]) => pts.length >= 2 && !name.trim().toLowerCase().includes('бассейн')
         && !isTreadmillName(name) && !SECTOR_RE.test(name.trim()))
-      .map(([name]) => ({ key: `cardio:${name}`, label: name, type: 'cardio' }));
+      .map(([name]) => ({ key: `cardio:${name}`, label: exName(name), type: 'cardio' }));
     const bwOpts = (measurements || []).length >= 2
-      ? [{ key: 'bw:weight', label: 'Вес тела', type: 'bodyweight' }]
+      ? [{ key: 'bw:weight', label: tr('Вес тела'), type: 'bodyweight' }]
       : [];
     const ratioOpts = Object.entries(exerciseSeries)
       .filter(([, pts]) => pts.length >= 2)
-      .map(([name]) => ({ key: `ratio:${name}`, label: `${name} (коэф. к весу тела)`, type: 'ratio' }));
+      .map(([name]) => ({ key: `ratio:${name}`, label: tr('{0} (коэф. к весу тела)', exName(name)), type: 'ratio' }));
     return [...exOpts, ...cardioOpts, ...bwOpts, ...ratioOpts].sort((a, b) => a.label.localeCompare(b.label));
   }, [exerciseSeries, cardioSeries, measurements]);
 
@@ -932,16 +939,16 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       const color = SERIES_COLORS[idx % SERIES_COLORS.length];
       const [type, name] = [key.split(':')[0], key.slice(key.indexOf(':') + 1)];
       if (type === 'ex') {
-        const pts = filterByPeriod(exerciseSeries[name] || []).map((p) => ({ date: p.date, value: p.weight, info: exercisePointInfo(p) }));
-        return { key, label: name, color, unit: ' кг', points: pts };
+        const pts = filterByPeriod(exerciseSeries[name] || []).map((p) => ({ date: p.date, value: Math.round(toDisp('w', p.weight) * 10) / 10, info: exercisePointInfo(p) }));
+        return { key, label: exName(name), color, unit: ` ${unit('w')}`, points: pts };
       }
       if (type === 'cardio') {
-        const pts = filterByPeriod(cardioSeries[name] || []).map((p) => ({ date: p.date, value: p.speed }));
-        return { key, label: name, color, unit: ' км/ч', points: pts };
+        const pts = filterByPeriod(cardioSeries[name] || []).map((p) => ({ date: p.date, value: Math.round(toDisp('s', p.speed) * 10) / 10 }));
+        return { key, label: exName(name), color, unit: ` ${unit('s')}`, points: pts };
       }
       if (type === 'bw') {
-        const pts = filterByPeriod((measurements || []).map((m) => ({ date: m.date, value: m.weight })));
-        return { key, label: 'Вес тела', color, unit: ' кг', points: pts };
+        const pts = filterByPeriod((measurements || []).map((m) => ({ date: m.date, value: Math.round(toDisp('w', m.weight) * 10) / 10 })));
+        return { key, label: tr('Вес тела'), color, unit: ` ${unit('w')}`, points: pts };
       }
       if (type === 'ratio') {
         const raw = exerciseSeries[name] || [];
@@ -952,9 +959,9 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
             return { date: p.date, value: Math.round((p.weight / bw) * 100) / 100 };
           })
           .filter(Boolean);
-        return { key, label: `${name}, коэф.`, color, unit: '', points: pts };
+        return { key, label: tr('{0}, коэф.', exName(name)), color, unit: '', points: pts };
       }
-      return { key, label: name, color, unit: '', points: [] };
+      return { key, label: exName(name), color, unit: '', points: [] };
     }).filter((s) => s.points.length > 0);
   }, [selectedKeys, exerciseSeries, cardioSeries, measurements, bodyweightByDate, period]);
 
@@ -978,8 +985,8 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
     return (
       <div data-tour="progress" style={{ textAlign: 'center', padding: '48px 16px', color: t.TEXT_FAINT }}>
         <Dumbbell size={28} style={{ marginBottom: 10, opacity: 0.5 }} />
-        <div style={{ fontSize: 14.5 }}>Пока нет тренировок.</div>
-        <div style={{ fontSize: 13, marginTop: 4 }}>Добавь первую на вкладке «Тренировка».</div>
+        <div style={{ fontSize: 14.5 }}>{tr("Пока нет тренировок.")}</div>
+        <div style={{ fontSize: 13, marginTop: 4 }}>{tr("Добавь первую на вкладке «Тренировка».")}</div>
       </div>
     );
   }
@@ -1003,14 +1010,14 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: streaks.currentWeekDone > 0 ? t.ACCENT_SOFT : t.TEXT_FAINT }} />
           <span style={{ fontSize: 10, color: t.TEXT_DIM, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: t.FONT_MONO, whiteSpace: 'nowrap' }}>
-            Неделя
+            {tr("Неделя")}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           {streaks.currentWeekDays.map((d, i) => (
             <div
               key={d.date}
-              title={WEEKDAY_LABELS[d.weekday]}
+              title={tr(WEEKDAY_LABELS[d.weekday])}
               style={{
                 width: 26, height: 22, borderRadius: 7,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1021,7 +1028,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
                   : { color: t.TEXT_FAINT, border: `1.5px solid ${t.BORDER}` }),
               }}
             >
-              {WEEKDAY_LABELS[d.weekday]}
+              {tr(WEEKDAY_LABELS[d.weekday])}
             </div>
           ))}
         </div>
@@ -1038,7 +1045,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
           экспорт: так попросил Никита. Архив заодно не прячется под свёрнутой
           тренировкой внизу экрана. */}
       <div style={sectionLabel}>
-        Эта неделя
+        {tr("Эта неделя")}
       </div>
       {currentWeekSessions.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
@@ -1048,7 +1055,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         </div>
       ) : (
         <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, marginBottom: 16, lineHeight: 1.5 }}>
-          На этой неделе тренировок пока нет.
+          {tr("На этой неделе тренировок пока нет.")}
         </div>
       )}
 
@@ -1063,7 +1070,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
               cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
             }}
           >
-            {showArchive ? 'Скрыть архив' : `Архив (${archivedSessions.length})`}
+            {showArchive ? tr("Скрыть архив") : tr("Архив ({0})", archivedSessions.length)}
           </button>
           {showArchive && (
             <div style={{ marginTop: 12 }}>
@@ -1082,7 +1089,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       <div style={{ height: 1, background: t.BORDER, margin: '22px 0 18px' }} />
 
       <div style={sectionLabel}>
-        Прогрессия
+        {tr("Прогрессия")}
       </div>
 
       <MultiSeriesSelector options={options} selectedKeys={selectedKeys} onToggle={toggleSeries} onOnly={(key) => setSelectedKeys([key])} />
@@ -1090,7 +1097,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
 
       {options.length === 0 ? (
         <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, marginBottom: 20, lineHeight: 1.5 }}>
-          График появится, когда упражнение или вид кардио встретится хотя бы в двух тренировках.
+          {tr("График появится, когда упражнение или вид кардио встретится хотя бы в двух тренировках.")}
         </div>
       ) : (
         <MultiSeriesChart selectedSeries={selectedSeries} />
@@ -1108,7 +1115,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         }}
       >
         <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.1em', fontFamily: t.FONT_MONO }}>
-          Личные рекорды {recordList.length > 0 ? `(${recordList.length})` : ''}
+          {tr("Личные рекорды")} {recordList.length > 0 ? `(${recordList.length})` : ''}
         </span>
         <span style={{ color: t.TEXT_FAINT, fontSize: 11 }}>{showRecords ? '▼' : '▶'}</span>
       </button>
@@ -1116,17 +1123,17 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       {showRecords && (
         recordList.length === 0 ? (
           <div style={{ fontSize: 13.5, color: t.TEXT_FAINT, lineHeight: 1.5, marginBottom: 18 }}>
-            Рекорды появятся, как только сохранишь хотя бы одну тренировку.
+            {tr("Рекорды появятся, как только сохранишь хотя бы одну тренировку.")}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
             {recordList.map(([name, r]) => {
               // Рекорд может быть по весу, по повторам или по секундам (упражнения без веса / на время).
-              const bigValue = r.weight ? `${r.weight} кг`
-                : r.metric === 'sec' ? `${r.value} с`
-                : `${r.value} повт`;
+              const bigValue = r.weight ? U('w', r.weight)
+                : r.metric === 'sec' ? tr('{0} с', r.value)
+                : tr('{0} повт', r.value);
               const subLine = r.weight
-                ? `${fmtDateShort(r.date)}${r.reps ? ` · ${r.reps} повт` : ''}`
+                ? `${fmtDateShort(r.date)}${r.reps ? tr(' · {0} повт', r.reps) : ''}`
                 : fmtDateShort(r.date);
               return (
                 <div key={name} style={{
@@ -1140,7 +1147,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
                       fontFamily: t.FONT_MONO, fontSize: 11, fontWeight: 600, color: ON_CREAM, flexShrink: 0,
                     }}>{muscleLetter(name)}</span>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: ON_CREAM, marginBottom: 2 }}>{name}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: ON_CREAM, marginBottom: 2 }}>{exName(name)}</div>
                       <div style={{ fontSize: 11, color: ON_CREAM_MUTED, fontFamily: t.FONT_MONO, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{subLine}</div>
                     </div>
                   </div>

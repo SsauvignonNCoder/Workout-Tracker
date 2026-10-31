@@ -4,6 +4,8 @@ import { useTheme, glassCard } from '../theme.js';
 import { todayISO, shiftDate, fmtDateFull } from '../dateUtils.js';
 import { MAX_INCLINE } from '../climbs.js';
 import { planWeekOf } from '../plans.js';
+import { tr, exName, exKey, getLang } from '../i18n.js';
+import { U, unit, num, fromDisp, heavier } from '../units.js';
 
 export function Field({ label, children }) {
   const t = useTheme();
@@ -31,20 +33,20 @@ export function difficultyColor(v) {
   return DIFFICULTY_COLORS[Math.min(5, Math.max(1, Math.round(v))) - 1];
 }
 
-export function DifficultySlider({ label = 'Тяжесть тренировки', value, onChange }) {
+export function DifficultySlider({ label = tr('Тяжесть тренировки'), value, onChange }) {
   return (
     <ScaleSlider
       label={label} value={value} onChange={onChange}
-      colors={DIFFICULTY_COLORS} labels={DIFFICULTY_LABELS} minLabel="легко" maxLabel="на пределе"
+      colors={DIFFICULTY_COLORS} labels={DIFFICULTY_LABELS} minLabel={tr("легко")} maxLabel={tr("на пределе")}
     />
   );
 }
 
-export function EnergySlider({ label = 'Энергия', value, onChange }) {
+export function EnergySlider({ label = tr('Энергия'), value, onChange }) {
   return (
     <ScaleSlider
       label={label} value={value} onChange={onChange}
-      colors={ENERGY_COLORS} labels={ENERGY_LABELS} minLabel="нет сил" maxLabel="полон сил"
+      colors={ENERGY_COLORS} labels={ENERGY_LABELS} minLabel={tr("нет сил")} maxLabel={tr("полон сил")}
     />
   );
 }
@@ -79,7 +81,7 @@ function ScaleSlider({ label, value, onChange, colors, labels, minLabel, maxLabe
           {label}
         </span>
         <span style={{ fontSize: 12.5, fontWeight: 700, color, fontFamily: t.FONT_MONO, whiteSpace: 'nowrap' }}>
-          {has ? `${v}/5 · ${labels[v - 1]}` : 'не указана'}
+          {has ? `${v}/5 · ${tr(labels[v - 1])}` : tr("не указана")}
         </span>
       </div>
       {/* Касания не всплывают к свайпу вкладок в App: перетаскивание ползунка
@@ -91,7 +93,7 @@ function ScaleSlider({ label, value, onChange, colors, labels, minLabel, maxLabe
         aria-valuemin={1}
         aria-valuemax={5}
         aria-valuenow={has ? v : undefined}
-        aria-valuetext={has ? `${v} из 5, ${labels[v - 1]}` : 'не указана'}
+        aria-valuetext={has ? tr("{0} из 5, {1}", v, tr(labels[v - 1])) : tr("не указана")}
         onKeyDown={onKeyDown}
         onTouchStart={(e) => e.stopPropagation()}
         onTouchEnd={(e) => e.stopPropagation()}
@@ -164,7 +166,7 @@ export function DatePicker({ value, onChange }) {
     }}>
       <button
         onClick={() => onChange(shiftDate(value, -1))}
-        aria-label="Предыдущий день"
+        aria-label={tr("Предыдущий день")}
         style={{
           flexShrink: 0, width: 38, height: 44, borderRadius: 9, border: `1px solid ${t.BORDER}`,
           background: t.BG_INPUT, color: t.TEXT_DIM, fontSize: 17, cursor: 'pointer', fontFamily: 'inherit',
@@ -175,7 +177,7 @@ export function DatePicker({ value, onChange }) {
         tabIndex={0}
         onClick={openCalendar}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCalendar(); } }}
-        aria-label="Выбрать дату из календаря"
+        aria-label={tr("Выбрать дату из календаря")}
         style={{
           flex: 1, minWidth: 0, height: 44, borderRadius: 9, border: `1px solid ${t.BORDER}`,
           background: t.BG_INPUT, color: t.TEXT, fontSize: 14.5, fontWeight: 600,
@@ -189,7 +191,7 @@ export function DatePicker({ value, onChange }) {
           <span style={{
             flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: t.ACCENT_SOFT,
             background: t.ACCENT_BG, padding: '2px 6px', borderRadius: 5, textTransform: 'none',
-          }}>сегодня</span>
+          }}>{tr("сегодня")}</span>
         )}
         <input
           ref={dateInputRef}
@@ -208,7 +210,7 @@ export function DatePicker({ value, onChange }) {
       </div>
       <button
         onClick={() => onChange(shiftDate(value, 1))}
-        aria-label="Следующий день"
+        aria-label={tr("Следующий день")}
         disabled={isToday}
         style={{
           flexShrink: 0, width: 38, height: 44, borderRadius: 9, border: `1px solid ${t.BORDER}`,
@@ -220,13 +222,14 @@ export function DatePicker({ value, onChange }) {
   );
 }
 
-export function ExerciseNameInput({ value, onChange, knownNames, label = 'Упражнение', placeholder = 'Жим лёжа' }) {
+export function ExerciseNameInput({ value, onChange, knownNames, label = tr('Упражнение'), placeholder = tr('Жим лёжа') }) {
   const t = useTheme();
   const [focused, setFocused] = useState(false);
   const suggestions = useMemo(() => {
     if (!value.trim()) return knownNames.slice(0, 6);
     const q = value.trim().toLowerCase();
-    return knownNames.filter((n) => n.toLowerCase().includes(q) && n.toLowerCase() !== q).slice(0, 6);
+    const key = exKey(value).toLowerCase();
+    return knownNames.filter((n) => (n.toLowerCase().includes(q) || exName(n).toLowerCase().includes(q)) && n.toLowerCase() !== key).slice(0, 6);
   }, [value, knownNames]);
 
   return (
@@ -234,7 +237,9 @@ export function ExerciseNameInput({ value, onChange, knownNames, label = 'Упр
       <Field label={label}>
         <input
           style={getLabelInputStyle(t)}
-          value={value}
+          // В поле — название на языке интерфейса; в данные уходит русский ключ
+          // (exKey при сохранении), даже если набрали по-английски.
+          value={exName(value)}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
@@ -264,7 +269,7 @@ export function ExerciseNameInput({ value, onChange, knownNames, label = 'Упр
                 color: t.TEXT, fontSize: 14.5, cursor: 'pointer', fontFamily: 'inherit',
               }}
             >
-              {name}
+              {exName(name)}
             </button>
           ))}
         </div>
@@ -278,10 +283,11 @@ export function PercentOfRecord({ exName, weight, records }) {
   if (!exName || !weight) return null;
   const record = records[exName];
   if (!record || !record.weight) return null;
-  const w = parseFloat(weight);
+  // Введено в единицах экрана — сравниваем в кг (src/units.js).
+  const w = fromDisp('w', weight);
   if (!w || isNaN(w) || w <= 0) return null;
   const pct = Math.round((w / record.weight) * 100);
-  const isNewRecord = w > record.weight;
+  const isNewRecord = heavier(w, record.weight);
   const color = isNewRecord ? t.POSITIVE : pct >= 90 ? t.ACCENT_SOFT : t.TEXT_FAINT;
 
   return (
@@ -290,9 +296,9 @@ export function PercentOfRecord({ exName, weight, records }) {
       color, fontWeight: 600,
     }}>
       {isNewRecord ? (
-        <span className="record-pop" style={{ alignItems: 'center', gap: 5 }}><Flame size={13} /> Новый рекорд! Прошлый максимум {record.weight} кг</span>
+        <span className="record-pop" style={{ alignItems: 'center', gap: 5 }}><Flame size={13} /> {tr("Новый рекорд! Прошлый максимум")} {U('w', record.weight)}</span>
       ) : (
-        <>{pct}% от рекорда ({record.weight} кг)</>
+        <>{pct}{tr("% от рекорда (")}{U('w', record.weight)})</>
       )}
     </div>
   );
@@ -321,7 +327,7 @@ export function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, rec
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         {!weightless && (
-          <Field label="Вес, кг">
+          <Field label={`${tr('Вес')}, ${unit('w')}`}>
             <input
               style={getInputStyle(t)}
               type="number" inputMode="decimal" min="0"
@@ -331,7 +337,7 @@ export function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, rec
             />
           </Field>
         )}
-        <Field label={timed ? 'Секунды' : 'Повторы'}>
+        <Field label={timed ? tr("Секунды") : tr("Повторы")}>
           <input
             style={getInputStyle(t)}
             type="number" inputMode="numeric" min="0"
@@ -340,7 +346,7 @@ export function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, rec
             placeholder={timed ? '60' : (ex.targetReps || '0')}
           />
         </Field>
-        <Field label="Подх.">
+        <Field label={tr("Подх.")}>
           <input
             style={getInputStyle(t)}
             type="number" inputMode="numeric" min="0"
@@ -367,12 +373,14 @@ export function ExerciseRow({ ex, onChange, onRemove, removable, knownNames, rec
 }
 
 export const MUSCLE_GROUPS = {
-  chest: { letter: 'Г', color: '#C4566E', label: 'Грудь' },
-  back: { letter: 'С', color: '#5B8FB0', label: 'Спина' },
-  shoulders: { letter: 'П', color: '#C9A227', label: 'Плечи' },
-  legs: { letter: 'Н', color: '#5C8A4E', label: 'Ноги' },
-  arms: { letter: 'Р', color: '#9B6FB5', label: 'Руки' },
-  core: { letter: 'К', color: '#8A8378', label: 'Кор' },
+  // en — буква и название значка по-английски (groupLetter / groupLabel). Кор —
+  // «Co»: «C» уже у груди (Chest).
+  chest: { letter: 'Г', color: '#C4566E', label: 'Грудь', en: ['C', 'Chest'] },
+  back: { letter: 'С', color: '#5B8FB0', label: 'Спина', en: ['B', 'Back'] },
+  shoulders: { letter: 'П', color: '#C9A227', label: 'Плечи', en: ['S', 'Shoulders'] },
+  legs: { letter: 'Н', color: '#5C8A4E', label: 'Ноги', en: ['L', 'Legs'] },
+  arms: { letter: 'Р', color: '#9B6FB5', label: 'Руки', en: ['A', 'Arms'] },
+  core: { letter: 'К', color: '#8A8378', label: 'Кор', en: ['Co', 'Core'] },
 };
 
 // Группа мышц по ключевым словам в названии. Порядок правил важен: более узкие
@@ -383,6 +391,9 @@ export const MUSCLE_GROUPS = {
 // молча проваливалась мимо ВСЕХ остальных правил. Так «Отжимания на брусьях»
 // (день 7 программы) оставались вообще без группы: ни бейджа в тренировке, ни
 // буквы в списке рекордов. Цепочка теперь плоская — провалиться некуда.
+export const groupLetter = (g) => (g ? (getLang() === 'en' ? g.en[0] : g.letter) : '');
+export const groupLabel = (g) => (g ? (getLang() === 'en' ? g.en[1] : g.label) : '');
+
 export function categorizeExercise(name) {
   const n = (name || '').toLowerCase();
   const notLegs = !/ног/.test(n);
@@ -394,7 +405,8 @@ export function categorizeExercise(name) {
     && !/бицепс/.test(n)) return MUSCLE_GROUPS.shoulders;
   if (notLegs && /жим.*лёж|разводка.*лёж|жим.*наклон|разводк.*наклон|жим.*груд|кроссовер|пуловер(?!.*блок)/.test(n)) return MUSCLE_GROUPS.chest;
   if (notLegs && /отжиман|бабочк/.test(n)) return MUSCLE_GROUPS.chest;
-  if (/тяга.*наклон|тяга.*блок|тяга.*пах|подтягиван|гиперэкстенз|т-гриф|рычажн|станов|пендле|пуловер.*блок|шраг/.test(n)) return MUSCLE_GROUPS.back;
+  // «Наклоны со штангой на плечах» (гуд-морнинг) — спина: в плане 2 стоят вместо подтягиваний.
+  if (/тяга.*наклон|тяга.*блок|тяга.*пах|подтягиван|гиперэкстенз|т-гриф|рычажн|станов|пендле|пуловер.*блок|шраг|наклон.*штанг/.test(n)) return MUSCLE_GROUPS.back;
   if (/жим.*сидя|жим.*стоя.*голов|разводк.*сторон/.test(n) && /сид|голов|сторон/.test(n)) return MUSCLE_GROUPS.shoulders;
   if (/присед|румынск|жим.*ног|разгибан.*ног|сгибан.*ног|разведен.*ног|сведен.*ног|носк|выпад|ягодичн|зашагив/.test(n)) return MUSCLE_GROUPS.legs;
   if (/бицепс|молот|скотт|разгибан.*рук|подъ[её]м.*рук/.test(n)) return MUSCLE_GROUPS.arms;
@@ -503,7 +515,7 @@ export function MuscleBadge({ name, size = 20 }) {
   if (!group) return null;
   return (
     <span
-      title={group.label}
+      title={groupLabel(group)}
       style={{
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         width: size, height: size, borderRadius: 7, flexShrink: 0,
@@ -511,7 +523,7 @@ export function MuscleBadge({ name, size = 20 }) {
         fontSize: size * 0.46, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace",
       }}
     >
-      {group.letter}
+      {groupLetter(group)}
     </span>
   );
 }
@@ -537,6 +549,8 @@ export const STARTER_EXERCISES = [
   'Тяга гантели в наклоне одной рукой', 'Тяга Т-грифа', 'Тяга верхнего блока узким хватом',
   'Тяга в рычажном тренажёре', 'Становая тяга', 'Подтягивания обратным хватом', 'Тяга штанги Пендлея',
   'Пуловер на верхнем блоке', 'Шраги со штангой', 'Австралийские подтягивания',
+  // План 2, пятница — вместо подтягиваний (так тренировался Никита)
+  'Наклоны со штангой на плечах',
   // Плечи
   'Армейский жим стоя', 'Жим Арнольда', 'Жим гантелей стоя', 'Жим в тренажёре на плечи',
   'Разведение гантелей в наклоне', 'Обратная бабочка', 'Подъём гантелей перед собой',
@@ -580,6 +594,12 @@ export const WARMUP_TIPS = {
     'Суставная разминка 3 мин — вращения тазобедренными суставами, голеностоп, лёгкие выпады без веса.',
     'Разминочные подходы 2 мин — 1–2 подхода приседа с пустой штангой/малым весом перед рабочим подходом.',
   ],
+  // План 2, суббота: вместо приседа — жим ногами.
+  'Ноги: жим ногами': [
+    'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
+    'Суставная разминка 3 мин — вращения тазобедренными суставами, голеностоп, лёгкие выпады без веса.',
+    'Разминочные подходы 2 мин — 1–2 лёгких подхода жима ногами перед первым рабочим подходом.',
+  ],
   'Руки, кор, добивка': [
     'Кардио 5 мин — лёгкий темп на велотренажёре или дорожке, разогнать пульс и кровоток.',
     'Суставная разминка 3 мин — вращения кистями, локтями, плечами.',
@@ -600,7 +620,7 @@ export function WarmupTip({ day }) {
         fontSize: 10.5, fontWeight: 700, color: t.ACCENT_SOFT, textTransform: 'uppercase',
         letterSpacing: '0.12em', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 6, fontFamily: t.FONT_MONO,
       }}>
-        <Flame size={13} /> Разминка · 10 минут
+        <Flame size={13} /> {tr("Разминка · 10 минут")}
       </div>
       <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
         {items.map((line, i) => (
@@ -610,7 +630,7 @@ export function WarmupTip({ day }) {
             paddingLeft: 12, position: 'relative',
           }}>
             <span style={{ position: 'absolute', left: 0, color: t.TEXT_FAINT }}>·</span>
-            {line}
+            {tr(line)}
           </li>
         ))}
       </ul>
@@ -655,9 +675,9 @@ export function AutoGrowTextarea({ value, style, ...rest }) {
 // Цель по повторам для подписи: «8-10» → «8-10 повт», «40-60» у планки → «40-60 сек»,
 // «до отказа» (план 2) — как есть, без «повт» в хвосте.
 export function fmtTargetReps(reps, timed) {
-  if (reps == null || reps === '') return timed ? 'на время' : '—';
+  if (reps == null || reps === '') return timed ? tr('на время') : '—';
   const s = String(reps);
-  return /\d/.test(s) ? `${s} ${timed ? 'сек' : 'повт'}` : s;
+  return /\d/.test(s) ? `${s} ${timed ? tr('сек') : tr('повт')}` : tr(s);
 }
 
 export function CardioRow({ c, onChange, onRemove, removable, knownNames, animDelay }) {
@@ -674,12 +694,12 @@ export function CardioRow({ c, onChange, onRemove, removable, knownNames, animDe
             value={c.name}
             onChange={(name) => onChange({ ...c, name })}
             knownNames={knownNames}
-            label="Кардио"
-            placeholder="Беговая дорожка"
+            label={tr("Кардио")}
+            placeholder={tr("Беговая дорожка")}
           />
         </div>
         <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
-          <Field label="Время в бассейне, мин">
+          <Field label={tr("Время в бассейне, мин")}>
             <input
               style={getInputStyle(t)}
               type="number" inputMode="numeric" min="0"
@@ -713,24 +733,24 @@ export function CardioRow({ c, onChange, onRemove, removable, knownNames, animDe
           value={c.name}
           onChange={(name) => onChange({ ...c, name })}
           knownNames={knownNames}
-          label="Кардио"
-          placeholder="Беговая дорожка"
+          label={tr("Кардио")}
+          placeholder={tr("Беговая дорожка")}
         />
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         {fields.distance && (
-          <Field label="Дистанция, км">
+          <Field label={`${tr('Дистанция')}, ${unit('d')}`}>
             <input
               style={getInputStyle(t)}
               type="number" inputMode="decimal" min="0"
               value={c.distance}
               onChange={(e) => onChange({ ...c, distance: e.target.value })}
-              placeholder={c.targetDistance || '0'}
+              placeholder={c.targetDistance ? num('d', c.targetDistance) : '0'}
             />
           </Field>
         )}
         {fields.speed && (
-          <Field label="Скорость, км/ч">
+          <Field label={`${tr('Скорость')}, ${unit('s')}`}>
             <input
               style={getInputStyle(t)}
               type="number" inputMode="decimal" min="0"
@@ -741,7 +761,7 @@ export function CardioRow({ c, onChange, onRemove, removable, knownNames, animDe
           </Field>
         )}
         {fields.incline && (
-          <Field label="Наклон, %">
+          <Field label={tr("Наклон, %")}>
             <input
               style={{ ...getInputStyle(t), padding: '11px 8px', fontSize: 14 }}
               type="number" inputMode="decimal" min="0" max={MAX_INCLINE}
@@ -752,7 +772,7 @@ export function CardioRow({ c, onChange, onRemove, removable, knownNames, animDe
           </Field>
         )}
         {fields.duration && (
-          <Field label="Время, мин">
+          <Field label={tr("Время, мин")}>
             <input
               style={{ ...getInputStyle(t), padding: '11px 8px', fontSize: 14 }}
               type="number" inputMode="numeric" min="0"
@@ -805,7 +825,7 @@ export function RepeatWorkoutPicker({ sessions, onPick }) {
           cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box',
         }}
       >
-        <Copy size={14} /> Повторить прошлую тренировку
+        <Copy size={14} /> {tr("Повторить прошлую тренировку")}
       </button>
       {open && (
         <>
@@ -816,8 +836,8 @@ export function RepeatWorkoutPicker({ sessions, onPick }) {
             maxHeight: 320, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
           }}>
             {recent.map((s) => {
-              const exNames = (s.exercises || []).map((e) => e.name);
-              const cardioNames = (s.cardio || []).map((c) => c.name);
+              const exNames = (s.exercises || []).map((e) => exName(e.name));
+              const cardioNames = (s.cardio || []).map((c) => exName(c.name));
               const preview = [...exNames, ...cardioNames].slice(0, 3).join(', ');
               const more = exNames.length + cardioNames.length - 3;
               return (
@@ -871,11 +891,11 @@ export function ProgramDayPicker({ plan, value, onChange }) {
           <span style={{
             flexShrink: 0, fontSize: 11, fontWeight: 700, color: t.ON_ACCENT, fontFamily: t.FONT_MONO,
             background: t.ACCENT_GRAD, padding: '4px 8px', borderRadius: 8,
-          }}>День {value}/{days.length}</span>
+          }}>{tr("День")} {value}/{days.length}</span>
           {selected && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
               {DAY_TYPE_ICON[selected.type] && React.createElement(DAY_TYPE_ICON[selected.type], { size: 15, color: t.ACCENT_SOFT, style: { flexShrink: 0 } })}
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.title}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tr(selected.title)}</span>
             </span>
           )}
         </span>
@@ -902,7 +922,7 @@ export function ProgramDayPicker({ plan, value, onChange }) {
                       background: t.BG_RAISED, borderBottom: `1px solid ${t.BORDER}`,
                       position: 'sticky', top: 0,
                     }}>
-                      Неделя {weekNumber}{weekLabel ? ` · ${weekLabel}` : ''}
+                      {tr("Неделя")} {weekNumber}{weekLabel ? ` · ${tr(weekLabel)}` : ''}
                     </div>
                   )}
                   <button
@@ -919,7 +939,7 @@ export function ProgramDayPicker({ plan, value, onChange }) {
                       flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: t.TEXT_FAINT,
                       minWidth: 18,
                     }}>{d.day}</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tr(d.title)}</span>
                   </button>
                 </React.Fragment>
               );
