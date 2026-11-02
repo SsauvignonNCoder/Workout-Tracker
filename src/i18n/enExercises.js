@@ -14,6 +14,7 @@ export const EN_EXERCISES = {
   'Беговая дорожка': 'Treadmill',
   'Приседания со штангой на плечах': 'Barbell back squat',
   'Румынская тяга со штангой': 'Barbell Romanian deadlift',
+  'Мёртвая тяга': 'Stiff-leg deadlift',
   'Разгибание ног в тренажёре': 'Leg extension',
   'Сгибание ног сидя в тренажёре': 'Seated leg curl',
   'Подъём на носки стоя': 'Standing calf raise',

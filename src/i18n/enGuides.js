@@ -2,6 +2,13 @@
 // ровно как в exerciseGuides.js / exerciseGuidesExtra.js. Только для показа (tr).
 // Новая подсказка — допиши её фразы сюда; тест «локализация» проверит полноту.
 export const EN_GUIDES = {
+  "Штанга на полу или у бёдер, хват на ширине плеч, стопы на ширине таза.": "Bar on the floor or at your thighs, shoulder-width grip, feet hip-width apart.",
+  "Ноги почти прямые: колени лишь чуть согнуты и не меняют угла всё движение.": "Legs almost straight: knees only slightly bent, and the angle stays the same throughout.",
+  "На вдохе отводи таз назад и опускай штангу вдоль ног, спина прямая, — до сильного натяжения задней поверхности бедра.": "Inhale, push your hips back and lower the bar along your legs with a straight back — until you feel a strong stretch in the hamstrings.",
+  "На выдохе выпрямись за счёт ягодиц и бицепса бедра, не откидываясь назад.": "Exhale and stand up by driving with your glutes and hamstrings, without leaning back.",
+  "Круглая спина — нагрузка уходит в поясницу; опускайся, только пока спина ровная.": "Rounded back — the load moves to the lower back; go down only as far as your back stays straight.",
+  "Колени сгибаются в нижней точке — это уже румынская или становая тяга.": "Bending the knees at the bottom — that turns it into a Romanian or conventional deadlift.",
+  "Штанга уходит от ног — нагрузка смещается на поясницу.": "The bar drifts away from your legs — the load shifts to the lower back.",
   "Грудные": "Chest",
   "Передние дельты": "Front delts",
   "Трицепс": "Triceps",

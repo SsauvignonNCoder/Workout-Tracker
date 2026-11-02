@@ -15,7 +15,7 @@ import {
 } from './tabs/workoutTabHelpers.jsx';
 import { cooldownFor } from './cooldown.js';
 import { tr } from './i18n.js';
-import { num } from './units.js';
+import { num, toDisp, isImperial } from './units.js';
 
 export const SUMMARY_KIND = 'summary';
 
@@ -151,6 +151,42 @@ export function buildSteps(day) {
     out = [];
   }
   return out.map((s, i) => ({ ...s, id: `p${i}` }));
+}
+
+// Подсказка веса в пустом поле подхода — доля рекорда по неделе плана.
+//   Базовые упражнения (BASE_LIFTS) — диапазон: 1-я неделя 75–80%, 2-я 80–85%,
+//     3-я (тяжёлая) — рекорд и выше, 4-я (разгрузка) 70–75%.
+//   Остальные — «от»: 1-я 80%+, 2-я 90%+, 3-я 100%+, 4-я 70%+.
+// Округление — до шага блинов: 2.5 кг (65 кг × 75% = 48.75 → 50), в фунтах — 5 lb.
+// recordKg — рекорд в кг; ответ — строка в единицах экрана («75 – 80», «55+»,
+// «100+») или null, если подсказывать нечего.
+export const WEEK_LOAD = { 1: [0.75, 0.8], 2: [0.8, 0.85], 3: [1, null], 4: [0.7, 0.75] };
+export const WEEK_LOAD_OTHER = { 1: 0.8, 2: 0.9, 3: 1, 4: 0.7 };
+// Базовые движения (список — от Никиты, 02.11.2026).
+export const BASE_LIFTS = [
+  'Жим штанги лёжа', 'Жим штанги узким хватом', 'Румынская тяга со штангой', 'Становая тяга',
+  'Приседания со штангой на плечах', 'Жим ногами в тренажёре', 'Тяга штанги в наклоне',
+];
+const baseKey = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').trim();
+const BASE_SET = new Set(BASE_LIFTS.map(baseKey));
+export const isBaseLift = (name) => BASE_SET.has(baseKey(name));
+
+export function weightHint(recordKg, week, base = true) {
+  if (!(recordKg > 0)) return null;
+  const step = isImperial() ? 5 : 2.5;
+  const rec = toDisp('w', recordKg);
+  const r = (x) => String(Math.round(x / step) * step);
+  if (!base) {
+    const p = WEEK_LOAD_OTHER[week];
+    if (p == null) return null;
+    return p === 1 ? `${num('w', recordKg)}+` : `${r(rec * p)}+`;
+  }
+  const band = WEEK_LOAD[week];
+  if (!band) return null;
+  if (band[1] == null) return `${num('w', recordKg)}+`;
+  const lo = r(rec * band[0]);
+  const hi = r(rec * band[1]);
+  return lo === hi ? lo : `${lo} – ${hi}`;
 }
 
 // Пустые записи для шага — при старте тренировки и при вставке нового шага.

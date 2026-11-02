@@ -15,11 +15,12 @@ import {
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
   insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData, workoutHasData,
-  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes,
+  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes, weightHint, isBaseLift,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
 import { buildWorkoutSummary } from '../workoutSummary.js';
+import { getPlan, planWeekOf } from '../plans.js';
 import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
 import { ClimbPicker } from '../ClimbPicker.jsx';
@@ -997,6 +998,7 @@ export function GuidedWorkout({
           {step.kind === 'exercise' ? (
             <ExerciseStep
               step={step} sets={exLogs[stepId] || []} onSet={setExSet}
+              planWeek={dayPlan && dayPlan.day ? planWeekOf(getPlan(planId), dayPlan.day) : null}
               records={records} note={exNotes[stepId] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
               nextName={nextShort} allSteps={allSteps} currentIdx={stepIdx} onJump={jumpTo}
@@ -1581,7 +1583,7 @@ function FitLine({ text, max = 20, min = 14, style }) {
 
 function ExerciseStep({
   step, sets, onSet, records, note, onNote, onGuide, nextName, allSteps = [], currentIdx = 0, onJump,
-  timer, onTimerToggle, onTimerReset, onSetCount,
+  timer, onTimerToggle, onTimerReset, onSetCount, planWeek,
 }) {
   const t = useTheme();
   // Список шагов тренировки свёрнут по умолчанию и закрывается сам при переходе
@@ -1590,6 +1592,9 @@ function ExerciseStep({
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
   const record = records && records[step.name];
+  // Вместо «0» в пустом поле веса — доля рекорда на эту неделю плана (guidedSteps.js → weightHint).
+  // Базовые — диапазон, остальные — «от» (см. там же).
+  const weightPh = (!weightless && record && record.weight && weightHint(record.weight, planWeek, isBaseLift(step.name))) || '0';
   const hasGuide = !!getExerciseGuide(step.name);
   // Пометки плана («со страховкой» и т.п.) — только пока упражнение не заменено:
   // к другому упражнению они не относятся. Подпись места («тренажёр», «скамья»)
@@ -1813,7 +1818,7 @@ function ExerciseStep({
                       type="number" inputMode="decimal" min="0"
                       value={s.weight}
                       onChange={(e) => onSet(si, { weight: e.target.value })}
-                      placeholder="0"
+                      placeholder={weightPh}
                     />
                   </Field>
                 )}
