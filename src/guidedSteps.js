@@ -156,6 +156,8 @@ export function buildSteps(day) {
 // Подсказка веса в пустом поле подхода — доля рекорда по неделе плана.
 //   Базовые упражнения (BASE_LIFTS) — диапазон: 1-я неделя 75–80%, 2-я 80–85%,
 //     3-я (тяжёлая) — рекорд и выше, 4-я (разгрузка) 70–75%.
+//     Исключение 3-й недели: в ЧТ–СБ (объёмные дни) базовые — 80–85%, кроме
+//     румынской тяги и жима ногами (week3Light).
 //   Остальные — «от»: 1-я 80%+, 2-я 90%+, 3-я 100%+, 4-я 70%+.
 // Округление — до шага блинов: 2.5 кг (65 кг × 75% = 48.75 → 50), в фунтах — 5 lb.
 // recordKg — рекорд в кг; ответ — строка в единицах экрана («75 – 80», «55+»,
@@ -171,7 +173,15 @@ const baseKey = (s) => String(s || '').toLowerCase().replace(/ё/g, 'е').trim()
 const BASE_SET = new Set(BASE_LIFTS.map(baseKey));
 export const isBaseLift = (name) => BASE_SET.has(baseKey(name));
 
-export function weightHint(recordKg, week, base = true) {
+// 3-я неделя в ЧТ–СБ: базовые — 80–85% вместо «рекорд+» (Никита, 03.11.2026);
+// румынская и жим ногами — по-прежнему «рекорд+». dayNum — день цикла плана.
+export function week3Light(dayNum, name, perWeek = 6) {
+  if (!dayNum) return false;
+  const weekday = (dayNum - 1) % perWeek; // 0 — ПН … 5 — СБ
+  return weekday >= 3 && !/румынск|жим.*ног/i.test(baseKey(name));
+}
+
+export function weightHint(recordKg, week, base = true, { light3 = false } = {}) {
   if (!(recordKg > 0)) return null;
   const step = isImperial() ? 5 : 2.5;
   const rec = toDisp('w', recordKg);
@@ -181,7 +191,7 @@ export function weightHint(recordKg, week, base = true) {
     if (p == null) return null;
     return p === 1 ? `${num('w', recordKg)}+` : `${r(rec * p)}+`;
   }
-  const band = WEEK_LOAD[week];
+  const band = week === 3 && light3 ? [0.8, 0.85] : WEEK_LOAD[week];
   if (!band) return null;
   if (band[1] == null) return `${num('w', recordKg)}+`;
   const lo = r(rec * band[0]);

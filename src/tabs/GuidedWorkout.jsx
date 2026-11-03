@@ -15,7 +15,7 @@ import {
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
   insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData, workoutHasData,
-  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes, weightHint, isBaseLift,
+  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes, weightHint, isBaseLift, week3Light,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
@@ -999,6 +999,7 @@ export function GuidedWorkout({
             <ExerciseStep
               step={step} sets={exLogs[stepId] || []} onSet={setExSet}
               planWeek={dayPlan && dayPlan.day ? planWeekOf(getPlan(planId), dayPlan.day) : null}
+              planDay={dayPlan && dayPlan.day}
               records={records} note={exNotes[stepId] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
               nextName={nextShort} allSteps={allSteps} currentIdx={stepIdx} onJump={jumpTo}
@@ -1583,7 +1584,7 @@ function FitLine({ text, max = 20, min = 14, style }) {
 
 function ExerciseStep({
   step, sets, onSet, records, note, onNote, onGuide, nextName, allSteps = [], currentIdx = 0, onJump,
-  timer, onTimerToggle, onTimerReset, onSetCount, planWeek,
+  timer, onTimerToggle, onTimerReset, onSetCount, planWeek, planDay,
 }) {
   const t = useTheme();
   // Список шагов тренировки свёрнут по умолчанию и закрывается сам при переходе
@@ -1594,7 +1595,8 @@ function ExerciseStep({
   const record = records && records[step.name];
   // Вместо «0» в пустом поле веса — доля рекорда на эту неделю плана (guidedSteps.js → weightHint).
   // Базовые — диапазон, остальные — «от» (см. там же).
-  const weightPh = (!weightless && record && record.weight && weightHint(record.weight, planWeek, isBaseLift(step.name))) || '0';
+  const weightPh = (!weightless && record && record.weight
+    && weightHint(record.weight, planWeek, isBaseLift(step.name), { light3: week3Light(planDay, step.name) })) || '0';
   const hasGuide = !!getExerciseGuide(step.name);
   // Пометки плана («со страховкой» и т.п.) — только пока упражнение не заменено:
   // к другому упражнению они не относятся. Подпись места («тренажёр», «скамья»)
