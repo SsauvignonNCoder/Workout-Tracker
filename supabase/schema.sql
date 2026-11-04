@@ -21,6 +21,8 @@ create table users (
   telegram_id bigint unique,
   pin_hash text,
   pin_salt text,
+  pin_fail_count integer not null default 0,
+  pin_locked_until timestamptz,
   created_at timestamptz default now()
 );
 
@@ -103,13 +105,11 @@ create table profile (
 
 -- ============================================================
 -- Row Level Security
--- Анонимный ключ (anon key) есть в коде фронтенда — это нормально
--- для Supabase, но имей в виду: доступ к sessions/measurements/profile
--- разделён по user_id только на уровне логики приложения (клиент сам
--- фильтрует .eq('user_id', userId)), а не настоящей Supabase Auth.
--- Для личного использования среди доверенных людей это ок, но не
--- банковский уровень защиты — тот, кто узнает чужой user_id, сможет
--- прочитать/изменить его данные напрямую через anon key.
+-- Анонимный ключ (anon key) есть в коде фронтенда — это нормально для
+-- Supabase: сам по себе он не даёт доступа ни к одной таблице. При входе
+-- сервер выдаёт токен сессии (api/_session.js), и политики сверяют user_id
+-- строки с полем sub этого токена. Выпустить токен самому нельзя: он
+-- подписан секретом проекта.
 --
 -- Таблица users — отдельный случай: фронтенд к ней вообще не
 -- обращается напрямую (только serverless-функции api/*-auth.js через
@@ -125,9 +125,15 @@ alter table measurements enable row level security;
 alter table profile enable row level security;
 
 -- users: намеренно без политик — anon/authenticated не имеют доступа вообще.
-create policy "allow all sessions" on sessions for all using (true) with check (true);
-create policy "allow all measurements" on measurements for all using (true) with check (true);
-create policy "allow all profile" on profile for all using (true) with check (true);
+create policy "own sessions" on sessions for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+create policy "own measurements" on measurements for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+create policy "own profile" on profile for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+revoke all on users, sessions, measurements, profile from anon;
+revoke all on users, sessions, measurements, profile from authenticated;
+grant select, insert, update, delete on sessions, measurements, profile to authenticated;
 
 -- ============================================================
 -- Миграции для уже существующих баз (идемпотентны — можно выполнять повторно):
@@ -143,6 +149,8 @@ create policy "allow all profile" on profile for all using (true) with check (tr
 --   1.1.5 — напоминание о несохранённой тренировке (migration-add-unsaved-alerts.sql),
 --           язык интерфейса (migration-add-lang.sql),
 --           система единиц (migration-add-units.sql).
+--   Закрытие базы — блокировка PIN (migration-add-pin-lock.sql), затем, после
+--           выкладки кода с токеном, политики (migration-close-rls.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;

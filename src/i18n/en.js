@@ -658,6 +658,7 @@ const SERVER = {
   "В имени нельзя использовать символы % _ * и обратный слэш": "The name can't contain the characters % _ * or a backslash",
   "Это имя уже занято — выбери другое или войди с существующим PIN": "This name is already taken — choose another one or sign in with the existing PIN",
   "Неверное имя или PIN": "Wrong name or PIN",
+  "Слишком много попыток — попробуй через 15 минут": "Too many attempts — try again in 15 minutes",
   "Неизвестный режим — ожидается register или login": "Unknown mode — expected register or login",
   "Ошибка сервера": "Server error",
   "нет QSTASH_TOKEN / REST_ALERT_SECRET": "missing QSTASH_TOKEN / REST_ALERT_SECRET",

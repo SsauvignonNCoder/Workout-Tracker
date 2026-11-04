@@ -3,13 +3,10 @@
 // Чат-ассистент по собственным тренировочным данным. Модель отвечает на вопрос,
 // а данные добирает сама через набор функций-инструментов (tool use).
 //
-// ПОЧЕМУ ТОЛЬКО TELEGRAM. В приложении нет подписанного токена сессии: вход по
-// имени и PIN возвращает голый `userId`, который фронтенд кладёт в sessionStorage.
-// Для остальных экранов это принятый компромисс (§3.2 хендоффа), но ассистент
-// читает всю историю тренировок и тратит платные токены — принимать `user_id` на
-// веру здесь нельзя, иначе любой, кто знает чужой идентификатор, прочитает чужие
-// данные и сожжёт чужую квоту. Подпись `initData` — единственное, что в проекте
-// проверяется по-настоящему, поэтому ассистент живёт только внутри Telegram.
+// ПОЧЕМУ ТОЛЬКО TELEGRAM. Ассистент читает всю историю тренировок и тратит платные
+// токены, поэтому личность проверяется подписью `initData`. Вход по имени и PIN
+// теперь тоже даёт подписанный токен (api/_session.js) — при желании ассистента можно
+// открыть и для него.
 //
 // ДВА КЛИЕНТА К БАЗЕ, И ЭТО ВАЖНО.
 //   1. `admin` (service_role) — только служебное: найти пользователя по telegram_id
@@ -19,13 +16,13 @@
 //      на sessions/measurements/profile. Даже ошибка в коде не сможет ничего
 //      изменить: база отклонит запрос (проверено, `permission denied`). Таблица
 //      users этой роли недоступна вовсе — там хэши PIN.
-//   Разграничение по пользователю RLS в этом проекте НЕ делает (политики открытые,
-//   пользовательских JWT нет), поэтому фильтр `user_id` в каждом запросе ниже —
-//   обязателен и является единственной защитой от чтения чужих данных.
+//   Чужие строки отсекает RLS по полю sub токена (supabase/migration-close-rls.sql);
+//   фильтр `user_id` в каждом запросе ниже всё равно обязателен: пока действуют
+//   открытые политики, только он защищает от чтения чужих данных.
 //
 // Роль подключается так же, как работает обычный anon-ключ: это HS256-токен,
 // подписанный секретом проекта, с полем role. Мы выпускаем такой же, но с
-// `role: ai_readonly`, живёт он минуту.
+// `role: ai_readonly` и `sub` пользователя, живёт он минуту.
 
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -67,10 +64,10 @@ function projectRef() {
   }
 }
 
-function mintReadonlyJwt() {
+function mintReadonlyJwt(userId) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'HS256', typ: 'JWT' };
-  const payload = { iss: 'supabase', ref: projectRef(), role: 'ai_readonly', iat: now, exp: now + 60 };
+  const payload = { iss: 'supabase', ref: projectRef(), role: 'ai_readonly', sub: userId, iat: now, exp: now + 60 };
   const data = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
   const sig = crypto.createHmac('sha256', JWT_SECRET).update(data).digest();
   return `${data}.${b64url(sig)}`;
@@ -427,7 +424,7 @@ export default async function handler(req, res) {
     // проекта (его проверяет шлюз), а роль берётся из заголовка Authorization.
     const reader = createClient(SUPABASE_URL, ANON_KEY, {
       auth: { persistSession: false },
-      global: { headers: { Authorization: `Bearer ${mintReadonlyJwt()}` } },
+      global: { headers: { Authorization: `Bearer ${mintReadonlyJwt(userId)}` } },
     });
 
     // Английский интерфейс (src/i18n.js) — ответ по-английски; данные (названия

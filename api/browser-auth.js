@@ -15,6 +15,8 @@
 
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import { issueSessionToken } from './_session.js';
+import { isPinLocked, pinFailurePatch, pinSuccessPatch } from './_pinLock.js';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -74,7 +76,7 @@ function likePattern(name) {
 async function findLocalUserByName(supabaseAdmin, name) {
   const { data, error } = await supabaseAdmin
     .from('users')
-    .select('id, display_name, pin_hash, pin_salt')
+    .select('id, display_name, pin_hash, pin_salt, pin_fail_count, pin_locked_until')
     .ilike('display_name', likePattern(name))
     .is('telegram_id', null)
     .limit(500);
@@ -157,17 +159,26 @@ export default async function handler(req, res) {
         .single();
       if (createErr) throw createErr;
 
-      res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name });
+      res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, token: await issueSessionToken(created.id) });
       return;
     }
 
     if (mode === 'login') {
       const user = await findLocalUserByName(supabaseAdmin, name);
 
+      if (isPinLocked(user)) {
+        res.status(429).json({ error: 'Слишком много попыток — попробуй через 15 минут' });
+        return;
+      }
+
       if (!user || !verifyPin(pin, user)) {
+        if (user) await supabaseAdmin.from('users').update(pinFailurePatch(user)).eq('id', user.id);
         res.status(401).json({ error: 'Неверное имя или PIN' });
         return;
       }
+
+      const unlock = pinSuccessPatch(user);
+      if (unlock) await supabaseAdmin.from('users').update(unlock).eq('id', user.id);
 
       // Прозрачная миграция легаси-аккаунтов (без соли) на scrypt+соль при первом же успешном входе.
       if (!user.pin_salt) {
@@ -175,7 +186,7 @@ export default async function handler(req, res) {
         await supabaseAdmin.from('users').update({ pin_hash: pinHash, pin_salt: pinSalt }).eq('id', user.id);
       }
 
-      res.status(200).json({ ok: true, userId: user.id, displayName: user.display_name });
+      res.status(200).json({ ok: true, userId: user.id, displayName: user.display_name, token: await issueSessionToken(user.id) });
       return;
     }
 

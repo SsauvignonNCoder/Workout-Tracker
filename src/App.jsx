@@ -232,9 +232,8 @@ function useStorage(userId) {
       if (dirty) changed.forEach((item) => dirty.delete(item.id));
     }
     if (removedIds.length > 0) {
-      // Фильтр по user_id обязателен: id генерится как `${date}-${Date.now()}` и
-      // теоретически может совпасть у двух пользователей, а RLS на этих таблицах
-      // открыта (осознанный компромисс, см. §3.2) и сама от этого не защитит.
+      // Фильтр по user_id: id генерится как `${date}-${Date.now()}` и теоретически
+      // может совпасть у двух пользователей. Чужую строку не даст тронуть и RLS.
       const { error: delErr } = await supabase.from(table).delete().eq('user_id', userId).in('id', removedIds);
       if (delErr) {
         if (pendingDelete) removedIds.forEach((id) => pendingDelete.add(id));

@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Dumbbell, Send } from 'lucide-react';
 import { THEME_2A } from './theme.js';
 import { tr } from './i18n.js';
+import {
+  AUTH_SESSION_KEY, setSessionToken, tokenAlive, currentSessionToken, refreshSessionToken,
+} from './sessionToken.js';
 
 // ============================================================
 // Авторизация — два способа входа, у каждого свой аккаунт:
@@ -13,7 +16,6 @@ import { tr } from './i18n.js';
 // редизайна: вход был янтарно-коричневым, а само приложение чёрно-латунным.
 // ============================================================
 
-const AUTH_SESSION_KEY = 'workout-tracker-auth';
 // Признак того, что пользователь вышел ЯВНО. Без него автоматический вход по
 // initData срабатывал сразу после нажатия «Выйти из аккаунта» и возвращал в
 // приложение — внутри Telegram выйти было физически невозможно.
@@ -37,7 +39,7 @@ async function tryTelegramAuth(tg) {
     });
     const data = await res.json();
     if (!res.ok || !data.ok) return null;
-    return { userId: data.userId, displayName: data.displayName };
+    return { userId: data.userId, displayName: data.displayName, token: data.token || null };
   } catch (e) {
     return null;
   }
@@ -53,7 +55,7 @@ async function browserAuth(mode, displayName, pin) {
   if (!res.ok || !data.ok) {
     return { error: tr(data.error || 'Что-то пошло не так') };
   }
-  return { userId: data.userId, displayName: data.displayName };
+  return { userId: data.userId, displayName: data.displayName, token: data.token || null };
 }
 
 export function AuthGate({ children }) {
@@ -61,7 +63,15 @@ export function AuthGate({ children }) {
   const [session, setSession] = useState(() => {
     try {
       const raw = sessionStorage.getItem(AUTH_SESSION_KEY);
-      return raw ? JSON.parse(raw) : null;
+      const saved = raw ? JSON.parse(raw) : null;
+      // Сессия без действующего токена базе не нужна (вход до закрытия базы или токен
+      // истёк): входим заново, в Telegram это происходит само.
+      if (!saved || !tokenAlive(saved.token)) {
+        sessionStorage.removeItem(AUTH_SESSION_KEY);
+        return null;
+      }
+      setSessionToken(saved.token);
+      return saved;
     } catch (e) {
       return null;
     }
@@ -94,6 +104,7 @@ export function AuthGate({ children }) {
         tg.expand();
         const result = await tryTelegramAuth(tg);
         if (result) {
+          setSessionToken(result.token);
           sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(result));
           setSession(result);
           setChecking(false);
@@ -105,6 +116,25 @@ export function AuthGate({ children }) {
     })();
   }, [session, tg, loggedOut]);
 
+  // Вкладка могла простоять без запросов дольше срока токена: при возвращении
+  // продлеваем его, а если он уже истёк — входим заново. Черновик тренировки
+  // лежит на устройстве и не пропадёт.
+  useEffect(() => {
+    if (!session) return undefined;
+    const check = () => {
+      if (document.visibilityState !== 'visible') return;
+      const token = currentSessionToken();
+      if (!token) return;
+      if (tokenAlive(token)) { refreshSessionToken(); return; }
+      setSessionToken(null);
+      sessionStorage.removeItem(AUTH_SESSION_KEY);
+      setChecking(true);
+      setSession(null);
+    };
+    document.addEventListener('visibilitychange', check);
+    return () => document.removeEventListener('visibilitychange', check);
+  }, [session]);
+
   const handleSubmit = async () => {
     setErr('');
     if (!name.trim()) { setErr(tr("Введи имя")); return; }
@@ -115,6 +145,7 @@ export function AuthGate({ children }) {
     setBusy(false);
     if (result.error) { setErr(result.error); return; }
     clearLogoutFlag();
+    setSessionToken(result.token);
     sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(result));
     setSession(result);
   };
@@ -127,6 +158,7 @@ export function AuthGate({ children }) {
   };
 
   const handleLogout = () => {
+    setSessionToken(null);
     sessionStorage.removeItem(AUTH_SESSION_KEY);
     try { sessionStorage.setItem(LOGOUT_FLAG_KEY, '1'); } catch (e) { /* no-op */ }
     setLoggedOut(true);

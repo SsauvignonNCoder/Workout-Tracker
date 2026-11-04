@@ -1,14 +1,15 @@
 // Vercel Serverless Function: POST /api/telegram-auth
 // Проверяет подпись initData от Telegram Mini App, и если она подлинная —
 // находит существующего пользователя по telegram_id или создаёт нового.
-// Возвращает userId, который фронтенд использует для всех дальнейших
-// запросов к Supabase (sessions/measurements/profile).
+// Возвращает userId и токен сессии (api/_session.js), с которым фронтенд ходит в
+// Supabase (sessions/measurements/profile).
 //
 // Алгоритм проверки подписи — официальный, см. документацию Telegram:
 // https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import { issueSessionToken } from './_session.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
@@ -93,7 +94,7 @@ export default async function handler(req, res) {
     if (findErr) throw findErr;
 
     if (existing) {
-      res.status(200).json({ ok: true, userId: existing.id, displayName: existing.display_name });
+      res.status(200).json({ ok: true, userId: existing.id, displayName: existing.display_name, token: await issueSessionToken(existing.id) });
       return;
     }
 
@@ -105,7 +106,7 @@ export default async function handler(req, res) {
 
     if (createErr) throw createErr;
 
-    res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, isNew: true });
+    res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, isNew: true, token: await issueSessionToken(created.id) });
   } catch (e) {
     res.status(500).json({ error: 'Не удалось создать/найти пользователя', details: String(e.message || e) });
   }
