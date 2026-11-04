@@ -3,7 +3,7 @@
 // Body: { token }. Пользователя сверяем с базой: удалённый аккаунт не продлевается.
 
 import { createClient } from '@supabase/supabase-js';
-import { issueSessionToken, verifySessionJwt } from './_session.js';
+import { mintSessionJwt, verifySessionJwt } from './_session.js';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
       res.status(401).json({ ok: false, code: 'invalid_token' });
       return;
     }
-    res.status(200).json({ ok: true, token: await issueSessionToken(user.id) });
+    res.status(200).json({ ok: true, token: mintSessionJwt(user.id) });
   } catch (e) {
     res.status(500).json({ ok: false, code: 'server_error' });
   }

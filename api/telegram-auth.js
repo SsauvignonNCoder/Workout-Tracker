@@ -9,7 +9,7 @@
 
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import { issueSessionToken } from './_session.js';
+import { mintSessionJwt } from './_session.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
@@ -94,7 +94,7 @@ export default async function handler(req, res) {
     if (findErr) throw findErr;
 
     if (existing) {
-      res.status(200).json({ ok: true, userId: existing.id, displayName: existing.display_name, token: await issueSessionToken(existing.id) });
+      res.status(200).json({ ok: true, userId: existing.id, displayName: existing.display_name, token: mintSessionJwt(existing.id) });
       return;
     }
 
@@ -106,7 +106,7 @@ export default async function handler(req, res) {
 
     if (createErr) throw createErr;
 
-    res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, isNew: true, token: await issueSessionToken(created.id) });
+    res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, isNew: true, token: mintSessionJwt(created.id) });
   } catch (e) {
     res.status(500).json({ error: 'Не удалось создать/найти пользователя', details: String(e.message || e) });
   }

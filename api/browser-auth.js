@@ -15,7 +15,7 @@
 
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import { issueSessionToken } from './_session.js';
+import { mintSessionJwt } from './_session.js';
 import { isPinLocked, pinFailurePatch, pinSuccessPatch } from './_pinLock.js';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
@@ -159,7 +159,7 @@ export default async function handler(req, res) {
         .single();
       if (createErr) throw createErr;
 
-      res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, token: await issueSessionToken(created.id) });
+      res.status(200).json({ ok: true, userId: created.id, displayName: created.display_name, token: mintSessionJwt(created.id) });
       return;
     }
 
@@ -186,7 +186,7 @@ export default async function handler(req, res) {
         await supabaseAdmin.from('users').update({ pin_hash: pinHash, pin_salt: pinSalt }).eq('id', user.id);
       }
 
-      res.status(200).json({ ok: true, userId: user.id, displayName: user.display_name, token: await issueSessionToken(user.id) });
+      res.status(200).json({ ok: true, userId: user.id, displayName: user.display_name, token: mintSessionJwt(user.id) });
       return;
     }
 

@@ -151,6 +151,8 @@ grant select, insert, update, delete on sessions, measurements, profile to authe
 --           система единиц (migration-add-units.sql).
 --   Закрытие базы — блокировка PIN (migration-add-pin-lock.sql), затем, после
 --           выкладки кода с токеном, политики (migration-close-rls.sql).
+--   Свои планы — таблица user_plans (migration-add-user-plans.sql),
+--           планы для друзей — plan_shares и функции (migration-add-plan-shares.sql).
 -- Уже применены к рабочей базе; здесь — для чистой установки и истории.
 -- ============================================================
 alter table measurements add column if not exists time_of_day text;
@@ -190,6 +192,25 @@ create trigger profile_server_marks before update on public.profile
   for each row execute function public.profile_server_marks();
 alter table profile add column if not exists lang text;
 alter table profile add column if not exists units text;
+
+-- Свои планы (src/userPlans.js); удаление мягкое, см. deleted_at.
+create table if not exists public.user_plans (
+  id text primary key,
+  user_id uuid not null references public.users(id) on delete cascade,
+  title text not null,
+  plan jsonb not null,
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint user_plans_size check (pg_column_size(plan) < 500000)
+);
+create index if not exists user_plans_user_idx on public.user_plans (user_id);
+alter table public.user_plans enable row level security;
+revoke all on public.user_plans from anon, authenticated;
+grant select, insert, update, delete on public.user_plans to authenticated;
+drop policy if exists "own plans" on public.user_plans;
+create policy "own plans" on public.user_plans for all to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 
 -- ============================================================
 -- После выполнения: таблицы готовы для нескольких пользователей.

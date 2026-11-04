@@ -103,13 +103,16 @@ export function buildSteps(day) {
   if (!day) return [];
   let out = [];
   if (day.type === 'strength') {
-    out.push({
-      kind: 'cardio', title: 'Разминка на беговой дорожке',
-      subtitle: 'Разгони пульс перед работой, 5–10 мин',
-      name: 'Разминка (беговая дорожка)',
-      fields: { distance: true, speed: true, incline: false, duration: true },
-      target: { duration: '5-10' },
-    });
+    // Разминку и финиш на дорожке свой план может выключить для дня (src/userPlans.js).
+    if (day.warmupRun !== false) {
+      out.push({
+        kind: 'cardio', title: 'Разминка на беговой дорожке',
+        subtitle: 'Разгони пульс перед работой, 5–10 мин',
+        name: 'Разминка (беговая дорожка)',
+        fields: { distance: true, speed: true, incline: false, duration: true },
+        target: { duration: '5-10' },
+      });
+    }
     (day.exercises || []).forEach((ex) => {
       out.push({
         kind: 'exercise', name: ex.name,
@@ -120,13 +123,15 @@ export function buildSteps(day) {
         plan: { name: ex.name, ...(ex.where ? { where: ex.where } : {}), ...(ex.tip ? { tip: ex.tip } : {}) },
       });
     });
-    out.push({
-      kind: 'cardio', finisher: true, title: 'Беговая дорожка · финиш',
-      subtitle: 'Уклон 15%, 15–20 минут',
-      name: 'Беговая дорожка',
-      fields: { distance: true, speed: true, incline: true, duration: true },
-      target: { incline: '15', duration: '15-20' },
-    });
+    if (day.finisherRun !== false) {
+      out.push({
+        kind: 'cardio', finisher: true, title: 'Беговая дорожка · финиш',
+        subtitle: 'Уклон 15%, 15–20 минут',
+        name: 'Беговая дорожка',
+        fields: { distance: true, speed: true, incline: true, duration: true },
+        target: { incline: '15', duration: '15-20' },
+      });
+    }
     pushCooldown(out, day);
     out.push({ ...SUMMARY_STEP });
   } else if (day.type === 'cardio') {
@@ -489,6 +494,34 @@ export function buildGuidedSession({
     // безликим «Кардио по секторам».
     routeName: pickedRouteName(steps, sectorLogs),
   };
+}
+
+// Подсказка веса в своём плане: проценты недели от рекорда, если они заданы, иначе вес
+// с прошлого раза. Округление — как у встроенных (weightHint). Подсказать нечего — null.
+export function customWeightHint({ recordKg, lastKg, load }) {
+  if (load && recordKg > 0) {
+    const step = isImperial() ? 5 : 2.5;
+    const rec = toDisp('w', recordKg);
+    const r = (x) => String(Math.round(x / step) * step);
+    const lo = r(rec * (load[0] / 100));
+    if (load[1] == null) return `${lo}+`;
+    const hi = r(rec * (load[1] / 100));
+    return lo === hi ? lo : `${lo} – ${hi}`;
+  }
+  return lastKg > 0 ? num('w', lastKg) : null;
+}
+
+// Вес с прошлого раза: рабочий вес упражнения в самой свежей тренировке, где он был.
+export function lastWeightOf(history, name) {
+  let best = { date: '', kg: 0 };
+  (history || []).forEach((s) => {
+    if (!s.date || s.date < best.date) return;
+    (s.exercises || []).forEach((ex) => {
+      const kg = Number(ex.weight) || 0;
+      if (ex.name === name && kg > 0) best = { date: s.date, kg };
+    });
+  });
+  return best.kg;
 }
 
 // ---- Черновик v3 ----

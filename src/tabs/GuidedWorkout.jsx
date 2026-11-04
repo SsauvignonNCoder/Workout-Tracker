@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
   Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
-  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2, Sparkles,
+  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2, Sparkles, Share2,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
@@ -15,7 +15,7 @@ import {
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
   insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData, workoutHasData,
-  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes, weightHint, isBaseLift, week3Light,
+  clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes, weightHint, isBaseLift, week3Light, customWeightHint, lastWeightOf,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
@@ -24,6 +24,7 @@ import { getPlan, planWeekOf } from '../plans.js';
 import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
 import { ClimbPicker } from '../ClimbPicker.jsx';
+import { ShareCardSheet } from '../ShareCardSheet.jsx';
 import { tr, exName, exKey, locale } from '../i18n.js';
 // Ввод — в текущей системе единиц; в запись, сводку и гору — метрика (convertLogs).
 import { U, num, unit as unitOf, getUnits, isImperial, toDisp, fromDisp, convertLogs, convertText } from '../units.js';
@@ -228,6 +229,7 @@ export function GuidedWorkout({
   // Сообщение о неудачной записи в базу (шаг «Итог»). Пока оно есть — гид открыт,
   // черновик цел, кнопку «Завершить и сохранить» можно нажать ещё раз.
   const [saveError, setSaveError] = useState('');
+  const [shareSession, setShareSession] = useState(null);
   // Подтверждение досрочного завершения кардио-дня, когда цель не добрана.
   const [confirmEarly, setConfirmEarly] = useState(false);
 
@@ -681,12 +683,12 @@ export function GuidedWorkout({
     setCooldownDone((prev) => (prev[i] ? { ...prev, [i]: false } : prev));
   };
 
-  const finish = async () => {
-    // Сборка записи живёт в guidedSteps.js (там же её тесты): упражнения с
-    // подходами, заметками, секундомером и пометками замены/добавления,
-    // кардио и секторы, итог дня.
+  // Сборка записи живёт в guidedSteps.js (там же её тесты): упражнения с
+  // подходами, заметками, секундомером и пометками замены/добавления,
+  // кардио и секторы, итог дня.
+  const buildSession = () => {
     const m = convertLogs({ exLogs, cardioLogs, sectorLogs }, getUnits()); // в запись — метрика
-    const session = buildGuidedSession({
+    return buildGuidedSession({
       steps, exLogs: m.exLogs, exNotes, exTimers, cardioLogs: m.cardioLogs, sectorLogs: m.sectorLogs, summary,
       workoutDate, dayPlan, planId, startedAt: startedAtRef.current, now: Date.now(),
       // id от старта тренировки: повтор после неудачной записи заменит ту же
@@ -696,6 +698,10 @@ export function GuidedWorkout({
       // итога в длительность не входит.
       durationSec: swElapsed(clockRef.current, Date.now()),
     });
+  };
+
+  const finish = async () => {
+    const session = buildSession();
 
     clearTimer();
     cancelBotAlert();
@@ -793,6 +799,9 @@ export function GuidedWorkout({
   });
 
   const sheetStep = sheet && sheet.mode === 'edit' ? steps.find((s) => s.id === sheet.stepId) : null;
+
+  // Картинка «Поделиться» на итоге: собирается из введённого, сохранять для этого не нужно.
+  const openShare = () => setShareSession(buildSession());
 
   // Сводка по упражнениям для итога: только на шаге «Итог», по введённым подходам.
   const exerciseSummary = step.kind === 'summary'
@@ -1000,6 +1009,8 @@ export function GuidedWorkout({
               step={step} sets={exLogs[stepId] || []} onSet={setExSet}
               planWeek={dayPlan && dayPlan.day ? planWeekOf(getPlan(planId), dayPlan.day) : null}
               planDay={dayPlan && dayPlan.day}
+              history={history}
+              planObj={getPlan(planId)}
               records={records} note={exNotes[stepId] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
               nextName={nextShort} allSteps={allSteps} currentIdx={stepIdx} onJump={jumpTo}
@@ -1017,15 +1028,19 @@ export function GuidedWorkout({
               pick={cooldownPick} onSwap={swapCooldown}
             />
           ) : step.kind === 'summary' ? (
-            <SummaryStep
-              summary={summary}
-              onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))}
-              mountainSectors={mountainSectors}
-              mountainClimb={mountainClimb}
-              exerciseSummary={exerciseSummary}
-              totalSec={elapsed}
-              cardioResults={cardioResults}
-            />
+            <>
+              <SummaryStep
+                summary={summary}
+                onChange={(patch) => setSummary((prev) => ({ ...prev, ...patch }))}
+                mountainSectors={mountainSectors}
+                mountainClimb={mountainClimb}
+                exerciseSummary={exerciseSummary}
+                totalSec={elapsed}
+                cardioResults={cardioResults}
+                onShare={workoutHasData({ steps, exLogs, cardioLogs, sectorLogs }) ? openShare : null}
+              />
+              {shareSession && <ShareCardSheet session={shareSession} sessions={history} onClose={() => setShareSession(null)} />}
+            </>
           ) : (
             <>
               <CardioStep step={step} value={cardioLogs[stepId] || {}} onChange={setCardioField} />
@@ -1584,7 +1599,7 @@ function FitLine({ text, max = 20, min = 14, style }) {
 
 function ExerciseStep({
   step, sets, onSet, records, note, onNote, onGuide, nextName, allSteps = [], currentIdx = 0, onJump,
-  timer, onTimerToggle, onTimerReset, onSetCount, planWeek, planDay,
+  timer, onTimerToggle, onTimerReset, onSetCount, planWeek, planDay, history, planObj,
 }) {
   const t = useTheme();
   // Список шагов тренировки свёрнут по умолчанию и закрывается сам при переходе
@@ -1595,8 +1610,10 @@ function ExerciseStep({
   const record = records && records[step.name];
   // Вместо «0» в пустом поле веса — доля рекорда на эту неделю плана (guidedSteps.js → weightHint).
   // Базовые — диапазон, остальные — «от» (см. там же).
-  const weightPh = (!weightless && record && record.weight
-    && weightHint(record.weight, planWeek, isBaseLift(step.name), { light3: week3Light(planDay, step.name) })) || '0';
+  const recordKg = record && record.weight;
+  const weightPh = (!weightless && (planObj && planObj.custom
+    ? customWeightHint({ recordKg, lastKg: lastWeightOf(history, step.name), load: planObj.weekLoads[planWeek] })
+    : recordKg && weightHint(recordKg, planWeek, isBaseLift(step.name), { light3: week3Light(planDay, step.name) }))) || '0';
   const hasGuide = !!getExerciseGuide(step.name);
   // Пометки плана («со страховкой» и т.п.) — только пока упражнение не заменено:
   // к другому упражнению они не относятся. Подпись места («тренажёр», «скамья»)
@@ -1975,7 +1992,7 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
   );
 }
 
-function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerciseSummary, totalSec = 0, cardioResults = [] }) {
+function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerciseSummary, totalSec = 0, cardioResults = [], onShare }) {
   const t = useTheme();
   // Гора-награда: только для кардио-дня по секторам, где есть дистанция и наклон.
   const gainM = Math.round(sectorElevationGain(mountainSectors));
@@ -2064,6 +2081,18 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
             ))}
         </div>
         {exerciseSummary && <ExerciseSummaryCard data={exerciseSummary} />}
+        {onShare && (
+          <button
+            onClick={onShare}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', marginTop: 14,
+              padding: '13px 14px', borderRadius: 12, border: `1px solid ${t.ACCENT_BORDER}`, background: t.BG_RAISED,
+              color: t.TEXT, fontSize: 14.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >
+            <Share2 size={16} color={t.ACCENT_SOFT} /> {tr("Поделиться")}
+          </button>
+        )}
       </div>
       <AiQuizCard />
     </div>

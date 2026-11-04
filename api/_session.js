@@ -63,36 +63,3 @@ export function verifySessionJwt(token, nowMs = Date.now()) {
   if (!(Number(payload.exp) > nowMs / 1000)) return null;
   return payload.sub;
 }
-
-// Принимает ли шлюз наши токены. Нужно на время выкладки: пока действуют старые
-// открытые политики, приложение без токена работает, а с отвергнутым — нет. Поэтому
-// при отказе шлюза токен не выдаём. Сеть подвела — не приговор, результат не запоминаем.
-let gatewayAccepts;
-
-async function tokenAccepted(token) {
-  if (gatewayAccepts !== undefined) return gatewayAccepts;
-  const url = process.env.VITE_SUPABASE_URL;
-  const key = process.env.VITE_SUPABASE_ANON_KEY;
-  if (!url || !key) return true;
-  try {
-    const r = await fetch(`${url}/rest/v1/profile?select=user_id&limit=1`, {
-      headers: { apikey: key, Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(3000),
-    });
-    if (r.status === 401) {
-      console.error('session: шлюз Supabase отверг токен сессии — проверь SUPABASE_JWT_SECRET');
-      gatewayAccepts = false;
-      return false;
-    }
-    if (r.ok) gatewayAccepts = true;
-  } catch (e) { /* сеть */ }
-  return true;
-}
-
-export const resetGatewayCheckForTests = () => { gatewayAccepts = undefined; };
-
-export async function issueSessionToken(userId) {
-  const token = mintSessionJwt(userId);
-  if (!token) return null;
-  return (await tokenAccepted(token)) ? token : null;
-}

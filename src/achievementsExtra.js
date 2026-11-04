@@ -86,7 +86,7 @@ function planCycles(sessions) {
   (sessions || []).filter((s) => s.programDay).slice().sort(byDate).forEach((s) => {
     const planId = s.planId || DEFAULT_PLAN_ID;
     const day = num(s.programDay);
-    if (!cur || cur.planId !== planId || day <= cur.lastDay - 6) {
+    if (!cur || cur.planId !== planId || day <= cur.lastDay - Math.min(6, getPlan(planId).daysPerWeek || 6)) {
       cur = { planId, days: new Set(), lastDay: 0 };
       cycles.push(cur);
     }
@@ -95,7 +95,14 @@ function planCycles(sessions) {
   });
   return cycles;
 }
-const cycleComplete = (c) => getPlan(c.planId).days.every((d) => c.days.has(d.day));
+// Свой план короче 4 недель цикл не закрывает: иначе цикл из одного дня закрывался бы
+// одной тренировкой.
+const MIN_CYCLE_WEEKS = 4;
+const cycleComplete = (c) => {
+  const plan = getPlan(c.planId);
+  if (plan.custom && (plan.weekCount || 0) < MIN_CYCLE_WEEKS) return false;
+  return plan.days.every((d) => c.days.has(d.day));
+};
 function cycleWeekDone(c, week) {
   const per = getPlan(c.planId).daysPerWeek || 6;
   for (let d = (week - 1) * per + 1; d <= week * per; d += 1) if (!c.days.has(d)) return false;

@@ -1,11 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { LogOut, Award, CheckCircle2, Circle } from 'lucide-react';
+import { LogOut, Award, CheckCircle2, Circle, Pencil, Trash2, Copy, Share2, Sparkles, KeyRound } from 'lucide-react';
 import { useTheme, GLASS_SHEEN, GLASS_BORDER, GLASS_EDGE, GLASS_BLUR, glassCard } from '../theme.js';
 import { fmtDateShort } from '../dateUtils.js';
 import {
   ACH_ICON, computeAchievements, groupAchievements, computeTotalXpFromSessions, getLevelInfo,
 } from '../gamification.js';
 import { PLANS, DEFAULT_PLAN_ID, getPlan } from '../plans.js';
+import {
+  planFromRow, planSummary, draftFromBuiltin, emptyDraft, MAX_USER_PLANS, planRowsForBackup, looksLikePlanRows, adoptPlanRows,
+} from '../userPlans.js';
+import { PlanEditor } from './PlanEditor.jsx';
+import { PlanStudio, PlanShareSheet } from './PlanStudio.jsx';
 import { APP_VERSION } from '../version.js';
 import { tr, achTitle, achDescription, locale } from '../i18n.js';
 import { toDisp, unit as unitLabel, KIND_OF_UNIT, convertText, isImperial, showNum } from '../units.js';
@@ -15,7 +20,9 @@ import { toDisp, unit as unitLabel, KIND_OF_UNIT, convertText, isImperial, showN
 // вернуться. Переключение сбрасывает «последний день» в 0: следующая
 // тренировка начнётся с первого дня выбранного плана. История и рекорды не
 // меняются — каждая тренировка помнит свой план.
-function PlanPicker({ profile, saveProfile }) {
+function PlanPicker({
+  profile, saveProfile, sessions, planRows, saveUserPlan, deleteUserPlan, createPlanShare, fetchPlanShare,
+}) {
   const t = useTheme();
   const current = (profile && profile.planId) || DEFAULT_PLAN_ID;
   // Блок свёрнут: в заголовке видно, какой план ведётся, список планов — по тапу.
@@ -24,6 +31,31 @@ function PlanPicker({ profile, saveProfile }) {
   const [saving, setSaving] = useState(false);
   const lastDay = profile && profile.lastProgramDay;
   const currentPlan = getPlan(current);
+  const ownPlans = (planRows || []).filter((r) => !r.deleted_at).map(planFromRow);
+  const [editing, setEditing] = useState(null); // { id?, heading, title, weekdays, weeks }
+  const [studio, setStudio] = useState(null); // 'ai' | 'code'
+  const [sharing, setSharing] = useState(null); // свой план
+  const [armedDelete, setArmedDelete] = useState(null);
+  const [planNote, setPlanNote] = useState('');
+
+  const openNew = () => setEditing({ ...emptyDraft(), heading: tr('Новый план') });
+  const openCopy = (p) => setEditing({ ...draftFromBuiltin(p), heading: tr('Новый план') });
+  const openEdit = (p) => setEditing({
+    id: p.id, heading: tr('Изменить план'), title: p.title, weekdays: p.stored.weekdays, weeks: p.stored.weeks,
+  });
+  const removePlan = async (id) => {
+    if (armedDelete !== id) { setArmedDelete(id); return; }
+    setArmedDelete(null);
+    try {
+      await deleteUserPlan(id);
+    } catch (e) {
+      setPlanNote(tr('Не удалось удалить план — проверь связь'));
+    }
+  };
+  const planAction = {
+    flex: '1 1 0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '7px 9px', borderRadius: 8, border: `1px solid ${t.BORDER}`,
+    background: 'transparent', color: t.TEXT_DIM, fontSize: 12, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+  };
 
   const confirm = async () => {
     if (!pending) return;
@@ -63,12 +95,12 @@ function PlanPicker({ profile, saveProfile }) {
       {open && (
         <div className="dropdown-open">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {PLANS.map((p) => {
+            {[...PLANS, ...ownPlans].map((p) => {
               const active = p.id === current;
               const chosen = p.id === pending;
               return (
+                <div key={p.id}>
                 <button
-                  key={p.id}
                   onClick={() => setPending(active ? null : p.id)}
                   aria-pressed={active}
                   style={{
@@ -86,7 +118,7 @@ function PlanPicker({ profile, saveProfile }) {
                       {tr(p.title)}
                     </span>
                     <span style={{ display: 'block', fontSize: 12, color: t.TEXT_FAINT, lineHeight: 1.4 }}>
-                      {tr(p.description)}
+                      {p.custom ? planSummary(p) : tr(p.description)}
                     </span>
                     {active && lastDay > 0 && (
                       <span style={{ display: 'block', fontSize: 11.5, color: t.TEXT_DIM, marginTop: 5, fontFamily: t.FONT_MONO }}>
@@ -95,9 +127,55 @@ function PlanPicker({ profile, saveProfile }) {
                     )}
                   </span>
                 </button>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  {p.custom ? (
+                    <>
+                      <button onClick={() => openEdit(p)} style={planAction}><Pencil size={12} /> {tr('Изменить')}</button>
+                      <button onClick={() => setSharing(p)} style={planAction}><Share2 size={12} /> {tr('Поделиться')}</button>
+                      {/* Текущий план не удаляем: сначала надо переключиться на другой. */}
+                      {!active && (
+                        <button
+                          onClick={() => removePlan(p.id)}
+                          style={armedDelete === p.id ? { ...planAction, color: t.DANGER, borderColor: t.DANGER_BORDER, background: t.DANGER_BG } : planAction}
+                        >
+                          <Trash2 size={12} /> {armedDelete === p.id ? tr('Точно удалить?') : tr('Удалить')}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <button onClick={() => openCopy(p)} style={planAction}><Copy size={12} /> {tr('Сделать свою копию')}</button>
+                  )}
+                </div>
+                </div>
               );
             })}
           </div>
+
+          {ownPlans.length < MAX_USER_PLANS && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: t.TEXT_FAINT, marginBottom: 7 }}>{tr('Создать свой план')}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}>
+                {[
+                  { key: 'manual', label: tr('Вручную'), icon: Pencil, onClick: openNew },
+                  { key: 'ai', label: tr('С ИИ'), icon: Sparkles, onClick: () => setStudio('ai') },
+                  { key: 'code', label: tr('По коду'), icon: KeyRound, onClick: () => setStudio('code') },
+                ].map(({ key, label, icon: Icon, onClick }) => (
+                  <button
+                    key={key}
+                    onClick={onClick}
+                    style={{
+                      padding: '11px 4px', borderRadius: 12, border: `1px dashed ${t.ACCENT_BORDER}`, background: 'transparent',
+                      color: t.ACCENT_SOFT, fontSize: 13, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}
+                  >
+                    <Icon size={14} /> {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {planNote && <div style={{ marginTop: 8, fontSize: 12.5, color: t.DANGER }}>{planNote}</div>}
 
           {pending && (
             <div style={{
@@ -133,6 +211,37 @@ function PlanPicker({ profile, saveProfile }) {
             </div>
           )}
         </div>
+      )}
+      {studio && (
+        <PlanStudio
+          mode={studio}
+          sessions={sessions}
+          planCount={ownPlans.length}
+          saveUserPlan={saveUserPlan}
+          saveProfile={saveProfile}
+          fetchPlanShare={fetchPlanShare}
+          onClose={() => setStudio(null)}
+        />
+      )}
+      {sharing && (
+        <PlanShareSheet
+          title={sharing.title}
+          stored={sharing.stored}
+          createPlanShare={createPlanShare}
+          onClose={() => setSharing(null)}
+        />
+      )}
+      {editing && (
+        <PlanEditor
+          initial={editing}
+          heading={editing.heading}
+          sessions={sessions}
+          onClose={() => setEditing(null)}
+          onSave={async ({ title, plan }) => {
+            await saveUserPlan({ id: editing.id, title, plan });
+            setEditing(null);
+          }}
+        />
       )}
     </div>
   );
@@ -325,7 +434,7 @@ function LevelCard({ levelInfo, totalXp }) {
   );
 }
 
-function ExportImportPanel({ sessions, measurements, profile, saveSessions, saveMeasurements, saveProfile, setError }) {
+function ExportImportPanel({ sessions, measurements, profile, planRows, restoreUserPlans, saveSessions, saveMeasurements, saveProfile, setError }) {
   const t = useTheme();
   const [mode, setMode] = useState(null); // null | 'export' | 'import'
   const [importText, setImportText] = useState('');
@@ -339,9 +448,10 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       sessions: sessions || [],
       measurements: measurements || [],
       profile: profile || {},
+      userPlans: planRowsForBackup(planRows),
     };
     return JSON.stringify(payload);
-  }, [sessions, measurements, profile]);
+  }, [sessions, measurements, profile, planRows]);
 
   const handleCopy = async () => {
     try {
@@ -397,7 +507,8 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
     if (!data || typeof data !== 'object'
       || (data.sessions !== undefined && !looksLikeSessions(data.sessions))
       || (data.measurements !== undefined && !looksLikeRows(data.measurements))
-      || (data.profile !== undefined && (typeof data.profile !== 'object' || data.profile === null))) {
+      || (data.profile !== undefined && (typeof data.profile !== 'object' || data.profile === null))
+      || (data.userPlans !== undefined && !looksLikePlanRows(data.userPlans))) {
       setConfirmingImport(false);
       setError(tr("Копия повреждена или это не тот текст — восстановление отменено, данные не тронуты"));
       return;
@@ -415,14 +526,19 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
       const own = new Set((mine || []).map((r) => r.id));
       return rows.map((r) => (own.has(r.id) ? r : { ...r, id: `${r.id}${suffix}` }));
     };
+    // Планы — первыми: тренировки и профиль ссылаются на них.
+    const plansIn = adoptPlanRows(data.userPlans || [], (planRows || []).map((r) => r.id), suffix);
     const sessionsIn = data.sessions
-      && adopt(data.sessions.map((s) => ({ ...s, exercises: s.exercises || [], cardio: s.cardio || [] })), sessions);
+      && adopt(data.sessions.map((s) => ({ ...s, exercises: s.exercises || [], cardio: s.cardio || [], planId: plansIn.planIdOf(s.planId) })), sessions);
     const measurementsIn = data.measurements && adopt(data.measurements, measurements);
+    const profileIn = data.profile && (data.profile.planId
+      ? { ...data.profile, planId: plansIn.planIdOf(data.profile.planId) } : data.profile);
     let done = 0;
     try {
+      if (plansIn.rows.length) { await restoreUserPlans(plansIn.rows); done += 1; }
       if (sessionsIn) { await saveSessions(sessionsIn); done += 1; }
       if (measurementsIn) { await saveMeasurements(measurementsIn); done += 1; }
-      if (data.profile) { await saveProfile(data.profile); done += 1; }
+      if (profileIn) { await saveProfile(profileIn); done += 1; }
       setMode(null);
       setImportText('');
       setConfirmingImport(false);
@@ -532,7 +648,7 @@ function ExportImportPanel({ sessions, measurements, profile, saveSessions, save
   );
 }
 
-export function ProfileTab({ profile, saveProfile, sessions, setError, measurements, saveSessions, saveMeasurements, onLogout, lang, onLang, units, onUnits }) {
+export function ProfileTab({ profile, saveProfile, sessions, setError, planRows, saveUserPlan, deleteUserPlan, restoreUserPlans, createPlanShare, fetchPlanShare, measurements, saveSessions, saveMeasurements, onLogout, lang, onLang, units, onUnits }) {
   const t = useTheme();
   const [showAchievements, setShowAchievements] = useState(false);
   // Выход — в два шага: кнопка открывает подтверждение под собой.
@@ -628,7 +744,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
       <div style={{ height: 1, background: t.BORDER, margin: '0 0 18px' }} />
 
       <div data-tour="plan">
-        <PlanPicker profile={profile} saveProfile={saveProfile} />
+        <PlanPicker profile={profile} saveProfile={saveProfile} sessions={sessions} planRows={planRows} saveUserPlan={saveUserPlan} deleteUserPlan={deleteUserPlan} createPlanShare={createPlanShare} fetchPlanShare={fetchPlanShare} />
       </div>
 
       {/* Параметры тела переехали во вкладку «Вес» — там у них история замеров. */}
@@ -654,6 +770,7 @@ export function ProfileTab({ profile, saveProfile, sessions, setError, measureme
 
       <ExportImportPanel
         sessions={sessions} measurements={measurements} profile={profile}
+        planRows={planRows} restoreUserPlans={restoreUserPlans}
         saveSessions={saveSessions} saveMeasurements={saveMeasurements} saveProfile={saveProfile}
         setError={setError}
       />

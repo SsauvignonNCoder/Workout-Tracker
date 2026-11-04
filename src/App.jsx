@@ -5,6 +5,11 @@ import { ThemeContext, useTheme, THEME_2A, TRIS_2A, TRIS_SIZE, TRIS_MASK, brassF
 import { useBrassShine } from './useBrassShine.js';
 import { isWeighInTime } from './dateUtils.js';
 import { AuthGate } from './auth.jsx';
+import { setUserPlans as registerUserPlans } from './plans.js';
+import { planFromRow, withHistory } from './userPlans.js';
+import { launchPlanCode } from './planExchange.js';
+import { PlanStudio } from './tabs/PlanStudio.jsx';
+import { todayISO } from './dateUtils.js';
 import { WorkoutTab } from './tabs/WorkoutTab.jsx';
 import { MeasurementsTab } from './tabs/MeasurementsTab.jsx';
 import { ProgressTab } from './tabs/ProgressTab.jsx';
@@ -139,6 +144,9 @@ function useStorage(userId) {
   // устаревшего profile из замыкания вызывающего) и флаг неудачной загрузки.
   const profileRef = useRef(null);
   const loadFailedRef = useRef(false);
+  // Свои планы: строки таблицы и они же в реестре движка (plans.js).
+  const [planRows, setPlanRows] = useState([]);
+  const applyPlanRows = (rows) => { registerUserPlans(rows.map(planFromRow)); setPlanRows(rows); };
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(null);
   // Загрузка не удалась: данные пустые не потому, что их нет. Обучение новичку
@@ -148,18 +156,23 @@ function useStorage(userId) {
   useEffect(() => {
     if (!userId) return;
     setLoaded(false);
+    applyPlanRows([]);
     (async () => {
       try {
-        const [sessionsRes, measurementsRes, profileRes] = await Promise.all([
+        const [sessionsRes, measurementsRes, profileRes, plansRes] = await Promise.all([
           supabase.from('sessions').select('*').eq('user_id', userId).order('date', { ascending: true }),
           supabase.from('measurements').select('*').eq('user_id', userId).order('date', { ascending: true }),
           supabase.from('profile').select('*').eq('user_id', userId).maybeSingle(),
+          supabase.from('user_plans').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
         ]);
 
         if (sessionsRes.error) throw sessionsRes.error;
         if (measurementsRes.error) throw measurementsRes.error;
         if (profileRes.error) throw profileRes.error;
+        if (plansRes.error) throw plansRes.error;
 
+        // Раньше тренировок: они сверяются с планами с первой же отрисовки.
+        applyPlanRows(plansRes.data || []);
         setSessions((sessionsRes.data || []).map(sessionFromRow));
         setMeasurements((measurementsRes.data || []).map(measurementFromRow));
         profileRef.current = profileFromRow(profileRes.data);
@@ -297,6 +310,60 @@ function useStorage(userId) {
     }
   };
 
+  // Свой план: draft — результат validatePlan, id нет — новый план. Правка плана, по
+  // которому уже есть тренировки, сохраняет прошлую версию (userPlans.js → withHistory).
+  const saveUserPlan = async ({ id, title, plan }) => {
+    if (loadFailedRef.current) throw new Error('not loaded');
+    const prev = id ? planRows.find((r) => r.id === id) : null;
+    const hasSessions = !!id && (sessions || []).some((s) => s.planId === id);
+    const row = {
+      id: id || `u-${crypto.randomUUID()}`,
+      user_id: userId,
+      title,
+      plan: withHistory(prev && prev.plan, plan, hasSessions, todayISO()),
+      deleted_at: null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: upsertErr } = await supabase.from('user_plans').upsert(row);
+    if (upsertErr) throw upsertErr;
+    applyPlanRows(prev ? planRows.map((r) => (r.id === id ? { ...r, ...row } : r)) : [...planRows, row]);
+    return row.id;
+  };
+
+  // Восстановление из резервной копии: строки уже с нужными id (userPlans.js → adoptPlanRows).
+  const restoreUserPlans = async (rows) => {
+    if (loadFailedRef.current) throw new Error('not loaded');
+    if (!rows.length) return;
+    const stamped = rows.map((r) => ({
+      id: r.id, user_id: userId, title: r.title, plan: r.plan, deleted_at: r.deleted_at || null, updated_at: new Date().toISOString(),
+    }));
+    const { error: upsertErr } = await supabase.from('user_plans').upsert(stamped);
+    if (upsertErr) throw upsertErr;
+    const incoming = new Set(stamped.map((r) => r.id));
+    applyPlanRows([...planRows.filter((r) => !incoming.has(r.id)), ...stamped]);
+  };
+
+  // План для друга: снимок по короткому коду (supabase/migration-add-plan-shares.sql).
+  const createPlanShare = async (plan) => {
+    const { data, error: rpcErr } = await supabase.rpc('create_plan_share', { p_plan: plan });
+    if (rpcErr) throw rpcErr;
+    return data;
+  };
+  const fetchPlanShare = async (code) => {
+    const { data, error: rpcErr } = await supabase.rpc('get_plan_share', { p_code: code });
+    if (rpcErr) throw rpcErr;
+    return data;
+  };
+
+  // Удаление мягкое: прошлые тренировки продолжают сверяться с этим планом.
+  const deleteUserPlan = async (id) => {
+    if (loadFailedRef.current) throw new Error('not loaded');
+    const at = new Date().toISOString();
+    const { error: updErr } = await supabase.from('user_plans').update({ deleted_at: at }).eq('id', id).eq('user_id', userId);
+    if (updErr) throw updErr;
+    applyPlanRows(planRows.map((r) => (r.id === id ? { ...r, deleted_at: at } : r)));
+  };
+
   // Метка «идёт тренировка» для напоминания о пропуске: сервер не пишет, пока
   // тренировка начата меньше 4 часов назад и не закрыта. Заодно — пояс устройства.
   // Это подсказка серверу, а не данные: ошибки молча игнорируем.
@@ -361,7 +428,7 @@ function useStorage(userId) {
     else touchTimerRef.current = setTimeout(flushTouch, wait);
   };
 
-  return { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout, touchActiveWorkout, clearWorkoutTouch };
+  return { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, planRows, saveUserPlan, deleteUserPlan, restoreUserPlans, createPlanShare, fetchPlanShare, markActiveWorkout, touchActiveWorkout, clearWorkoutTouch };
 }
 
 // Активная вкладка — латунная пилюля с живым бликом (2A). Неактивные — приглушённые
@@ -407,7 +474,7 @@ function Pill({ children, active, onClick, icon: Icon, main, tour }) {
 function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   const t = useTheme();
   const { ref: brassRef } = useBrassShine();
-  const { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, markActiveWorkout, touchActiveWorkout, clearWorkoutTouch } = useStorage(userId);
+  const { sessions, measurements, profile, loaded, loadFailed, error, setError, saveSessions, saveMeasurements, saveProfile, planRows, saveUserPlan, deleteUserPlan, restoreUserPlans, createPlanShare, fetchPlanShare, markActiveWorkout, touchActiveWorkout, clearWorkoutTouch } = useStorage(userId);
   // Порядок в баре: «Тренировка» посередине как главная, ассистент между ней и
   // профилем. Порядок задаёт и направление свайпов.
   const TAB_ORDER = ['progress', 'measurements', 'workout', 'assistant', 'profile'];
@@ -448,6 +515,19 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
   // за границу окна, вкладка сама собой не переключится — это было бы дёрганьем
   // экрана под руками.
   const [tab, setTab] = useState(() => (isWeighInTime() ? 'measurements' : 'workout'));
+  // Открыли по ссылке с планом от друга: показываем его один раз за запуск.
+  const [incomingPlanCode, setIncomingPlanCode] = useState(null);
+  useEffect(() => {
+    if (!loaded || loadFailed) return;
+    const code = launchPlanCode();
+    if (!code) return;
+    const key = `wt:plan-link:${code}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch (e) { /* без хранилища просто покажем ещё раз */ }
+    setIncomingPlanCode(code);
+  }, [loaded, loadFailed]);
   const [slideDir, setSlideDir] = useState(0); // -1 left, 1 right, 0 none
   // Свёрнутая тренировка на экране — её плашка (≈60 px) висит над таб-баром, и
   // низ страницы нужно уметь докрутить из-под неё.
@@ -733,6 +813,8 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
           {tab === 'profile' && (
             <ProfileTab
               profile={profile} saveProfile={saveProfile} sessions={sessions} setError={setError}
+              planRows={planRows} saveUserPlan={saveUserPlan} deleteUserPlan={deleteUserPlan} restoreUserPlans={restoreUserPlans}
+              createPlanShare={createPlanShare} fetchPlanShare={fetchPlanShare}
               measurements={measurements} saveSessions={saveSessions} saveMeasurements={saveMeasurements}
               onLogout={onLogout}
               lang={lang} onLang={changeLang}
@@ -740,6 +822,19 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
             />
           )}
         </div>
+      )}
+
+      {incomingPlanCode && (
+        <PlanStudio
+          mode="code"
+          initialCode={incomingPlanCode}
+          sessions={sessions}
+          planCount={planRows.filter((r) => !r.deleted_at).length}
+          saveUserPlan={saveUserPlan}
+          saveProfile={saveProfile}
+          fetchPlanShare={fetchPlanShare}
+          onClose={() => setIncomingPlanCode(null)}
+        />
       )}
 
       <div style={{
@@ -772,7 +867,8 @@ function WorkoutTrackerInner({ userId, displayName, onLogout }) {
         </div>
       </div>
 
-      {tourAsk && <TourPrompt onYes={() => answerTour(true)} onNo={() => answerTour(false)} />}
+      {/* Пришёл по ссылке с планом: сначала план, обучение предложим, когда его закроют. */}
+      {tourAsk && !incomingPlanCode && <TourPrompt onYes={() => answerTour(true)} onNo={() => answerTour(false)} />}
       {tourOpen && <Tour tab={tab} goToTab={goToTab} onClose={closeTour} />}
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown, Timer, Footprints } from 'lucide-react';
+import { Dumbbell, Ruler, LineChart as LineIcon, TrendingUp, Pencil, Trash2, Flame, ChevronDown, Timer, Footprints, Share2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { useTheme, ThemeContext, THEME_2A, FROST, brassFill, brassText, glassCard, GLASS_SHEEN, GLASS_BORDER, GLASS_EDGE } from '../theme.js';
 import { todayISO, shiftDate, fmtDateShort, fmtDateFull } from '../dateUtils.js';
@@ -7,6 +7,7 @@ import { computeRecords, getMonday, computeWeekStreak } from '../gamification.js
 import { MuscleBadge, isWeightlessExercise, isTimeBasedExercise, secToClock, categorizeExercise, groupLetter } from './workoutTabHelpers.jsx';
 import { WeekExportPanel } from './WeekExportPanel.jsx';
 import { MountainBox } from '../MountainBox.jsx';
+import { ShareCardSheet } from '../ShareCardSheet.jsx';
 import { tr, exName, routeTitle } from '../i18n.js';
 import { U, num, unit, toDisp } from '../units.js';
 
@@ -613,7 +614,7 @@ function TreadmillChart({ sessions }) {
   );
 }
 
-function SessionCard({ s, onEdit, onDelete }) {
+function SessionCard({ s, onEdit, onDelete, onShare }) {
   const t = useTheme();
   const cardioAll = s.cardio || [];
   const sectorEntries = cardioAll.filter((c) => SECTOR_RE.test((c.name || '').trim()));
@@ -630,6 +631,9 @@ function SessionCard({ s, onEdit, onDelete }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 13.5, fontWeight: 700, color: t.TEXT_DIM, textTransform: 'capitalize' }}>{fmtDateFull(s.date)}</span>
         <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => onShare(s)} aria-label={tr("Поделиться")} style={{ background: 'transparent', border: 'none', color: t.TEXT_FAINT, cursor: 'pointer', padding: 4 }}>
+            <Share2 size={14} />
+          </button>
           <button onClick={() => onEdit(s)} style={{ background: 'transparent', border: 'none', color: t.TEXT_FAINT, cursor: 'pointer', padding: 4 }}>
             <Pencil size={14} />
           </button>
@@ -724,7 +728,7 @@ function SessionCard({ s, onEdit, onDelete }) {
   );
 }
 
-function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete }) {
+function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete, onShare }) {
   const t = useTheme();
   const [expanded, setExpanded] = useState(false);
   const weekEnd = shiftDate(weekStart, 6);
@@ -748,7 +752,7 @@ function ArchiveWeekGroup({ weekStart, items, onEdit, onDelete }) {
       {expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, paddingLeft: 8 }}>
           {items.map((s) => (
-            <SessionCard key={s.id} s={s} onEdit={onEdit} onDelete={onDelete} />
+            <SessionCard key={s.id} s={s} onEdit={onEdit} onDelete={onDelete} onShare={onShare} />
           ))}
         </div>
       )}
@@ -788,7 +792,7 @@ function buildArchiveTree(list) {
     }));
 }
 
-function ArchiveMonthGroup({ month, onEdit, onDelete }) {
+function ArchiveMonthGroup({ month, onEdit, onDelete, onShare }) {
   const t = useTheme();
   const [expanded, setExpanded] = useState(false);
   return (
@@ -810,7 +814,7 @@ function ArchiveMonthGroup({ month, onEdit, onDelete }) {
       {expanded && (
         <div style={{ marginTop: 6, paddingLeft: 8 }}>
           {month.weeks.map((w) => (
-            <ArchiveWeekGroup key={w.weekStart} weekStart={w.weekStart} items={w.items} onEdit={onEdit} onDelete={onDelete} />
+            <ArchiveWeekGroup key={w.weekStart} weekStart={w.weekStart} items={w.items} onEdit={onEdit} onDelete={onDelete} onShare={onShare} />
           ))}
         </div>
       )}
@@ -818,7 +822,7 @@ function ArchiveMonthGroup({ month, onEdit, onDelete }) {
   );
 }
 
-function ArchiveYearGroup({ year, onEdit, onDelete }) {
+function ArchiveYearGroup({ year, onEdit, onDelete, onShare }) {
   const t = useTheme();
   const [expanded, setExpanded] = useState(false);
   return (
@@ -840,7 +844,7 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
       {expanded && (
         <div style={{ marginTop: 8, paddingLeft: 8 }}>
           {year.months.map((m) => (
-            <ArchiveMonthGroup key={m.month} month={m} onEdit={onEdit} onDelete={onDelete} />
+            <ArchiveMonthGroup key={m.month} month={m} onEdit={onEdit} onDelete={onDelete} onShare={onShare} />
           ))}
         </div>
       )}
@@ -849,6 +853,7 @@ function ArchiveYearGroup({ year, onEdit, onDelete }) {
 }
 
 export function ProgressTab({ sessions, measurements, profile, onDeleteSession, onEditSession }) {
+  const [sharing, setSharing] = useState(null);
   const t = THEME_2A;
 
   const exerciseSeries = useMemo(() => {
@@ -1041,6 +1046,8 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
         )}
       </div>
 
+      {sharing && <ShareCardSheet session={sharing} sessions={sessions} onClose={() => setSharing(null)} />}
+
       {/* Сначала — тренировки этой недели и архив, потом графики, рекорды и
           экспорт: так попросил Никита. Архив заодно не прячется под свёрнутой
           тренировкой внизу экрана. */}
@@ -1050,7 +1057,7 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
       {currentWeekSessions.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
           {currentWeekSessions.map((s) => (
-            <SessionCard key={s.id} s={s} onEdit={onEditSession} onDelete={onDeleteSession} />
+            <SessionCard key={s.id} s={s} onEdit={onEditSession} onDelete={onDeleteSession} onShare={setSharing} />
           ))}
         </div>
       ) : (
@@ -1076,10 +1083,10 @@ export function ProgressTab({ sessions, measurements, profile, onDeleteSession, 
             <div style={{ marginTop: 12 }}>
               {archiveTree.length > 1
                 ? archiveTree.map((y) => (
-                    <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} />
+                    <ArchiveYearGroup key={y.year} year={y} onEdit={onEditSession} onDelete={onDeleteSession} onShare={setSharing} />
                   ))
                 : (archiveTree[0]?.months || []).map((m) => (
-                    <ArchiveMonthGroup key={m.month} month={m} onEdit={onEditSession} onDelete={onDeleteSession} />
+                    <ArchiveMonthGroup key={m.month} month={m} onEdit={onEditSession} onDelete={onDeleteSession} onShare={setSharing} />
                   ))}
             </div>
           )}

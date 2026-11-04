@@ -34,7 +34,7 @@ import { createClient } from '@supabase/supabase-js';
 import {
   decideMissed, decideUnsaved, localParts, trainingDaysBack, CHECK_FROM_MINUTES, MSG_MISSED_3, UNSAVED_IDLE_MS, UNSAVED_STALE_MS, msgIn,
 } from './_missed.js';
-import { trainingWeekdaysOf } from '../src/plans.js';
+import { trainingWeekdaysOf, weekdayNumbers, isUserPlanId } from '../src/plans.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALERT_SECRET = process.env.REST_ALERT_SECRET;
@@ -100,12 +100,21 @@ async function runCheck(now) {
     .eq('missed_alerts', true);
   if (error) throw error;
 
+  // Дни своих планов — из таблицы: в src/plans.js лежат только встроенные.
+  const customIds = [...new Set((profiles || []).map((p) => p.plan_id).filter(isUserPlanId))];
+  const customDays = {};
+  if (customIds.length) {
+    const { data: plans, error: plansErr } = await admin.from('user_plans').select('id, plan').in('id', customIds);
+    if (plansErr) throw plansErr;
+    (plans || []).forEach((row) => { customDays[row.id] = weekdayNumbers(row.plan && row.plan.weekdays); });
+  }
+
   const results = [];
   for (const p of profiles || []) {
     // До 21:30 по местному времени в базу за тренировками не ходим вовсе —
     // так 21 из 24 ежечасных запусков обходятся одним запросом.
     const local = localParts(now, p.tz);
-    const weekdays = trainingWeekdaysOf(p.plan_id);
+    const weekdays = customDays[p.plan_id] && customDays[p.plan_id].length ? customDays[p.plan_id] : trainingWeekdaysOf(p.plan_id);
     if (!weekdays.includes(local.weekday) || local.minutes < CHECK_FROM_MINUTES || p.last_missed_alert === local.date) {
       results.push({ user: p.user_id.slice(0, 8), skipped: 'не время' });
       continue;

@@ -306,9 +306,25 @@ export const PLANS = [
 // Новый план включается вручную в «Профиле».
 export const DEFAULT_PLAN_ID = 'plan1';
 
+// Свои планы пользователя (src/userPlans.js): App кладёт их сюда при загрузке, и весь
+// движок находит их через getPlan так же, как встроенные. Удалённые (hidden) тоже
+// здесь: по ним есть прошлые тренировки, хотя в списке выбора их уже нет.
+let userPlans = [];
+export function setUserPlans(list) { userPlans = list || []; }
+export const isUserPlanId = (id) => String(id || '').startsWith('u-');
+
 export function getPlan(planId) {
-  return PLANS.find((p) => p.id === planId) || PLANS.find((p) => p.id === DEFAULT_PLAN_ID);
+  return userPlans.find((p) => p.id === planId)
+    || PLANS.find((p) => p.id === planId)
+    || PLANS.find((p) => p.id === DEFAULT_PLAN_ID);
 }
+
+// Дни недели в своём плане — кодами: номера у всех свои, а 0 — воскресенье только у Date.
+// Индекс — как у Date.getDay().
+export const WEEKDAY_CODES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+export const weekdayNumbers = (codes) => (codes || [])
+  .map((c) => WEEKDAY_CODES.indexOf(c))
+  .filter((n) => n >= 0);
 
 export const DEFAULT_TRAINING_WEEKDAYS = [1, 2, 3, 4, 5, 6];
 

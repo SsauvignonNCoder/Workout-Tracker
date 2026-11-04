@@ -58,7 +58,7 @@ export function weekInfo(planId, day) {
   const week = planWeekOf(plan, day);
   // weekLabels — объект { 1: 'База', …, 4: 'Разгрузка' }, ключ — номер недели.
   const label = (plan.weekLabels && plan.weekLabels[week]) || '';
-  const deload = /разгруз/i.test(label);
+  const deload = /разгруз|deload/i.test(label);
   return { week, deload, rank: deload ? 0 : week, label };
 }
 
