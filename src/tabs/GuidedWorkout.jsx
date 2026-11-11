@@ -1829,15 +1829,18 @@ function ExerciseStep({
   );
 }
 
-// Высота строки «Далее» и строк списка шагов: строка следующего упражнения
-// вырастает из плашки того же размера.
+// Высота плашки «Далее» и строк списка шагов (Никита, 11.11.2026): текущая и следующая
+// — как плашка, остальные ниже, чтобы список не казался рыхлым. Строки идут вплотную,
+// зазор — только между текущей и следующей, чтобы две выделенные не слипались.
 const STEP_ROW_H = 38;
+const STEP_ROW_SMALL = 32;
+const STEP_ROW_GAP = 4;
 const STEP_LIST_PAD = 5;
 
-// Все шаги тренировки поверх экрана. Следующее упражнение — посередине экрана,
-// пройденные — над ним, остальные — под ним (Никита, 11.11.2026). Список вырастает
-// из плашки «Далее» и одновременно едет на место — одним движением. Выше экрана —
-// прокрутка внутри, следующее всё равно посередине.
+// Все шаги тренировки поверх экрана. Место жёсткое (Никита, 11.11.2026): список
+// раскрывается из плашки «Далее» вниз и закрывает её и секундомер — на любом шаге
+// одинаково. Не влезает до низа экрана — прокрутка внутри, следующее упражнение
+// при открытии — посередине видимой части.
 const EDGE = 8;
 
 // Место плашки без въезда шага: нажали «Далее», пока шаг ещё въезжает сбоку
@@ -1853,18 +1856,28 @@ function settledRect(el) {
   return el.getBoundingClientRect();
 }
 
-function stepsListLayout(count, anchorIdx) {
-  const vh = window.innerHeight;
-  const fullHeight = count * STEP_ROW_H + STEP_LIST_PAD * 2 + 2;
-  const rowOffset = STEP_LIST_PAD + 1 + anchorIdx * STEP_ROW_H; // от верха списка до строки
-  const middle = vh / 2 - STEP_ROW_H / 2;
-  if (fullHeight <= vh - EDGE * 2) {
-    const top = Math.min(Math.max(EDGE, middle - rowOffset), vh - EDGE - fullHeight);
-    return { top, height: fullHeight, scroll: 0, rowTop: top + rowOffset };
+// Высоты строк и их верх от начала содержимого списка (с зазором перед следующей).
+function stepRowsGeometry(count, currentIdx, anchorIdx) {
+  const heights = [];
+  const tops = [];
+  let y = 0;
+  for (let i = 0; i < count; i += 1) {
+    heights.push(i === currentIdx || i === anchorIdx ? STEP_ROW_H : STEP_ROW_SMALL);
+    if (i === anchorIdx && anchorIdx !== currentIdx) y += STEP_ROW_GAP;
+    tops.push(y);
+    y += heights[i];
   }
-  const height = vh - EDGE * 2;
-  const scroll = Math.min(Math.max(0, rowOffset - (middle - EDGE)), fullHeight - height);
-  return { top: EDGE, height, scroll, rowTop: EDGE + rowOffset - scroll };
+  return { heights, tops, total: y };
+}
+
+function stepsListLayout(anchorRect, geo, anchorIdx) {
+  const vh = window.innerHeight;
+  const fullHeight = geo.total + STEP_LIST_PAD * 2 + 2;
+  const top = Math.max(EDGE, anchorRect.top);
+  const height = Math.max(STEP_ROW_H * 2, Math.min(fullHeight, vh - EDGE - top));
+  const rowMid = STEP_LIST_PAD + 1 + geo.tops[anchorIdx] + geo.heights[anchorIdx] / 2; // середина строки следующего
+  const scroll = Math.min(Math.max(0, rowMid - height / 2), fullHeight - height);
+  return { top, height, scroll };
 }
 
 function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }) {
@@ -1872,22 +1885,22 @@ function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }
   const backRef = useRef(null);
   const listRef = useRef(null);
   const anchorIdx = Math.min(currentIdx + 1, steps.length - 1);
-  const [{ top, height, scroll, rowTop }] = useState(() => stepsListLayout(steps.length, anchorIdx));
-  const shift = anchorRect.top - rowTop; // от места строки до плашки «Далее»
+  const geo = stepRowsGeometry(steps.length, currentIdx, anchorIdx);
+  const [{ top, height, scroll }] = useState(() => stepsListLayout(anchorRect, geo, anchorIdx));
   let reduced = false;
   try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* no-op */ }
 
   // Раскрытие — через element.animate: стили сразу конечные, и если анимация не
-  // сыграет (фоновая вкладка, старый движок), список всё равно виден. Рост от строки
-  // следующего упражнения и сдвиг с плашки на место идут вместе.
+  // сыграет (фоновая вкладка, старый движок), список всё равно виден. Плашка «Далее»
+  // разворачивается вниз в список: рост от её верхнего края.
   useLayoutEffect(() => {
     if (listRef.current) listRef.current.scrollTop = scroll;
     if (reduced) return;
     try {
       listRef.current.animate([
-        { transform: `translateY(${shift}px) scaleY(0.1)`, opacity: 0 },
-        { transform: 'translateY(0px) scaleY(1)', opacity: 1 },
-      ], { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+        { transform: `scaleY(${Math.min(1, anchorRect.height / height)})`, opacity: 0.4 },
+        { transform: 'scaleY(1)', opacity: 1 },
+      ], { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
       backRef.current.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
     } catch (e) { /* без анимации */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1923,8 +1936,15 @@ function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }
   const gripMove = (e) => {
     const d = dragRef.current;
     if (!d) return;
-    const dy = Math.min(Math.max(e.clientY - d.startY, (minMove - d.from) * STEP_ROW_H), (maxMove - d.from) * STEP_ROW_H);
-    const to = Math.min(Math.max(d.from + Math.round(dy / STEP_ROW_H), minMove), maxMove);
+    // Строки разной высоты: место — по тому, за чью середину зашла середина строки.
+    const { tops, heights } = geo;
+    const h = heights[d.from];
+    const dy = Math.min(Math.max(e.clientY - d.startY, tops[minMove] - tops[d.from]),
+      tops[maxMove] + heights[maxMove] - h - tops[d.from]);
+    const mid = tops[d.from] + dy + h / 2;
+    let to = d.from;
+    while (to < maxMove && mid >= tops[to + 1] + heights[to + 1] / 2) to += 1;
+    while (to > minMove && mid <= tops[to - 1] + heights[to - 1] / 2) to -= 1;
     if (to !== d.to) haptic('step');
     d.to = to;
     setDrag({ from: d.from, to, dy });
@@ -1944,8 +1964,8 @@ function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }
   const shiftOf = (idx) => {
     if (!drag) return 0;
     if (idx === drag.from) return drag.dy;
-    if (drag.from < drag.to && idx > drag.from && idx <= drag.to) return -STEP_ROW_H;
-    if (drag.from > drag.to && idx >= drag.to && idx < drag.from) return STEP_ROW_H;
+    if (drag.from < drag.to && idx > drag.from && idx <= drag.to) return -geo.heights[drag.from];
+    if (drag.from > drag.to && idx >= drag.to && idx < drag.from) return geo.heights[drag.from];
     return 0;
   };
 
@@ -1963,9 +1983,10 @@ function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }
         style={{
           position: 'fixed', left: anchorRect.left, width: anchorRect.width, top, height,
           overflowY: 'auto', WebkitOverflowScrolling: 'touch', boxSizing: 'border-box', padding: STEP_LIST_PAD,
+          display: 'flex', flexDirection: 'column',
           scrollbarWidth: 'thin', scrollbarColor: `${t.ACCENT_BORDER} transparent`,
           background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12, boxShadow: '0 18px 40px rgba(0,0,0,0.55)',
-          transformOrigin: `50% ${rowTop + STEP_ROW_H / 2 - top}px`,
+          transformOrigin: '50% 0',
         }}
       >
         {steps.map((rs) => {
@@ -1978,8 +1999,8 @@ function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }
             <div
               key={rs.id || rs.idx}
               style={{
-                display: 'flex', alignItems: 'center', height: STEP_ROW_H, boxSizing: 'border-box', borderRadius: 9,
-                position: 'relative', zIndex: dragged ? 2 : 1,
+                display: 'flex', alignItems: 'center', height: geo.heights[rs.idx], flexShrink: 0, boxSizing: 'border-box', borderRadius: 9,
+                position: 'relative', zIndex: dragged ? 2 : 1, marginTop: isNext ? STEP_ROW_GAP : 0,
                 border: dragged || isNext ? `1px solid ${t.ACCENT_BORDER}` : '1px solid transparent',
                 background: isCur ? t.ACCENT_GRAD : dragged || isNext ? t.BG_INPUT : 'transparent',
                 boxShadow: dragged ? '0 10px 24px rgba(0,0,0,0.55)' : 'none',

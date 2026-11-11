@@ -6,5 +6,5 @@
 // Четвёртое число (1.1.7.1) — служебный выпуск между версиями.
 // При каждом изменении версии обязательно добавляй запись в CHANGELOG.md.
 
-export const APP_VERSION = '1.1.9.0';
+export const APP_VERSION = '1.1.9.1';
 export const APP_VERSION_DATE = '2026-11-11';
