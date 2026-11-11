@@ -5,6 +5,7 @@
 
 import { THEME_2A as T } from './theme.js';
 import { QR_MATRIX, BOT_ADDRESS } from './shareQr.js';
+import { tr } from './i18n.js';
 
 export const CARD_W = 1080;
 export const CARD_H = 1920;
@@ -197,14 +198,47 @@ function drawFooter(ctx, data) {
   return qy;
 }
 
-// Фраза — над подвалом: снизу вверх, сколько бы строк ни заняла.
+// Фраза — над подвалом: снизу вверх, сколько бы строк ни заняла. Ответ — верх фразы.
 function drawPhrase(ctx, phrase, bottom) {
   ctx.font = fontOf(700, 74);
   const lines = wrapLines(ctx, phrase, CONTENT_W, 3);
   const lineH = 88;
   ctx.fillStyle = brassGradient(ctx, MARGIN, CARD_W - MARGIN);
-  let y = bottom - 76 - lineH * (lines.length - 1);
+  const first = bottom - 76 - lineH * (lines.length - 1);
+  let y = first;
   lines.forEach((line) => { ctx.fillText(line, MARGIN, y); y += lineH; });
+  return first - 70;
+}
+
+// Остальные упражнения с лучшим подходом — сколько поместится до фразы.
+const EX_ROW = 58;
+const EX_LABEL = 64;
+function drawExercises(ctx, rows, label, top, limit) {
+  if (!rows || !rows.length) return;
+  const room = Math.floor((limit - top - EX_LABEL) / EX_ROW) + 1;
+  if (room < 1) return;
+  const list = rows.length <= room ? rows
+    : [...rows.slice(0, Math.max(0, room - 1)), { name: tr('и ещё {0}', rows.length - Math.max(0, room - 1)), value: '' }];
+  let y = top;
+  ctx.font = fontOf(500, 28, MONO);
+  ctx.fillStyle = T.TEXT_FAINT;
+  ctx.fillText(String(label).toUpperCase(), MARGIN, y);
+  y += EX_LABEL;
+  list.forEach((row) => {
+    ctx.font = fontOf(700, 34, MONO);
+    const valueW = row.value ? ctx.measureText(row.value).width + 30 : 0;
+    ctx.font = fontOf(500, 34);
+    ctx.fillStyle = T.TEXT_DIM;
+    ctx.fillText(ellipsize(ctx, row.name, CONTENT_W - valueW), MARGIN, y);
+    if (row.value) {
+      ctx.font = fontOf(700, 34, MONO);
+      ctx.fillStyle = T.TEXT;
+      ctx.textAlign = 'right';
+      ctx.fillText(row.value, CARD_W - MARGIN, y);
+      ctx.textAlign = 'left';
+    }
+    y += EX_ROW;
+  });
 }
 
 async function loadFonts() {
@@ -228,9 +262,10 @@ export async function renderShareCard(data) {
   drawBackground(ctx);
   const titleEnd = drawHeader(ctx, data);
   const statsEnd = drawStats(ctx, data.stats, titleEnd + 64);
-  drawHighlights(ctx, data.highlights, statsEnd + 96);
+  const highlightsEnd = drawHighlights(ctx, data.highlights, statsEnd + 96);
   const footerTop = drawFooter(ctx, data);
-  drawPhrase(ctx, data.phrase, footerTop);
+  const phraseTop = drawPhrase(ctx, data.phrase, footerTop);
+  drawExercises(ctx, data.exercises, data.exercisesLabel, data.highlights ? highlightsEnd + 24 : statsEnd + 96, phraseTop);
   return canvas;
 }
 

@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Share2, X, Download } from 'lucide-react';
+import { Share2, X, Download, Send } from 'lucide-react';
 import { useTheme } from './theme.js';
 import { tr, getLang } from './i18n.js';
 import { shareCardData } from './shareCard.js';
 import { renderShareCard, canvasToJpeg } from './shareCardDraw.js';
-import { BOT_URL } from './shareQr.js';
 import { currentSessionToken } from './sessionToken.js';
 
 const FILE_NAME = 'workout.jpg';
@@ -41,15 +40,17 @@ async function sendViaBot(blob) {
   return res.ok;
 }
 
-// Системное «Поделиться»: сохранить, отправить в чат, выложить. Где его нет, как в
-// части клиентов Telegram, картинку присылает бот: скачивание внутри Telegram
-// открывает залипающий просмотрщик (HANDOFF, §«скачивание файла»). В браузере — файл.
+// Системное «Поделиться»: сохранить, отправить в чат, выложить. Только сама картинка:
+// с текстом в придачу iPhone не предлагал «Сохранить изображение», только «в Файлы»
+// (Никита, 11.11.2026); адрес бота и так на картинке. Где «Поделиться» нет, как в части
+// клиентов Telegram, картинку присылает бот: скачивание внутри Telegram открывает
+// залипающий просмотрщик (HANDOFF, §«скачивание файла»). В браузере — файл.
 // Ответ — текст для человека, null — ничего сообщать не нужно.
 async function shareBlob(blob) {
   try {
     const file = new File([blob], FILE_NAME, { type: blob.type });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], text: `${tr('Дневник тренировок')} — ${BOT_URL}` });
+      await navigator.share({ files: [file] });
       return null;
     }
   } catch (e) {
@@ -105,6 +106,20 @@ export function ShareCardSheet({ session, sessions, onClose }) {
     if (text) setNote(text);
   };
 
+  // Запасной путь в Telegram: картинка приходит фото в чат с ботом, оттуда её можно
+  // сохранить в фото обычным способом.
+  const sendToChat = async () => {
+    if (!blobRef.current || busy) return;
+    setBusy(true);
+    setNote('');
+    let ok = false;
+    try { ok = await sendViaBot(blobRef.current); } catch (e) { /* ниже сообщение */ }
+    setBusy(false);
+    setNote(ok
+      ? tr('Картинка — в чате с ботом: открой её и сохрани в фото')
+      : tr('Бот не смог отправить картинку — открой чат с ботом и нажми «Старт»'));
+  };
+
   const save = () => {
     if (!blobRef.current) return;
     downloadBlob(blobRef.current);
@@ -145,6 +160,11 @@ export function ShareCardSheet({ session, sessions, onClose }) {
       {failed && <div style={{ color: t.DANGER, fontSize: 14, textAlign: 'center' }}>{tr('Не удалось сделать картинку')}</div>}
 
       {note && <div style={{ color: t.TEXT_DIM, fontSize: 13, textAlign: 'center', lineHeight: 1.4 }}>{note}</div>}
+      {url && !note && isTelegram() && (
+        <div style={{ color: t.TEXT_FAINT, fontSize: 12, textAlign: 'center', lineHeight: 1.4, maxWidth: 360 }}>
+          {tr('Нет «Сохранить изображение»? Кнопка справа пришлёт картинку в чат с ботом — оттуда её можно сохранить в фото.')}
+        </div>
+      )}
 
       {url && (
         <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 360, flexShrink: 0 }}>
@@ -159,6 +179,20 @@ export function ShareCardSheet({ session, sessions, onClose }) {
           >
             <Share2 size={17} /> {tr('Поделиться')}
           </button>
+          {isTelegram() && (
+            <button
+              onClick={sendToChat}
+              disabled={busy}
+              aria-label={tr('Прислать в чат с ботом')}
+              title={tr('Прислать в чат с ботом')}
+              style={{
+                width: 50, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 14,
+                border: `1px solid ${t.BORDER}`, background: t.BG_RAISED, color: t.TEXT, cursor: busy ? 'default' : 'pointer',
+              }}
+            >
+              <Send size={18} />
+            </button>
+          )}
           {!isTelegram() && (
             <button
               onClick={save}

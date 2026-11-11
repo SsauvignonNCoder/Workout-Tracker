@@ -21,7 +21,8 @@ import {
   categorizeExercise, MUSCLE_GROUPS, isWeightlessExercise, isTimeBasedExercise,
 } from './tabs/workoutTabHelpers.jsx';
 import { tr } from './i18n.js';
-import { U, num as unum, heavier, sameWeight } from './units.js';
+import { U, num as unum, heavier, sameWeight, toDisp, fromDisp } from './units.js';
+import { shiftDate } from './dateUtils.js';
 
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/ё/g, 'е');
 const num = (v) => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isFinite(n) ? n : 0; };
@@ -89,6 +90,68 @@ function changeScore(cur, base, weightless) {
   if (!weightless && !sameWeight(cur.weight, base.weight) && base.weight > 0) return (cur.weight - base.weight) / base.weight;
   if (base.reps > 0) return ((cur.reps - base.reps) / base.reps) * 0.5;
   return 0;
+}
+
+// Точки графика «последний месяц» на шаге упражнения: лучший подход каждой тренировки
+// за 30 дней до даты этой и сегодняшний — по введённым подходам. История — в метрике,
+// введённое — уже в единицах экрана; ответ — в единицах экрана.
+export const exerciseMonthSeries = (args) => exerciseProgressSeries({ ...args, days: 30 });
+
+// То же за days дней (null — за всё время): график прогресса на итоге тренировки.
+// У точки sets — подходы той тренировки для подсказки (setLines).
+export function exerciseProgressSeries({ history, name, date, current, days = null }) {
+  const timed = isTimeBasedExercise(name);
+  const weightless = timed || isWeightlessExercise(name);
+  const from = days ? shiftDate(date, -days) : '';
+  const key = norm(name);
+  const byDate = new Map();
+  (history || []).forEach((s) => {
+    if (!s.date || s.date < from || s.date >= date) return;
+    (s.exercises || []).forEach((ex) => {
+      if (norm(ex.name) !== key) return;
+      const top = topSetOfSaved(ex, weightless);
+      if (!top) return;
+      const prev = byDate.get(s.date);
+      if (!prev || cmp(top, prev.top) > 0) byDate.set(s.date, { top, ex });
+    });
+  });
+  const round = (x) => Math.round(x * 10) / 10;
+  const points = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([d, { top, ex }]) => ({
+    date: d, value: weightless || !top.weight ? top.reps : round(toDisp('w', top.weight)), reps: top.reps,
+    sets: setLines(savedSets(ex), { weightless, timed }),
+  }));
+  const cur = topSet(current, weightless);
+  if (cur) {
+    const metric = (current || []).map((x) => ({ weight: fromDisp('w', x.weight), reps: x.reps }));
+    points.push({
+      date, value: weightless || !cur.weight ? cur.reps : round(cur.weight), reps: cur.reps, today: true,
+      sets: setLines(metric, { weightless, timed }),
+    });
+  }
+  return { kind: timed ? 'sec' : weightless ? 'reps' : 'weight', points };
+}
+
+// Подходы сохранённого упражнения; ручная запись без них — одна строка с числом подходов.
+const savedSets = (ex) => (Array.isArray(ex.setLog) && ex.setLog.length
+  ? ex.setLog : [{ weight: ex.weight, reps: ex.reps, times: Number(ex.sets) || 1 }]);
+
+// Подходы точки графика для подсказки — по порядку выполнения (показываются снизу
+// вверх: первый внизу, последний наверху). best — подход с наибольшим весом, его
+// выделяем (без веса — с наибольшими повторами). Вес — в метрике. Пусто — [].
+export function setLines(sets, { weightless = false, timed = false } = {}) {
+  const list = (sets || []).map((x) => ({
+    w: weightless ? 0 : num(x.weight), r: Math.round(num(x.reps)), times: Number(x.times) || 1,
+  })).filter((x) => x.r > 0 || x.w > 0);
+  if (!list.length) return [];
+  const byWeight = list.some((x) => x.w > 0);
+  const maxW = Math.max(...list.map((x) => x.w));
+  const maxR = Math.max(...list.map((x) => x.r));
+  return list.map((x) => {
+    let text = x.w > 0 ? `${U('w', x.w)} × ${x.r}` : timed ? tr('{0} сек', x.r) : tr('{0} повт', x.r);
+    if (x.w > 0 && !x.r) text = U('w', x.w);
+    if (x.times > 1) text += tr(' · {0} подх', x.times);
+    return { text, best: byWeight ? sameWeight(x.w, maxW) : x.r === maxR };
+  });
 }
 
 // Разбор одного упражнения текущей тренировки.

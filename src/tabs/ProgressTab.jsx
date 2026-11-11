@@ -10,6 +10,7 @@ import { MountainBox } from '../MountainBox.jsx';
 import { ShareCardSheet } from '../ShareCardSheet.jsx';
 import { tr, exName, routeTitle } from '../i18n.js';
 import { U, num, unit, toDisp } from '../units.js';
+import { setLines } from '../workoutSummary.js';
 
 function muscleLetter(name) {
   const g = categorizeExercise(name);
@@ -160,35 +161,19 @@ export function pickDefaultSeriesKey(exerciseSeries, options, today, random = Ma
   return latest ? latest.key : options[0].key;
 }
 
-// Подпись точки упражнения для тапа по графику — строки «вес × повторы»: подходы
-// сгруппированы по весу, тяжёлые сверху, повторы в порядке подходов — «80 кг × 8, 7»,
-// «75 кг × 10». Вес один — одна строка. Без подходов по отдельности (ручная
-// запись) — «80 кг × 8 · 3 подх». Упражнение без веса — только повторы.
-// Пусто — null.
+// Подпись точки упражнения для тапа по графику — все подходы по порядку выполнения
+// (workoutSummary.js → setLines): [{ text: '80 кг × 8', best }], best — самый тяжёлый.
+// Без подходов по отдельности (ручная запись) — «80 кг × 8 · 3 подх». Пусто — null.
 export function exercisePointInfo(p) {
-  const log = Array.isArray(p.setLog) ? p.setLog : [];
-  const groups = new Map();
-  log.forEach((x) => {
-    const w = parseFloat(x.weight) || 0;
-    const r = parseInt(x.reps, 10) || 0;
-    if (r <= 0) return;
-    if (!groups.has(w)) groups.set(w, []);
-    groups.get(w).push(r);
-  });
-  if (groups.size > 0) {
-    return [...groups.entries()]
-      .sort((a, b) => b[0] - a[0])
-      .map(([w, reps]) => (w > 0 ? `${U('w', w)} × ${reps.join(', ')}` : tr('{0} повт', reps.join(', '))));
-  }
-  const top = parseFloat(p.weight) || 0;
-  const reps = parseInt(p.reps, 10) || 0;
-  if (!reps) return top > 0 ? [U('w', top)] : null;
-  const sets = parseInt(p.sets, 10) || 0;
-  return [`${top > 0 ? `${U('w', top)} × ${reps}` : tr('{0} повт', reps)}${sets > 1 ? tr(' · {0} подх', sets) : ''}`];
+  const log = Array.isArray(p.setLog) && p.setLog.length
+    ? p.setLog : [{ weight: p.weight, reps: p.reps, times: parseInt(p.sets, 10) || 1 }];
+  const lines = setLines(log);
+  return lines.length ? lines : null;
 }
 
 // Подсказка по тапу на точку: дата, затем по каждой серии — цвет, название и
-// значение (у упражнения — вес и повторы с этим весом).
+// значение. У упражнения — подходы: первый внизу, последний наверху, самый тяжёлый
+// белым (Никита, 11.11.2026).
 function ChartTooltip({ active, payload, label, seriesByKey }) {
   const t = useTheme();
   if (!active || !payload || payload.length === 0) return null;
@@ -211,12 +196,12 @@ function ChartTooltip({ active, payload, label, seriesByKey }) {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
               </div>
             )}
-            {(Array.isArray(info) && info.length ? info : [`${p.value}${s.unit}`]).map((line, li) => (
+            {(Array.isArray(info) && info.length ? [...info].reverse() : [{ text: `${p.value}${s.unit}`, best: true }]).map((line, li) => (
               <div key={li} style={{
-                color: li === 0 ? t.TEXT : t.TEXT_DIM, fontWeight: 700, fontSize: li === 0 ? 13.5 : 12.5,
+                color: line.best ? t.TEXT : t.TEXT_DIM, fontWeight: 700, fontSize: line.best ? 13.5 : 12.5,
                 fontFamily: "'JetBrains Mono', 'SF Mono', monospace", lineHeight: 1.45, whiteSpace: 'nowrap',
               }}>
-                {line}
+                {line.text}
               </div>
             ))}
           </div>

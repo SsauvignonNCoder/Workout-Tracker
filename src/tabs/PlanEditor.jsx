@@ -40,7 +40,9 @@ function DistanceInput({ value, onChange, style }) {
   );
 }
 
-function ChoiceChip({ on, onClick, children, t, style }) {
+// check — переключатель с галочкой. Место под неё есть всегда: иначе кнопка меняла
+// ширину при нажатии, и ряд прыгал.
+function ChoiceChip({ on, onClick, children, t, style, check }) {
   return (
     <button
       type="button"
@@ -54,6 +56,7 @@ function ChoiceChip({ on, onClick, children, t, style }) {
         ...style,
       }}
     >
+      {check && <Check size={13} style={{ flexShrink: 0, visibility: on ? 'visible' : 'hidden' }} />}
       {children}
     </button>
   );
@@ -152,8 +155,8 @@ function PlanExerciseSheet({
               {tr('В какие дни')}
             </div>
             <div style={{ display: 'flex', gap: 5 }}>
-              <ChoiceChip t={t} on={allDaysOn} style={{ flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => setPicked(allDaysOn ? [dayChoices.includes(openedDay) ? openedDay : dayChoices[0]] : dayChoices)}>
-                {allDaysOn && <Check size={13} />} {tr('Все дни')}
+              <ChoiceChip t={t} check on={allDaysOn} style={{ flexShrink: 0, whiteSpace: 'nowrap' }} onClick={() => setPicked(allDaysOn ? [dayChoices.includes(openedDay) ? openedDay : dayChoices[0]] : dayChoices)}>
+                {tr('Все дни')}
               </ChoiceChip>
               {dayChoices.map((i) => (
                 <ChoiceChip key={i} t={t} on={picked.includes(i)} style={{ flex: '1 1 0', minWidth: 0, paddingLeft: 0, paddingRight: 0 }} onClick={() => toggleDay(i)}>
@@ -166,8 +169,8 @@ function PlanExerciseSheet({
 
         {showAllWeeks && (
           <div style={{ marginBottom: 14 }}>
-            <ChoiceChip t={t} on={allWeeks} style={{ width: '100%', boxSizing: 'border-box' }} onClick={() => setAllWeeks(!allWeeks)}>
-              {allWeeks && <Check size={13} />} {tr('Во все недели')}
+            <ChoiceChip t={t} check on={allWeeks} style={{ width: '100%', boxSizing: 'border-box' }} onClick={() => setAllWeeks(!allWeeks)}>
+              {tr('Во все недели')}
             </ChoiceChip>
           </div>
         )}
@@ -491,12 +494,12 @@ export function PlanEditor({ initial, sessions, heading, onSave, onClose }) {
 
               {day.type === 'strength' && (
                 <>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 11 }}>
-                    <ChoiceChip t={t} on={day.warmupRun !== false} style={{ flex: '1 1 auto' }} onClick={() => patchDay(dayIdx, (d) => ({ ...d, warmupRun: d.warmupRun === false }))}>
-                      {day.warmupRun !== false && <Check size={13} />} {tr('Разминка на дорожке')}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, marginBottom: 11 }}>
+                    <ChoiceChip t={t} check on={day.warmupRun !== false} onClick={() => patchDay(dayIdx, (d) => ({ ...d, warmupRun: d.warmupRun === false }))}>
+                      {tr('Разминка на дорожке')}
                     </ChoiceChip>
-                    <ChoiceChip t={t} on={day.finisherRun !== false} style={{ flex: '1 1 auto' }} onClick={() => patchDay(dayIdx, (d) => ({ ...d, finisherRun: d.finisherRun === false }))}>
-                      {day.finisherRun !== false && <Check size={13} />} {tr('Финиш на дорожке')}
+                    <ChoiceChip t={t} check on={day.finisherRun !== false} onClick={() => patchDay(dayIdx, (d) => ({ ...d, finisherRun: d.finisherRun === false }))}>
+                      {tr('Финиш на дорожке')}
                     </ChoiceChip>
                   </div>
 

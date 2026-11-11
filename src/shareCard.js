@@ -9,7 +9,8 @@
 // Формулировки — без рода: картинку выкладывают от своего имени.
 
 import { planDayAt, makeTrainingDayCheck, DEFAULT_PLAN_ID } from './plans.js';
-import { buildWorkoutSummary } from './workoutSummary.js';
+import { buildWorkoutSummary, topSet } from './workoutSummary.js';
+import { isWeightlessExercise, isTimeBasedExercise } from './tabs/workoutTabHelpers.jsx';
 import { computeRecords } from './gamification.js';
 import { fmtDateFull, shiftDate } from './dateUtils.js';
 import { tr, exName, routeTitle, locale } from './i18n.js';
@@ -182,6 +183,21 @@ function highlightsOf(s, history) {
   return null;
 }
 
+// Все упражнения с лучшим подходом — кроме тех, что уже есть в рекордах или росте.
+function exerciseRows(s, highlights) {
+  const shown = new Set(highlights && highlights.kind !== 'route' ? highlights.rows.map((r) => r.name) : []);
+  return (s.exercises || []).map((ex) => {
+    const timed = ex.timed || isTimeBasedExercise(ex.name);
+    const weightless = timed || isWeightlessExercise(ex.name);
+    const top = topSet(setsOf(ex).map((x) => ({ weight: x.weight, reps: x.reps })), weightless);
+    if (!top) return null;
+    let value = `${U('w', top.weight)} × ${top.reps}`;
+    if (timed) value = tr('{0} сек', top.reps);
+    else if (weightless || !(top.weight > 0)) value = tr('{0} повт', top.reps);
+    return { name: exName(ex.name), value };
+  }).filter((r) => r && !shown.has(r.name));
+}
+
 // session — сохранённая тренировка, sessions — вся история (может включать и её).
 export function shareCardData(session, sessions) {
   const others = (sessions || []).filter((x) => x.id !== session.id);
@@ -193,6 +209,8 @@ export function shareCardData(session, sessions) {
     date: fmtDateFull(session.date),
     stats: (session.exercises || []).length ? strengthStats(session) : cardioStats(session),
     highlights,
+    exercises: exerciseRows(session, highlights),
+    exercisesLabel: tr('Упражнения'),
     situation,
     phrase: pickPhrase(session, others, situation),
     appName: tr('Дневник тренировок'),

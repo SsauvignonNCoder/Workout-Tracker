@@ -117,6 +117,8 @@ export function buildSteps(day) {
       out.push({
         kind: 'exercise', name: ex.name,
         plannedSets: clampSets(ex.sets),
+        // Сколько подходов в плане: на экране отмечаем, если их добавили или убрали.
+        planSets: clampSets(ex.sets),
         targetReps: ex.reps,
         // Что было в плане — нужно, чтобы после замены записать replacedFrom и
         // не показывать пометки плана («скамья», «лёгкий вес») у чужого упражнения.
@@ -259,6 +261,18 @@ export function insertStep(steps, index, step) {
 
 export function removeStep(steps, stepId) {
   return steps.filter((s) => s.id !== stepId);
+}
+
+// Перестановка в списке «Далее» (Никита, 11.11.2026): двигаются только упражнения и
+// только на место другого упражнения — разминка, дорожка, заминка и итог стоят на
+// своих местах. Нельзя — тот же массив.
+export function moveStep(steps, from, to) {
+  if (from === to || !steps[from] || !steps[to]) return steps;
+  if (steps[from].kind !== 'exercise' || steps[to].kind !== 'exercise') return steps;
+  const next = steps.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
 }
 
 // Замена упражнения / правка подходов и повторов. id шага не меняется — все

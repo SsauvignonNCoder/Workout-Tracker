@@ -1,8 +1,12 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from 'recharts';
 import {
   X, Play, Check, Timer, Headphones, ChevronLeft, ChevronRight,
   Flame, Dumbbell, CheckCircle2, Circle, Plus, Flag, Route, Wind, RotateCcw, Shuffle,
-  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2, Sparkles, Share2,
+  ChevronDown, ChevronUp, HelpCircle, TrendingUp, TrendingDown, Minus, Pause, Trash2, Sparkles, Share2, ChevronsUpDown, Menu,
 } from 'lucide-react';
 import { useTheme } from '../theme.js';
 import { todayISO } from '../dateUtils.js';
@@ -14,12 +18,12 @@ import {
 } from './workoutTabHelpers.jsx';
 import {
   buildSteps, initialLogs, makeAddedExerciseStep, insertIndexForAdd, canAddExerciseAt,
-  insertStep, removeStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData, workoutHasData,
+  insertStep, removeStep, moveStep, editExerciseStep, isRenamed, planLogAfterEdit, planNotesOf, emptySets, hasSetData, workoutHasData,
   clampSets, MAX_SETS, swElapsed, swIsRunning, swPause, swToggle, runOnlyTimer, restoreTimers, sectorCodes, weightHint, isBaseLift, week3Light, customWeightHint, lastWeightOf,
   buildGuidedSession, draftMatches,
 } from '../guidedSteps.js';
 import { getExerciseGuide } from '../exerciseGuides.js';
-import { buildWorkoutSummary } from '../workoutSummary.js';
+import { buildWorkoutSummary, exerciseMonthSeries, exerciseProgressSeries } from '../workoutSummary.js';
 import { getPlan, planWeekOf } from '../plans.js';
 import { scheduleBotAlert as postBotAlert, cancelBotAlert as deleteBotAlert } from '../botAlerts.js';
 import { MountainBox } from '../MountainBox.jsx';
@@ -676,6 +680,16 @@ export function GuidedWorkout({
     setSheet(null);
   };
 
+  // Перестановка упражнения в списке «Далее». Записи хранятся по id шага и едут вместе
+  // с ним; открытым остаётся тот же шаг — его номер просто меняется.
+  const moveExercise = (from, to) => {
+    const next = moveStep(steps, from, to);
+    if (next === steps) return;
+    const curId = steps[stepIdx] && steps[stepIdx].id;
+    setSteps(next);
+    setStepIdx(Math.max(0, next.findIndex((s) => s.id === curId)));
+  };
+
   // Перебор вариантов упражнения заминки по кругу. Отметку «сделано» сбрасываем:
   // упражнение поменялось, значит его ещё не делали.
   const swapCooldown = (i, total) => {
@@ -778,7 +792,7 @@ export function GuidedWorkout({
   const nextShort = shortNameOf(steps[stepIdx + 1]);
   // Весь остаток тренировки — для разворачивающегося списка под чипом «Далее».
   // Все шаги тренировки — для списка под плашкой «Далее» (по тапу — переход к шагу).
-  const allSteps = steps.map((st, k) => ({ idx: k, name: shortNameOf(st) }));
+  const allSteps = steps.map((st, k) => ({ idx: k, id: st.id, name: shortNameOf(st), movable: st.kind === 'exercise' }));
 
   // Секторы для «Горы» на итоговом экране: собираем со всех секторных шагов
   // в порядке прохождения. Пустые (без дистанции) отсеет сам MountainBox.
@@ -1010,10 +1024,11 @@ export function GuidedWorkout({
               planWeek={dayPlan && dayPlan.day ? planWeekOf(getPlan(planId), dayPlan.day) : null}
               planDay={dayPlan && dayPlan.day}
               history={history}
+              workoutDate={workoutDate}
               planObj={getPlan(planId)}
               records={records} note={exNotes[stepId] || ''} onNote={setExNote}
               onGuide={() => setGuideFor(step.name)}
-              nextName={nextShort} allSteps={allSteps} currentIdx={stepIdx} onJump={jumpTo}
+              nextName={nextShort} allSteps={allSteps} currentIdx={stepIdx} onJump={jumpTo} onMove={moveExercise}
               timer={exTimers[stepId]} onTimerToggle={toggleExTimer} onTimerReset={resetExTimer}
               onSetCount={changeSetCount}
             />
@@ -1035,6 +1050,9 @@ export function GuidedWorkout({
                 mountainSectors={mountainSectors}
                 mountainClimb={mountainClimb}
                 exerciseSummary={exerciseSummary}
+                progressExercises={steps.filter((s) => s.kind === 'exercise').map((s) => ({ name: s.name, sets: exLogs[s.id] }))}
+                history={history}
+                workoutDate={workoutDate}
                 totalSec={elapsed}
                 cardioResults={cardioResults}
                 onShare={workoutHasData({ steps, exLogs, cardioLogs, sectorLogs }) ? openShare : null}
@@ -1533,39 +1551,6 @@ function StepHeader({ icon: Icon, name, subtitle, badgeName, action }) {
   );
 }
 
-// Название упражнения — всегда в одну строку. Если не влезает, шрифт плавно
-// уменьшается до min, и только потом обрезается многоточием. Подгоняем и после
-// загрузки веб-шрифта: до неё ширина строки считается по системному.
-// Ряд плашек, которые нельзя сокращать: не влезают по ширине — у всего ряда
-// уменьшается шрифт (с max до min шагом 0.5 px). fitKey — пересчитать, когда
-// поменялся текст.
-function FitRow({ fitKey, max = 12, min = 10, children }) {
-  const ref = useRef(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    let alive = true;
-    const fit = () => {
-      if (!alive) return;
-      let s = max;
-      el.style.fontSize = `${s}px`;
-      while (s > min && el.scrollWidth > el.clientWidth + 0.5) {
-        s -= 0.5;
-        el.style.fontSize = `${s}px`;
-      }
-    };
-    fit();
-    try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit); } catch (e) { /* no-op */ }
-    window.addEventListener('resize', fit);
-    return () => { alive = false; window.removeEventListener('resize', fit); };
-  }, [fitKey, max, min]);
-  return (
-    <div ref={ref} style={{ display: 'flex', gap: 8, minWidth: 0, overflow: 'hidden', fontSize: max }}>
-      {children}
-    </div>
-  );
-}
-
 function FitLine({ text, max = 20, min = 14, style }) {
   const ref = useRef(null);
   const [size, setSize] = useState(max);
@@ -1598,13 +1583,14 @@ function FitLine({ text, max = 20, min = 14, style }) {
 }
 
 function ExerciseStep({
-  step, sets, onSet, records, note, onNote, onGuide, nextName, allSteps = [], currentIdx = 0, onJump,
-  timer, onTimerToggle, onTimerReset, onSetCount, planWeek, planDay, history, planObj,
+  step, sets, onSet, records, note, onNote, onGuide, nextName, allSteps = [], currentIdx = 0, onJump, onMove,
+  timer, onTimerToggle, onTimerReset, onSetCount, planWeek, planDay, history, planObj, workoutDate,
 }) {
   const t = useTheme();
-  // Список шагов тренировки свёрнут по умолчанию и закрывается сам при переходе
-  // к другому шагу (компонент пересоздаётся по key={stepId}).
-  const [restOpen, setRestOpen] = useState(false);
+  // Список шагов открывается поверх экрана вокруг «Далее» (StepsPopover) и закрывается
+  // сам при переходе к другому шагу (компонент пересоздаётся по key={stepId}).
+  const nextRef = useRef(null);
+  const [nextRect, setNextRect] = useState(null);
   const timed = isTimeBasedExercise(step.name);
   const weightless = isWeightlessExercise(step.name) || timed;
   const record = records && records[step.name];
@@ -1644,21 +1630,19 @@ function ExerciseStep({
     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
   };
 
-  // Плашки под названием: две строки, каждая на всю ширину. Обе плашки в строке
-  // растут вместе от своей ширины — бо́льшая остаётся бо́льшей, текст по центру.
-  // Цель, рекорд и «Как выполнять» не сжимаются никогда (keep): первая строка
-  // при нехватке места уменьшает шрифт (FitRow), а во второй многоточием
-  // режется только «Далее» — полное название есть в списке под ним.
+  // Плашки под названием. Цели нет: повторы подсказаны в полях подходов, а число
+  // подходов видно по самим блокам (Никита, 11.11.2026). Сверху «Как выполнять» и
+  // рекорд (он чуть шире), под ними «Далее» на всю ширину.
   const chip = {
-    flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 12,
     minWidth: 0, height: 34, boxSizing: 'border-box', padding: '0 11px', borderRadius: 10,
-    fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
+    fontFamily: 'inherit', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden',
   };
-  const keep = { flex: '1 0 auto', minWidth: 'auto' };
-  const goalLine = tr('Цель: {0} · {1} подх', fmtTargetReps(step.targetReps, timed), sets.length);
   const recordLine = recordText ? tr('Рекорд {0}', recordText) : tr('Без рекорда');
   const ellipsis = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
   const afterNext = Math.max(0, allSteps.length - currentIdx - 2);
+  const setsDiff = step.planSets ? sets.length - step.planSets : 0;
+  const month = exerciseMonthSeries({ history, name: step.name, date: workoutDate, current: sets });
 
   return (
     <div>
@@ -1670,58 +1654,51 @@ function ExerciseStep({
         />
       </div>
 
-      {/* Цель и рекорд — первая строка, «Как выполнять» и «Далее» — вторая.
-          Рекорда нет — плашка всё равно есть, с надписью «без рекорда». */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: planNotes && planNotes.tip ? 10 : 12 }}>
-        <FitRow fitKey={goalLine + recordLine}>
-          <span style={{
-            ...chip, ...keep, color: t.ACCENT_SOFT, background: t.ACCENT_BG, border: '1px solid transparent', fontFamily: t.FONT_MONO,
-          }}>
-            {goalLine}
-          </span>
-          <span style={{
-            ...chip, ...keep, color: recordText ? t.TEXT_DIM : t.TEXT_FAINT, background: t.BG_INPUT, border: '1px solid transparent',
-          }}>
-            <Flame size={12} style={{ flexShrink: 0 }} />
-            {recordLine}
-          </span>
-        </FitRow>
-        {(hasGuide || nextName) && (
-          <div style={{ display: 'flex', gap: 8, minWidth: 0, fontSize: 12 }}>
-            {hasGuide && (
-              <button
-                onClick={onGuide}
-                style={{
-                  ...chip, ...(nextName ? keep : {}), cursor: 'pointer',
-                  background: 'transparent', border: `1px solid ${t.ACCENT_BORDER}`, color: t.ACCENT_SOFT,
-                }}
-              >
-                <HelpCircle size={13} style={{ flexShrink: 0 }} />
-                <span>{tr("Как выполнять")}</span>
-              </button>
-            )}
-            {nextName && (
-              <button
-                onClick={() => setRestOpen((v) => !v)}
-                aria-expanded={restOpen}
-                style={{
-                  ...chip, cursor: 'pointer', fontWeight: 600,
-                  background: t.BG_INPUT, border: `1px solid ${restOpen ? t.ACCENT_BORDER : t.BORDER}`, color: t.TEXT_FAINT,
-                }}
-              >
-                {restOpen
-                  ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
-                  : <ChevronRight size={12} style={{ flexShrink: 0 }} />}
-                {/* Название обрезаем многоточием: полное — в развёрнутом списке. */}
-                <span style={ellipsis}>{tr("Далее:")} {nextName}</span>
-                {afterNext > 0 && (
-                  <span style={{ flexShrink: 0, opacity: 0.8 }}>+{afterNext}</span>
-                )}
-              </button>
-            )}
-          </div>
+      <div style={{ display: 'grid', gridTemplateColumns: hasGuide ? '1fr 1.25fr' : '1fr', gap: 8, marginBottom: 8 }}>
+        {hasGuide && (
+          <button
+            onClick={onGuide}
+            style={{
+              ...chip, cursor: 'pointer', background: 'transparent', border: `1px solid ${t.ACCENT_BORDER}`, color: t.ACCENT_SOFT,
+            }}
+          >
+            <HelpCircle size={13} style={{ flexShrink: 0 }} />
+            <span style={ellipsis}>{tr("Как выполнять")}</span>
+          </button>
         )}
+        <span style={{
+          ...chip, color: recordText ? t.TEXT_DIM : t.TEXT_FAINT, background: t.BG_INPUT, border: '1px solid transparent',
+        }}>
+          <Flame size={12} style={{ flexShrink: 0 }} />
+          <span style={ellipsis}>{recordLine}</span>
+        </span>
       </div>
+      {nextName && (
+        <button
+          ref={nextRef}
+          onClick={() => setNextRect(settledRect(nextRef.current))}
+          aria-expanded={!!nextRect}
+          style={{
+            ...chip, width: '100%', height: STEP_ROW_H, justifyContent: 'flex-start', gap: 9, padding: '0 12px', marginBottom: 12,
+            cursor: 'pointer', fontWeight: 600, background: t.BG_INPUT, border: `1px solid ${nextRect ? t.ACCENT_BORDER : t.BORDER}`, color: t.TEXT_FAINT,
+          }}
+        >
+          <ChevronsUpDown size={13} style={{ flexShrink: 0 }} />
+          {/* Название обрезаем многоточием: полное — в списке шагов. */}
+          <span style={{ ...ellipsis, flex: 1, textAlign: 'left' }}>{tr("Далее:")} {nextName}</span>
+          {afterNext > 0 && <span style={{ flexShrink: 0, opacity: 0.8 }}>+{afterNext}</span>}
+        </button>
+      )}
+      {nextRect && (
+        <StepsPopover
+          anchorRect={nextRect}
+          steps={allSteps}
+          currentIdx={currentIdx}
+          onClose={() => setNextRect(null)}
+          onJump={(idx) => { setNextRect(null); if (onJump) onJump(idx); }}
+          onMove={onMove}
+        />
+      )}
 
       {planNotes && planNotes.tip && (
         <div style={{
@@ -1729,48 +1706,6 @@ function ExerciseStep({
           background: t.BG_INPUT, border: `1px solid ${t.BORDER}`, borderRadius: 10, padding: '9px 12px',
         }}>
           {tr(planNotes.tip)}
-        </div>
-      )}
-
-      {/* Вся тренировка списком: текущий шаг — латунью, как кнопка «Дальше»,
-          следующий — белым, остальные приглушены. Тап по строке — перейти к шагу. */}
-      {nextName && restOpen && allSteps.length > 0 && (
-        <div className="dropdown-open" style={{
-          background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 14,
-          padding: '10px 6px 6px', marginBottom: 12,
-        }}>
-          <div style={{
-            fontSize: 10, fontWeight: 700, color: t.TEXT_FAINT, textTransform: 'uppercase',
-            letterSpacing: '0.1em', fontFamily: t.FONT_MONO, margin: '0 6px 6px',
-          }}>
-            {tr("Тренировка · шаг")} {currentIdx + 1} {tr("из")} {allSteps.length}
-          </div>
-          {allSteps.map((rs) => {
-            const isCur = rs.idx === currentIdx;
-            const isNext = rs.idx === currentIdx + 1;
-            return (
-              <button
-                key={rs.idx}
-                onClick={() => { if (!isCur && onJump) onJump(rs.idx); }}
-                aria-current={isCur ? 'step' : undefined}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 9, width: '100%', boxSizing: 'border-box',
-                  padding: '8px 8px', marginBottom: 2, borderRadius: 9, border: 'none',
-                  background: isCur ? t.ACCENT_GRAD : 'transparent',
-                  cursor: isCur ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left', fontSize: 13.5,
-                  color: isCur ? t.ON_ACCENT : isNext ? t.TEXT : t.TEXT_DIM,
-                  fontWeight: isCur || isNext ? 700 : 400,
-                }}
-              >
-                <span style={{
-                  flexShrink: 0, width: 18, textAlign: 'right', fontSize: 11, fontFamily: t.FONT_MONO,
-                  color: isCur ? t.ON_ACCENT : t.TEXT_FAINT, opacity: isCur ? 0.75 : 1,
-                }}>{rs.idx + 1}</span>
-                <span style={{ ...ellipsis, flex: 1 }}>{rs.name}</span>
-                {!isCur && <ChevronRight size={14} style={{ flexShrink: 0, color: t.TEXT_FAINT }} />}
-              </button>
-            );
-          })}
         </div>
       )}
 
@@ -1868,6 +1803,14 @@ function ExerciseStep({
           </button>
         </div>
       )}
+      {/* Отмечаем, только если подходов стало больше или меньше, чем в плане. */}
+      {setsDiff !== 0 && (
+        <div style={{ marginTop: -8, marginBottom: 14, fontSize: 12, color: t.ACCENT_SOFT, textAlign: 'center' }}>
+          {setsDiff > 0
+            ? tr('Добавлено подходов: {0} · по плану {1}', setsDiff, step.planSets)
+            : tr('Убрано подходов: {0} · по плану {1}', -setsDiff, step.planSets)}
+        </div>
+      )}
 
       {/* Самочувствие / заметка по упражнению — поле растёт вместе с текстом */}
       <div style={{ marginTop: 4 }}>
@@ -1880,6 +1823,394 @@ function ExerciseStep({
           />
         </Field>
       </div>
+
+      <ExerciseMonthChart series={month} />
+    </div>
+  );
+}
+
+// Высота строки «Далее» и строк списка шагов: строка следующего упражнения
+// вырастает из плашки того же размера.
+const STEP_ROW_H = 38;
+const STEP_LIST_PAD = 5;
+
+// Все шаги тренировки поверх экрана. Следующее упражнение — посередине экрана,
+// пройденные — над ним, остальные — под ним (Никита, 11.11.2026). Список вырастает
+// из плашки «Далее» и одновременно едет на место — одним движением. Выше экрана —
+// прокрутка внутри, следующее всё равно посередине.
+const EDGE = 8;
+
+// Место плашки без въезда шага: нажали «Далее», пока шаг ещё въезжает сбоку
+// (step-enter-*), — доигрываем въезд, иначе список встанет со сдвигом.
+function settledRect(el) {
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    let anims = [];
+    try { anims = n.getAnimations(); } catch (e) { /* старый движок */ }
+    anims.forEach((a) => {
+      try { if (a.effect && a.effect.getTiming().iterations !== Infinity) a.finish(); } catch (e) { /* no-op */ }
+    });
+  }
+  return el.getBoundingClientRect();
+}
+
+function stepsListLayout(count, anchorIdx) {
+  const vh = window.innerHeight;
+  const fullHeight = count * STEP_ROW_H + STEP_LIST_PAD * 2 + 2;
+  const rowOffset = STEP_LIST_PAD + 1 + anchorIdx * STEP_ROW_H; // от верха списка до строки
+  const middle = vh / 2 - STEP_ROW_H / 2;
+  if (fullHeight <= vh - EDGE * 2) {
+    const top = Math.min(Math.max(EDGE, middle - rowOffset), vh - EDGE - fullHeight);
+    return { top, height: fullHeight, scroll: 0, rowTop: top + rowOffset };
+  }
+  const height = vh - EDGE * 2;
+  const scroll = Math.min(Math.max(0, rowOffset - (middle - EDGE)), fullHeight - height);
+  return { top: EDGE, height, scroll, rowTop: EDGE + rowOffset - scroll };
+}
+
+function StepsPopover({ anchorRect, steps, currentIdx, onJump, onClose, onMove }) {
+  const t = useTheme();
+  const backRef = useRef(null);
+  const listRef = useRef(null);
+  const anchorIdx = Math.min(currentIdx + 1, steps.length - 1);
+  const [{ top, height, scroll, rowTop }] = useState(() => stepsListLayout(steps.length, anchorIdx));
+  const shift = anchorRect.top - rowTop; // от места строки до плашки «Далее»
+  let reduced = false;
+  try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { /* no-op */ }
+
+  // Раскрытие — через element.animate: стили сразу конечные, и если анимация не
+  // сыграет (фоновая вкладка, старый движок), список всё равно виден. Рост от строки
+  // следующего упражнения и сдвиг с плашки на место идут вместе.
+  useLayoutEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = scroll;
+    if (reduced) return;
+    try {
+      listRef.current.animate([
+        { transform: `translateY(${shift}px) scaleY(0.1)`, opacity: 0 },
+        { transform: 'translateY(0px) scaleY(1)', opacity: 1 },
+      ], { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+      backRef.current.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
+    } catch (e) { /* без анимации */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Перестановка упражнений (Никита, 11.11.2026): зажал ≡ и тянешь — строка едет за
+  // пальцем, остальные расступаются; отпустил — порядок меняется (moveStep). Ездить
+  // можно только среди упражнений: разминка, дорожка, заминка и итог на своих местах.
+  const movable = steps.filter((s) => s.movable).map((s) => s.idx);
+  const minMove = movable.length ? Math.min(...movable) : 0;
+  const maxMove = movable.length ? Math.max(...movable) : 0;
+  const dragRef = useRef(null);
+  const [drag, setDrag] = useState(null); // { from, to, dy }
+  const haptic = (kind) => {
+    try {
+      const h = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback;
+      if (h) { if (kind === 'pick') h.impactOccurred('light'); else h.selectionChanged(); }
+    } catch (e) { /* no-op */ }
+  };
+  const gripDown = (e, idx) => {
+    if (!onMove) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* no-op */ }
+    dragRef.current = { from: idx, to: idx, startY: e.clientY };
+    setDrag({ from: idx, to: idx, dy: 0 });
+    haptic('pick');
+  };
+  const gripMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dy = Math.min(Math.max(e.clientY - d.startY, (minMove - d.from) * STEP_ROW_H), (maxMove - d.from) * STEP_ROW_H);
+    const to = Math.min(Math.max(d.from + Math.round(dy / STEP_ROW_H), minMove), maxMove);
+    if (to !== d.to) haptic('step');
+    d.to = to;
+    setDrag({ from: d.from, to, dy });
+  };
+  const gripUp = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    if (d && d.to !== d.from) onMove(d.from, d.to);
+  };
+  const gripKey = (e, idx) => {
+    const to = e.key === 'ArrowUp' ? idx - 1 : e.key === 'ArrowDown' ? idx + 1 : null;
+    if (to == null || !onMove) return;
+    e.preventDefault();
+    if (to >= minMove && to <= maxMove) onMove(idx, to);
+  };
+  const shiftOf = (idx) => {
+    if (!drag) return 0;
+    if (idx === drag.from) return drag.dy;
+    if (drag.from < drag.to && idx > drag.from && idx <= drag.to) return -STEP_ROW_H;
+    if (drag.from > drag.to && idx >= drag.to && idx < drag.from) return STEP_ROW_H;
+    return 0;
+  };
+
+  return createPortal(
+    <div
+      ref={backRef}
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,0.45)' }}
+    >
+      <div
+        ref={listRef}
+        role="dialog"
+        aria-label={tr("Шаги тренировки")}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'fixed', left: anchorRect.left, width: anchorRect.width, top, height,
+          overflowY: 'auto', WebkitOverflowScrolling: 'touch', boxSizing: 'border-box', padding: STEP_LIST_PAD,
+          scrollbarWidth: 'thin', scrollbarColor: `${t.ACCENT_BORDER} transparent`,
+          background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12, boxShadow: '0 18px 40px rgba(0,0,0,0.55)',
+          transformOrigin: `50% ${rowTop + STEP_ROW_H / 2 - top}px`,
+        }}
+      >
+        {steps.map((rs) => {
+          const isCur = rs.idx === currentIdx;
+          const isNext = rs.idx === anchorIdx && !isCur;
+          const dragged = !!drag && drag.from === rs.idx;
+          const grip = rs.movable && !!onMove;
+          const jumpOrClose = () => { if (isCur) onClose(); else onJump(rs.idx); };
+          return (
+            <div
+              key={rs.id || rs.idx}
+              style={{
+                display: 'flex', alignItems: 'center', height: STEP_ROW_H, boxSizing: 'border-box', borderRadius: 9,
+                position: 'relative', zIndex: dragged ? 2 : 1,
+                border: dragged || isNext ? `1px solid ${t.ACCENT_BORDER}` : '1px solid transparent',
+                background: isCur ? t.ACCENT_GRAD : dragged || isNext ? t.BG_INPUT : 'transparent',
+                boxShadow: dragged ? '0 10px 24px rgba(0,0,0,0.55)' : 'none',
+                transform: `translateY(${shiftOf(rs.idx)}px)`,
+                // Плавно расступаются только во время перетаскивания: в момент перестановки
+                // строки встают на новые места без анимации — иначе дёрнулись бы.
+                transition: drag && !dragged ? 'transform 160ms ease-out' : 'none',
+              }}
+            >
+              <button
+                onClick={jumpOrClose}
+                aria-current={isCur ? 'step' : undefined}
+                style={{
+                  flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 9, height: '100%', boxSizing: 'border-box',
+                  padding: '0 0 0 8px', border: 'none', background: 'transparent', borderRadius: 9,
+                  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', fontSize: 13.5,
+                  color: isCur ? t.ON_ACCENT : isNext || dragged ? t.TEXT : t.TEXT_DIM,
+                  fontWeight: isCur || isNext || dragged ? 700 : 400,
+                }}
+              >
+                <span style={{
+                  flexShrink: 0, width: 18, textAlign: 'right', fontSize: 11, fontFamily: t.FONT_MONO,
+                  color: isCur ? t.ON_ACCENT : t.TEXT_FAINT, opacity: isCur ? 0.75 : 1,
+                }}>{rs.idx + 1}</span>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rs.name}</span>
+              </button>
+              {grip && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={tr('Перетащить: {0}', rs.name)}
+                  onPointerDown={(e) => gripDown(e, rs.idx)}
+                  onPointerMove={gripMove}
+                  onPointerUp={gripUp}
+                  onPointerCancel={gripUp}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => gripKey(e, rs.idx)}
+                  style={{
+                    flexShrink: 0, alignSelf: 'stretch', width: 34, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    touchAction: 'none', cursor: dragged ? 'grabbing' : 'grab', userSelect: 'none', WebkitUserSelect: 'none',
+                    color: isCur ? t.ON_ACCENT : dragged ? t.ACCENT_SOFT : t.TEXT_FAINT, opacity: isCur ? 0.75 : 1,
+                  }}
+                >
+                  <Menu size={16} />
+                </span>
+              )}
+              {/* Стрелка — на прежнем месте у всех строк (Никита, 11.11.2026); у текущей
+                  её нет, но место то же — ≡ стоят ровно. */}
+              <span
+                aria-hidden="true"
+                onClick={jumpOrClose}
+                style={{
+                  flexShrink: 0, alignSelf: 'stretch', width: 26, paddingRight: 4, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', cursor: 'pointer', color: t.TEXT_FAINT, visibility: isCur ? 'hidden' : 'visible',
+                }}
+              >
+                <ChevronRight size={14} />
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+const seriesUnit = (series) => (series.kind === 'weight' ? unitOf('w') : series.kind === 'sec' ? tr('сек') : tr('повт'));
+
+// Лучший подход упражнения за последний месяц (workoutSummary.js → exerciseMonthSeries);
+// сегодняшний — по введённым подходам, крупной точкой.
+function ExerciseMonthChart({ series }) {
+  const t = useTheme();
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{
+        fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+        fontFamily: t.FONT_MONO, marginBottom: 8,
+      }}>
+        {tr('Последний месяц · лучший подход, {0}', seriesUnit(series))}
+      </div>
+      {series.points.length === 0
+        ? <div style={{ fontSize: 12.5, color: t.TEXT_FAINT, lineHeight: 1.45 }}>{tr('За последний месяц этого упражнения не было')}</div>
+        : <ExerciseSeriesChart series={series} />}
+    </div>
+  );
+}
+
+// Подсказка точки: все подходы той тренировки — первый внизу, последний наверху,
+// самый тяжёлый белым (Никита, 11.11.2026). Как в «Прогрессе».
+function SetsTooltip({ active, payload, label, unitLabel }) {
+  const t = useTheme();
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload || {};
+  const lines = p.sets && p.sets.length ? [...p.sets].reverse() : [{ text: `${p.value} ${unitLabel}`, best: true }];
+  return (
+    <div style={{
+      background: t.BG_INPUT, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 10,
+      padding: '8px 11px', boxShadow: '0 10px 26px rgba(0,0,0,0.45)',
+    }}>
+      <div style={{ color: t.TEXT_FAINT, fontSize: 12, marginBottom: 5, fontFamily: t.FONT_MONO }}>{label}</div>
+      {lines.map((line, i) => (
+        <div key={i} style={{
+          color: line.best ? t.TEXT : t.TEXT_DIM, fontWeight: 700, fontSize: line.best ? 13.5 : 12.5,
+          fontFamily: t.FONT_MONO, lineHeight: 1.45, whiteSpace: 'nowrap',
+        }}>
+          {line.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Линия лучшего подхода по тренировкам; в подсказке — все подходы (SetsTooltip).
+function ExerciseSeriesChart({ series }) {
+  const t = useTheme();
+  const unitLabel = seriesUnit(series);
+  const dense = series.points.length > 24;
+  const data = series.points.map((p) => ({
+    label: p.today ? tr('сегодня') : fmtDayMonth(p.date), value: p.value, sets: p.sets, today: !!p.today,
+  }));
+  return (
+    <div style={{ background: t.BG_RAISED, border: `1px solid ${t.BORDER}`, borderRadius: 12, padding: '10px 6px 4px' }}>
+      <ResponsiveContainer width="100%" height={140}>
+        <LineChart data={data} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke={t.BORDER} strokeDasharray="2 4" vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={{ stroke: t.BORDER }} tickLine={false} interval="preserveStartEnd" />
+          <YAxis tick={{ fill: t.TEXT_FAINT, fontSize: 10 }} axisLine={false} tickLine={false} width={34} domain={['auto', 'auto']} />
+          <Tooltip
+            cursor={{ stroke: t.ACCENT_BORDER, strokeWidth: 1 }}
+            content={<SetsTooltip unitLabel={unitLabel} />}
+          />
+          <Line
+            type="monotone"
+            dataKey="value"
+            stroke={t.ACCENT}
+            strokeWidth={2.2}
+            isAnimationActive={false}
+            dot={(p) => (
+              <circle
+                key={p.index}
+                cx={p.cx}
+                cy={p.cy}
+                r={p.payload.today ? 5 : dense ? 2 : 3}
+                fill={p.payload.today ? t.ACCENT_SOFT : t.ACCENT}
+                stroke={p.payload.today ? t.BG : 'none'}
+                strokeWidth={p.payload.today ? 2 : 0}
+              />
+            )}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// График прогресса на итоге: лучший подход за всё время по одному упражнению этой
+// тренировки, упражнение выбирается из списка (Никита, 11.11.2026). В списке — только
+// упражнения этой тренировки, по которым есть хотя бы две точки.
+function WorkoutProgressChart({ exercises, history, date, defaultName }) {
+  const t = useTheme();
+  const options = React.useMemo(() => {
+    const seen = new Set();
+    return (exercises || []).map((ex) => {
+      if (seen.has(ex.name)) return null;
+      seen.add(ex.name);
+      const series = exerciseProgressSeries({ history, name: ex.name, date, current: ex.sets || [] });
+      return series.points.length >= 2 ? { name: ex.name, series } : null;
+    }).filter(Boolean);
+  }, [exercises, history, date]);
+  const [picked, setPicked] = useState(null);
+  const [open, setOpen] = useState(false);
+  if (options.length === 0) return null;
+  const current = options.find((o) => o.name === picked)
+    || options.find((o) => o.name === defaultName) || options[0];
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+        <span style={{ fontSize: 10.5, color: t.TEXT_FAINT, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', fontFamily: t.FONT_MONO }}>
+          {tr('Прогресс по упражнению')}
+        </span>
+        <span style={{ fontSize: 11.5, color: t.TEXT_FAINT }}>{tr('лучший подход, {0}', seriesUnit(current.series))}</span>
+      </div>
+      <div style={{ position: 'relative', marginBottom: 8 }}>
+        <button
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-label={tr('Выбрать упражнение')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%', boxSizing: 'border-box', padding: '11px 12px',
+            borderRadius: 12, border: `1px solid ${open ? t.ACCENT_BORDER : t.BORDER}`, background: t.BG_INPUT,
+            color: t.TEXT, fontSize: 14, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', textAlign: 'left',
+          }}
+        >
+          <MuscleBadge name={current.name} size={22} />
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{exName(current.name)}</span>
+          {options.length > 1 && <ChevronDown size={16} style={{ flexShrink: 0, color: t.TEXT_FAINT, transform: open ? 'rotate(180deg)' : 'none' }} />}
+        </button>
+        {open && options.length > 1 && (
+          <>
+            <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 20 }} />
+            <div style={{
+              position: 'absolute', left: 0, right: 0, top: '100%', marginTop: 4, zIndex: 21, padding: 4,
+              background: t.BG_RAISED, border: `1px solid ${t.ACCENT_BORDER}`, borderRadius: 12,
+              boxShadow: '0 14px 32px rgba(0,0,0,0.5)', maxHeight: 300, overflowY: 'auto',
+            }}>
+              {options.map((o) => {
+                const on = o.name === current.name;
+                return (
+                  <button
+                    key={o.name}
+                    onClick={() => { setPicked(o.name); setOpen(false); }}
+                    aria-pressed={on}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 9, width: '100%', boxSizing: 'border-box', padding: '9px 8px',
+                      borderRadius: 9, border: 'none', background: on ? t.ACCENT_BG : 'transparent', cursor: 'pointer',
+                      color: on ? t.ACCENT_SOFT : t.TEXT_DIM, fontSize: 13.5, fontWeight: on ? 700 : 500, fontFamily: 'inherit', textAlign: 'left',
+                    }}
+                  >
+                    <MuscleBadge name={o.name} size={20} />
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{exName(o.name)}</span>
+                    {on && <Check size={14} style={{ flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+      <ExerciseSeriesChart series={current.series} />
     </div>
   );
 }
@@ -1992,7 +2323,10 @@ function CooldownStep({ step, done, onToggle, pick, onSwap }) {
   );
 }
 
-function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerciseSummary, totalSec = 0, cardioResults = [], onShare }) {
+function SummaryStep({
+  summary, onChange, mountainSectors, mountainClimb, exerciseSummary, progressExercises, history, workoutDate,
+  totalSec = 0, cardioResults = [], onShare,
+}) {
   const t = useTheme();
   // Гора-награда: только для кардио-дня по секторам, где есть дистанция и наклон.
   const gainM = Math.round(sectorElevationGain(mountainSectors));
@@ -2081,6 +2415,12 @@ function SummaryStep({ summary, onChange, mountainSectors, mountainClimb, exerci
             ))}
         </div>
         {exerciseSummary && <ExerciseSummaryCard data={exerciseSummary} />}
+        <WorkoutProgressChart
+          exercises={progressExercises}
+          history={history}
+          date={workoutDate}
+          defaultName={exerciseSummary && exerciseSummary.best ? exerciseSummary.best.name : null}
+        />
         {onShare && (
           <button
             onClick={onShare}
